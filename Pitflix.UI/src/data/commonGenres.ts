@@ -1,0 +1,21 @@
+/** Common TMDB-style genre labels for browse filters (substring match on stored Genres CSV). */
+export const COMMON_GENRES = [
+  "Action",
+  "Adventure",
+  "Animation",
+  "Comedy",
+  "Crime",
+  "Documentary",
+  "Drama",
+  "Family",
+  "Fantasy",
+  "History",
+  "Horror",
+  "Music",
+  "Mystery",
+  "Romance",
+  "Science Fiction",
+  "Thriller",
+  "War",
+  "Western",
+] as const;

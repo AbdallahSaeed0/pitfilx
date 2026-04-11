@@ -1,0 +1,50 @@
+{
+  "awardId": "academy-awards",
+  "year": 1934,
+  "label": "6th Academy Awards (1934)",
+  "categories": [
+    {
+      "id": "best-director",
+      "name": "Best Director",
+      "nominees": [
+        {
+          "title": "Frank Lloyd — Cavalcade",
+          "mediaType": "movie",
+          "tmdbId": null,
+          "winner": true
+        },
+        {
+          "title": "Frank Capra — Lady for a Day",
+          "mediaType": "movie",
+          "tmdbId": null,
+          "winner": false
+        },
+        {
+          "title": "George Cukor — Little Women",
+          "mediaType": "movie",
+          "tmdbId": null,
+          "winner": false
+        }
+      ]
+    }
+  ],
+  "dataSource": "wikipedia-mediawiki-api",
+  "notes": "Imported from English Wikipedia wikitext (Winners and nominees / {{Award category}}). CC BY-SA. Verify with AMPAS. tmdbId left null unless you enrich separately.",
+  "qa": {
+    "version": 1,
+    "lastAuditAt": "2026-04-07T17:54:39.500Z",
+    "isSeedEdition": false,
+    "needsNomineeBackfill": true,
+    "needsTmdbEnrichment": true,
+    "warnings": [
+      "single_category_edition::Only one category (often seed or incomplete)"
+    ],
+    "stats": {
+      "categoryCount": 1,
+      "nomineeCount": 3,
+      "winnerCount": 1,
+      "tmdbNull": 3,
+      "tmdbSet": 0
+    }
+  }
+}

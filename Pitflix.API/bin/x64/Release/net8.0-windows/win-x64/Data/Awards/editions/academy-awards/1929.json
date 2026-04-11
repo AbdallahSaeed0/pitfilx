@@ -1,0 +1,189 @@
+{
+  "awardId": "academy-awards",
+  "year": 1929,
+  "label": "Academy Awards (1929)",
+  "categories": [
+    {
+      "id": "best-picture",
+      "name": "Best Picture",
+      "nominees": [
+        {
+          "title": "Wings",
+          "mediaType": "movie",
+          "tmdbId": 28966,
+          "winner": true
+        }
+      ]
+    },
+    {
+      "id": "best-actor",
+      "name": "Best Actor in a Leading Role",
+      "nominees": [
+        {
+          "title": "Emil Jannings — The Last Command",
+          "mediaType": "movie",
+          "tmdbId": 52679,
+          "winner": true
+        },
+        {
+          "title": "Emil Jannings — The Way of All Flesh",
+          "mediaType": "movie",
+          "tmdbId": 85499,
+          "winner": true
+        },
+        {
+          "title": "Chester Morris — Alibi",
+          "mediaType": "movie",
+          "tmdbId": 13847,
+          "winner": false
+        },
+        {
+          "title": "George Bancroft — Thunderbolt",
+          "mediaType": "movie",
+          "tmdbId": 27456,
+          "winner": false
+        },
+        {
+          "title": "Lewis Stone — The Patriot",
+          "mediaType": "movie",
+          "tmdbId": 83990,
+          "winner": false
+        },
+        {
+          "title": "Paul Muni — The Valiant",
+          "mediaType": "movie",
+          "tmdbId": 113207,
+          "winner": false
+        },
+        {
+          "title": "Richard Barthelmess — The Noose",
+          "mediaType": "movie",
+          "tmdbId": 113167,
+          "winner": false
+        },
+        {
+          "title": "Richard Barthelmess — The Patent Leather Kid",
+          "mediaType": "movie",
+          "tmdbId": 102541,
+          "winner": false
+        }
+      ]
+    },
+    {
+      "id": "best-actress",
+      "name": "Best Actress in a Leading Role",
+      "nominees": [
+        {
+          "title": "Janet Gaynor — Seventh Heaven",
+          "mediaType": "movie",
+          "tmdbId": 82474,
+          "winner": true
+        },
+        {
+          "title": "Janet Gaynor — Street Angel",
+          "mediaType": "movie",
+          "tmdbId": 28391,
+          "winner": true
+        },
+        {
+          "title": "Janet Gaynor — Sunrise: A Song of Two Humans",
+          "mediaType": "movie",
+          "tmdbId": 631,
+          "winner": true
+        },
+        {
+          "title": "Bessie Love — The Broadway Melody",
+          "mediaType": "movie",
+          "tmdbId": 65203,
+          "winner": false
+        },
+        {
+          "title": "Betty Compson — The Barker",
+          "mediaType": "movie",
+          "tmdbId": 85634,
+          "winner": false
+        },
+        {
+          "title": "Corinne Griffith — The Divine Lady",
+          "mediaType": "movie",
+          "tmdbId": 104214,
+          "winner": false
+        },
+        {
+          "title": "Gloria Swanson — Sadie Thompson",
+          "mediaType": "movie",
+          "tmdbId": 42538,
+          "winner": false
+        },
+        {
+          "title": "Jeanne Eagels — The Letter",
+          "mediaType": "movie",
+          "tmdbId": 147846,
+          "winner": false
+        },
+        {
+          "title": "Louise Dresser — A Ship Comes In",
+          "mediaType": "movie",
+          "tmdbId": 104212,
+          "winner": false
+        },
+        {
+          "title": "Mary Pickford — Coquette",
+          "mediaType": "movie",
+          "tmdbId": 85507,
+          "winner": false
+        },
+        {
+          "title": "Ruth Chatterton — Madame X",
+          "mediaType": "movie",
+          "tmdbId": 39075,
+          "winner": false
+        }
+      ]
+    },
+    {
+      "id": "best-adapted-screenplay",
+      "name": "Best Adapted Screenplay",
+      "nominees": [
+        {
+          "title": "Benjamin Glazer — Seventh Heaven",
+          "mediaType": "movie",
+          "tmdbId": 82474,
+          "winner": true
+        },
+        {
+          "title": "Alfred A. Cohn — The Jazz Singer",
+          "mediaType": "movie",
+          "tmdbId": 939,
+          "winner": false
+        },
+        {
+          "title": "Anthony Coldeway — Glorious Betsy",
+          "mediaType": "movie",
+          "tmdbId": 171354,
+          "winner": false
+        }
+      ]
+    }
+  ],
+  "dataSource": "wikidata-sparql",
+  "notes": "Auto-generated from Wikidata (nominations P1411, wins P166, year pq:P585). Coverage varies by category/year; acting/screenplay rows need P1686 (for work) for TMDB. CC0 — verify with official sources.",
+  "qa": {
+    "version": 1,
+    "lastAuditAt": "2026-04-07T17:54:39.496Z",
+    "isSeedEdition": false,
+    "needsNomineeBackfill": true,
+    "needsTmdbEnrichment": false,
+    "warnings": [
+      "category_multiple_winners:best-actor:\"Best Actor in a Leading Role\" has 2 winners (verify tie vs data bug)",
+      "category_multiple_winners:best-actress:\"Best Actress in a Leading Role\" has 3 winners (verify tie vs data bug)"
+    ],
+    "stats": {
+      "categoryCount": 4,
+      "nomineeCount": 23,
+      "winnerCount": 7,
+      "tmdbNull": 0,
+      "tmdbSet": 23
+    }
+  }
+}

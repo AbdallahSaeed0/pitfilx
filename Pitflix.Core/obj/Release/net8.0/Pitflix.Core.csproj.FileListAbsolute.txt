@@ -1,0 +1,12 @@
+F:\PitFilx-app\Pitflix.Core\bin\Release\net8.0\Pitflix.Core.deps.json
+F:\PitFilx-app\Pitflix.Core\bin\Release\net8.0\Pitflix.Core.runtimeconfig.json
+F:\PitFilx-app\Pitflix.Core\bin\Release\net8.0\Pitflix.Core.dll
+F:\PitFilx-app\Pitflix.Core\obj\Release\net8.0\Pitflix.Core.csproj.AssemblyReference.cache
+F:\PitFilx-app\Pitflix.Core\obj\Release\net8.0\Pitflix.Core.GeneratedMSBuildEditorConfig.editorconfig
+F:\PitFilx-app\Pitflix.Core\obj\Release\net8.0\Pitflix.Core.AssemblyInfoInputs.cache
+F:\PitFilx-app\Pitflix.Core\obj\Release\net8.0\Pitflix.Core.AssemblyInfo.cs
+F:\PitFilx-app\Pitflix.Core\obj\Release\net8.0\Pitflix.Core.csproj.CoreCompileInputs.cache
+F:\PitFilx-app\Pitflix.Core\obj\Release\net8.0\Pitflix.Core.dll
+F:\PitFilx-app\Pitflix.Core\obj\Release\net8.0\refint\Pitflix.Core.dll
+F:\PitFilx-app\Pitflix.Core\obj\Release\net8.0\Pitflix.Core.genruntimeconfig.cache
+F:\PitFilx-app\Pitflix.Core\obj\Release\net8.0\ref\Pitflix.Core.dll

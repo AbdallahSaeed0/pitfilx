@@ -1,0 +1,9 @@
+appsettings.local.json
+**/appsettings.local.json
+
+# Local third-party clones (PSARipper, etc.)
+/externals/
+
+# Local verify / publish scratch output (not source)
+/artifacts/
+/_verify_build_out/

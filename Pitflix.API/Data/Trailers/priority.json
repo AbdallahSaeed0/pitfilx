@@ -1,0 +1,10 @@
+{
+  "titles": [
+    {
+      "mediaType": "movie",
+      "tmdbId": 0,
+      "note": "Optional: add high-priority blockbuster TMDB ids here (movie|tv). Delete this placeholder row after adding real ids."
+    }
+  ]
+}
+

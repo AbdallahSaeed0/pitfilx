@@ -1,0 +1,19 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="400" height="240" viewBox="0 0 400 240" fill="none">
+  <defs>
+    <linearGradient id="g" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#1a1008"/>
+      <stop offset="100%" style="stop-color:#261812"/>
+    </linearGradient>
+    <linearGradient id="a" x1="0%" y1="100%" x2="100%" y2="0%">
+      <stop offset="0%" style="stop-color:#b87333" stop-opacity="0.45"/>
+      <stop offset="100%" style="stop-color:#e8c4a0" stop-opacity="0.12"/>
+    </linearGradient>
+  </defs>
+  <rect width="400" height="240" rx="16" fill="url(#g)"/>
+  <rect width="400" height="240" rx="16" fill="url(#a)"/>
+  <mask id="m"><rect width="400" height="240" rx="16" fill="white"/></mask>
+  <g mask="url(#m)">
+    <path d="M200 52 L230 130 L310 130 L246 176 L272 250 L200 200 L128 250 L154 176 L90 130 L170 130 Z" fill="#b87333" fill-opacity="0.22" stroke="#d4a574" stroke-width="1"/>
+  </g>
+  <text x="200" y="200" text-anchor="middle" fill="#e8c4a0" font-family="Georgia,serif" font-size="16" letter-spacing="0.18em">BAFTA</text>
+</svg>

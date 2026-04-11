@@ -1,0 +1,6 @@
+<Solution>
+  <Project Path="Pitflix.API/Pitflix.API.csproj" />
+  <Project Path="Pitflix.ConsoleTest/Pitflix.ConsoleTest.csproj" />
+  <Project Path="Pitflix.Core/Pitflix.Core.csproj" />
+  <Project Path="Pitflix.WPF/Pitflix.WPF.csproj" />
+</Solution>

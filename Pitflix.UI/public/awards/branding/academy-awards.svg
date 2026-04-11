@@ -1,0 +1,17 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="400" height="240" viewBox="0 0 400 240" fill="none">
+  <defs>
+    <linearGradient id="g" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#1a1508"/>
+      <stop offset="50%" style="stop-color:#2d2410"/>
+      <stop offset="100%" style="stop-color:#0d0a04"/>
+    </linearGradient>
+    <linearGradient id="a" x1="0%" y1="100%" x2="100%" y2="0%">
+      <stop offset="0%" style="stop-color:#c9a227" stop-opacity="0.35"/>
+      <stop offset="100%" style="stop-color:#f5e6a6" stop-opacity="0.12"/>
+    </linearGradient>
+  </defs>
+  <rect width="400" height="240" rx="16" fill="url(#g)"/>
+  <rect width="400" height="240" rx="16" fill="url(#a)"/>
+  <path d="M200 48 L220 108 L284 112 L236 154 L252 214 L200 178 L148 214 L164 154 L116 112 L180 108 Z" fill="#c9a227" fill-opacity="0.25" stroke="#e8d48b" stroke-width="1.2"/>
+  <text x="200" y="200" text-anchor="middle" fill="#f5e6a6" font-family="Georgia,serif" font-size="15" letter-spacing="0.15em">ACADEMY AWARDS</text>
+</svg>

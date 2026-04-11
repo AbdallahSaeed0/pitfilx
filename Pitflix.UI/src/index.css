@@ -1,0 +1,65 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  body {
+    @apply bg-pitflix-bg text-white;
+    font-family: "Inter", "Segoe UI", sans-serif;
+  }
+
+  ::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+  }
+
+  ::-webkit-scrollbar-track {
+    background: #1f1f1f;
+  }
+
+  ::-webkit-scrollbar-thumb {
+    background: #7b2fbe;
+    border-radius: 3px;
+  }
+}
+
+@layer utilities {
+  /** Custom title bar: clicks must not be eaten by the drag region (Windows / WebView2). */
+  .titlebar-no-drag {
+    -webkit-app-region: no-drag;
+    app-region: no-drag;
+  }
+
+  .scrollbar-hide {
+    -ms-overflow-style: none;
+    scrollbar-width: none;
+  }
+
+  .scrollbar-hide::-webkit-scrollbar {
+    display: none;
+  }
+
+  /** Home / carousels: horizontal scroll works with mouse wheel + touch; visible slim bar. */
+  .scroll-row-x {
+    overflow-x: auto;
+    overflow-y: hidden;
+    touch-action: pan-x;
+    -webkit-overflow-scrolling: touch;
+    overscroll-behavior-x: contain;
+    scrollbar-gutter: stable;
+  }
+
+  .scroll-row-x::-webkit-scrollbar {
+    height: 7px;
+  }
+
+  .scroll-row-x::-webkit-scrollbar-track {
+    background: #1a1a1a;
+    border-radius: 4px;
+  }
+
+  .scroll-row-x::-webkit-scrollbar-thumb {
+    background: #7b2fbe;
+    border-radius: 4px;
+  }
+}

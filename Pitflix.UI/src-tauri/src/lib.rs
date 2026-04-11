@@ -1,0 +1,307 @@
+use std::{
+    fs::OpenOptions,
+    io::Write,
+    net::TcpStream,
+    path::PathBuf,
+    process::{Child, Command, Stdio},
+    sync::Mutex,
+    time::Duration,
+};
+
+use tauri::{image::Image, App, Manager, RunEvent};
+
+/// Holds the spawned Pitflix.API process so we can kill it on app exit.
+pub struct ApiChild(pub Mutex<Option<Child>>);
+
+impl ApiChild {
+    fn shutdown(&self) {
+        let Ok(mut guard) = self.0.lock() else {
+            return;
+        };
+        if let Some(mut child) = guard.take() {
+            let _ = child.kill();
+            let _ = child.wait();
+        }
+    }
+}
+
+fn skip_bundled_api() -> bool {
+    std::env::var("PITFLIX_SKIP_BUNDLED_API")
+        .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
+        .unwrap_or(false)
+}
+
+fn sidecar_log_path() -> Option<PathBuf> {
+    let Some(base) = std::env::var_os("LOCALAPPDATA") else {
+        return None;
+    };
+    Some(PathBuf::from(base).join("Pitflix").join("sidecar.log"))
+}
+
+fn log_to_sidecar_file(msg: &str) {
+    let Some(p) = sidecar_log_path() else {
+        return;
+    };
+    let Ok(mut f) = OpenOptions::new().create(true).append(true).open(&p) else {
+        return;
+    };
+    let _ = writeln!(f, "{msg}");
+}
+
+fn find_sidecar_exe(app: &App) -> Option<PathBuf> {
+    let mut dirs: Vec<PathBuf> = Vec::new();
+
+    // First try deterministic paths based on the build target triple.
+    // This is the most reliable option in packaged builds.
+    let target_triple = env!("TAURI_ENV_TARGET_TRIPLE");
+    let expected_name = format!("pitflix-api-{}.exe", target_triple);
+    let mut deterministic: Vec<PathBuf> = Vec::new();
+
+    #[cfg(dev)]
+    {
+        let base = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("binaries");
+        deterministic.push(base.join(&expected_name));
+        deterministic.push(base.join("pitflix-api.exe"));
+    }
+
+    if let Ok(d) = app.path().resource_dir() {
+        deterministic.push(d.join("binaries").join(&expected_name));
+        deterministic.push(d.join(&expected_name));
+        deterministic.push(d.join("binaries").join("pitflix-api.exe"));
+    }
+
+    if let Ok(exe) = std::env::current_exe() {
+        if let Some(parent) = exe.parent() {
+            deterministic.push(parent.join("binaries").join(&expected_name));
+            deterministic.push(parent.join(&expected_name));
+            deterministic.push(parent.join("binaries").join("pitflix-api.exe"));
+        }
+    }
+
+    for p in deterministic {
+        if p.is_file() {
+            return Some(p);
+        }
+    }
+
+    // `tauri dev` does not copy the sidecar next to the debug exe; it stays in src-tauri/binaries/.
+    #[cfg(dev)]
+    {
+        let base = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("binaries");
+        dirs.push(base.clone());
+    }
+
+    if let Ok(d) = app.path().resource_dir() {
+        dirs.push(d.clone());
+        dirs.push(d.join("binaries"));
+    }
+    if let Ok(exe) = std::env::current_exe() {
+        if let Some(parent) = exe.parent() {
+            let parent = parent.to_path_buf();
+            dirs.push(parent.clone());
+            dirs.push(parent.join("binaries"));
+        }
+    }
+
+    for dir in dirs {
+        log_to_sidecar_file(&format!("Pitflix: scanning for sidecar in dir: {}", dir.display()));
+        let Ok(read) = std::fs::read_dir(&dir) else {
+            continue;
+        };
+        for ent in read.flatten() {
+            let name = ent.file_name();
+            let name = name.to_string_lossy();
+            if !(name.starts_with("pitflix-api-") || name.eq_ignore_ascii_case("pitflix-api.exe")) {
+                continue;
+            }
+            if name.ends_with(".pdb") {
+                continue;
+            }
+            let p = ent.path();
+            if p.is_file() {
+                log_to_sidecar_file(&format!("Pitflix: sidecar candidate matched: {}", p.display()));
+                return Some(p);
+            }
+        }
+    }
+    None
+}
+
+#[cfg(windows)]
+fn spawn_api_process(exe: &std::path::Path) -> std::io::Result<Child> {
+    use std::os::windows::process::CommandExt;
+
+    const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+
+    let workdir = exe.parent().map(PathBuf::from).unwrap_or_else(|| exe.into());
+
+    // Capture stdout/stderr to a file so packaged builds can be debugged.
+    let log_path = sidecar_log_path().unwrap_or_else(|| PathBuf::from("sidecar.log"));
+    let stdout = OpenOptions::new().create(true).append(true).open(&log_path)?;
+    let stderr = OpenOptions::new().create(true).append(true).open(&log_path)?;
+
+    Command::new(exe)
+        .current_dir(workdir)
+        .env("ASPNETCORE_URLS", "http://127.0.0.1:5001")
+        .env("DOTNET_ENVIRONMENT", "Production")
+        .stdin(Stdio::null())
+        .stdout(Stdio::from(stdout))
+        .stderr(Stdio::from(stderr))
+        .creation_flags(CREATE_NO_WINDOW)
+        .spawn()
+}
+
+#[cfg(not(windows))]
+fn spawn_api_process(exe: &std::path::Path) -> std::io::Result<Child> {
+    let workdir = exe.parent().map(PathBuf::from).unwrap_or_else(|| exe.into());
+
+    let log_path = sidecar_log_path().unwrap_or_else(|| PathBuf::from("sidecar.log"));
+    let stdout = OpenOptions::new().create(true).append(true).open(&log_path)?;
+    let stderr = OpenOptions::new().create(true).append(true).open(&log_path)?;
+
+    Command::new(exe)
+        .current_dir(workdir)
+        .env("ASPNETCORE_URLS", "http://127.0.0.1:5001")
+        .env("DOTNET_ENVIRONMENT", "Production")
+        .stdin(Stdio::null())
+        .stdout(Stdio::from(stdout))
+        .stderr(Stdio::from(stderr))
+        .spawn()
+}
+
+fn wait_for_api_port() {
+    for _ in 0..80 {
+        if TcpStream::connect("127.0.0.1:5001").is_ok() {
+            return;
+        }
+        std::thread::sleep(Duration::from_millis(250));
+    }
+}
+
+/// Removes `HKCU\...\Run\Pitflix` when it points at dotnet/API/console (legacy API-based autostart).
+#[cfg(windows)]
+fn cleanup_broken_autostart_registry_entries() {
+    use winreg::enums::{HKEY_CURRENT_USER, KEY_READ, KEY_WRITE};
+    use winreg::RegKey;
+
+    let hkcu = RegKey::predef(HKEY_CURRENT_USER);
+    let Ok(run) = hkcu.open_subkey_with_flags(
+        r"Software\Microsoft\Windows\CurrentVersion\Run",
+        KEY_READ | KEY_WRITE,
+    ) else {
+        return;
+    };
+    let Ok(val) = run.get_value::<String, _>("Pitflix") else {
+        return;
+    };
+    let lower = val.to_lowercase();
+    let bad = lower.contains("dotnet")
+        || lower.contains("pitflix.api")
+        || lower.contains("pitflixapi")
+        || lower.contains("cmd.exe")
+        || lower.contains("powershell")
+        || lower.ends_with(".dll\"")
+        || lower.ends_with(".dll");
+    if bad {
+        let _ = run.delete_value("Pitflix");
+    }
+}
+
+#[cfg(not(windows))]
+fn cleanup_broken_autostart_registry_entries() {}
+
+#[cfg_attr(mobile, tauri::mobile_entry_point)]
+pub fn run() {
+    let app = tauri::Builder::default()
+        .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_updater::Builder::new().build())
+        .plugin(tauri_plugin_process::init())
+        .plugin(
+            tauri_plugin_autostart::Builder::new()
+                .app_name("Pitflix")
+                .build(),
+        )
+        .setup(|app| {
+            cleanup_broken_autostart_registry_entries();
+            let mut child: Option<Child> = None;
+            if skip_bundled_api() {
+                log_to_sidecar_file("Pitflix: PITFLIX_SKIP_BUNDLED_API=true, not starting bundled API.");
+            }
+            else if TcpStream::connect("127.0.0.1:5001").is_ok() {
+                log_to_sidecar_file(
+                    "Pitflix: 127.0.0.1:5001 already in use; skipping bundled sidecar (use that API or stop it).",
+                );
+            }
+            else {
+                log_to_sidecar_file("Pitflix: skip_bundled_api=false, attempting start bundled API.");
+                log_to_sidecar_file("Pitflix: attempting to start bundled API sidecar...");
+                if let Some(exe) = find_sidecar_exe(app) {
+                    log_to_sidecar_file(&format!("Pitflix: will spawn sidecar path: {}", exe.display()));
+                    log_to_sidecar_file(&format!("Pitflix: found sidecar exe: {}", exe.display()));
+                    let log = sidecar_log_path();
+                    if let Some(log_path) = log.as_ref() {
+                        let _ = std::fs::create_dir_all(log_path.parent().unwrap_or(log_path.as_path()));
+                    }
+
+                    match spawn_api_process(&exe) {
+                        Ok(c) => {
+                            log_to_sidecar_file(&format!("Pitflix: sidecar spawned. child started."));
+                            // See if the process immediately crashed (common packaging issue).
+                            let mut c = c;
+                            wait_for_api_port();
+                            // After wait, verify it actually bound.
+                            let ok = TcpStream::connect("127.0.0.1:5001").is_ok();
+                            log_to_sidecar_file(&format!(
+                                "Pitflix: API port readiness (5001): {}",
+                                if ok { "OK" } else { "NOT READY" }
+                            ));
+                            if !ok {
+                                match c.try_wait() {
+                                    Ok(Some(status)) => {
+                                        log_to_sidecar_file(&format!("Pitflix: sidecar exited early. status={:?}", status));
+                                    }
+                                    Ok(None) => {
+                                        log_to_sidecar_file("Pitflix: sidecar still running but port not ready.");
+                                    }
+                                    Err(e) => {
+                                        log_to_sidecar_file(&format!("Pitflix: sidecar try_wait failed: {e}"));
+                                    }
+                                }
+                            }
+                            child = Some(c);
+                        }
+                        Err(e) => {
+                            log_to_sidecar_file(&format!("Pitflix: failed to start bundled API: {e}"));
+                        }
+                    }
+                }
+                else {
+                    log_to_sidecar_file("Pitflix: did NOT find bundled sidecar exe.");
+                }
+            }
+            app.manage(ApiChild(Mutex::new(child)));
+
+            // Frameless windows (`decorations: false`) often show a generic taskbar/Dock icon unless
+            // the window icon is set explicitly. On Windows, prefer the `.ico` used for the exe.
+            if let Some(window) = app.get_webview_window("main") {
+                #[cfg(windows)]
+                const WIN_ICON: &[u8] = include_bytes!("../icons/icon.ico");
+                #[cfg(not(windows))]
+                const WIN_ICON: &[u8] = include_bytes!("../icons/128x128.png");
+                if let Ok(icon) = Image::from_bytes(WIN_ICON) {
+                    let _ = window.set_icon(icon);
+                }
+            }
+
+            Ok(())
+        })
+        .build(tauri::generate_context!())
+        .expect("error while building tauri application");
+
+    app.run(|app_handle, event| {
+        if matches!(event, RunEvent::Exit) {
+            app_handle.state::<ApiChild>().shutdown();
+        }
+    });
+}

@@ -1,0 +1,11 @@
+{
+  "version": "0.3.0",
+  "notes": "Describe what changed for users.",
+  "pub_date": "2026-04-12T12:00:00Z",
+  "platforms": {
+    "windows-x86_64": {
+      "signature": "PASTE_THE_TEXT_CONTENT_OF_THE_MATCHING_.sig_FILE_HERE",
+      "url": "https://github.com/OWNER/REPO/releases/download/v0.3.0/Pitflix_0.3.0_x64-setup.exe"
+    }
+  }
+}

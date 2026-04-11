@@ -1,0 +1,28 @@
+{
+  "awards": [
+    {
+      "id": "academy-awards",
+      "name": "Academy Awards",
+      "subtitle": "Oscars · Motion Picture Arts and Sciences",
+      "accent": "#c9a227"
+    },
+    {
+      "id": "primetime-emmys",
+      "name": "Primetime Emmy Awards",
+      "subtitle": "Television Academy",
+      "accent": "#5b7fd1"
+    },
+    {
+      "id": "bafta",
+      "name": "BAFTA Film Awards",
+      "subtitle": "British Academy of Film and Television Arts",
+      "accent": "#b87333"
+    },
+    {
+      "id": "golden-globes",
+      "name": "Golden Globe Awards",
+      "subtitle": "Motion picture & television",
+      "accent": "#a8552c"
+    }
+  ]
+}

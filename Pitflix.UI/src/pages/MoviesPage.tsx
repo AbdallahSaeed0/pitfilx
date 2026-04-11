@@ -1,0 +1,348 @@
+import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useCallback, useMemo, useState } from "react";
+import { useSearchParams } from "react-router-dom";
+import {
+  bulkDeleteFromDevice,
+  bulkRemoveFromLibrary,
+  bulkSetWatchStatus,
+} from "../api/library";
+import { getListTmdbIds, getLists } from "../api/lists";
+import { getStats } from "../api/stats";
+import { useMovies } from "../hooks/useMovies";
+import { useDebounce } from "../hooks/useDebounce";
+import { PosterCard } from "../components/ui/PosterCard";
+import { Pagination } from "../components/ui/Pagination";
+import { Spinner } from "../components/ui/Spinner";
+import type { MediaCard } from "../types/media";
+import { cn } from "../utils/cn";
+import { COMMON_GENRES } from "../data/commonGenres";
+
+export function MoviesPage() {
+  const qc = useQueryClient();
+  const [searchParams, setSearchParams] = useSearchParams();
+  const page = Math.max(1, parseInt(searchParams.get("page") ?? "1", 10) || 1);
+  const setPage = useCallback(
+    (next: number) => {
+      setSearchParams(
+        (prev) => {
+          const n = new URLSearchParams(prev);
+          if (next <= 1) n.delete("page");
+          else n.set("page", String(next));
+          return n;
+        },
+        { replace: true },
+      );
+    },
+    [setSearchParams],
+  );
+  const [lang, setLang] = useState<"en" | "ar">("en");
+  const [search, setSearch] = useState("");
+  const searchQ = useDebounce(search, 350);
+  const [sort, setSort] = useState("title");
+  const [genre, setGenre] = useState("");
+  const [watch, setWatch] = useState("all");
+  const pageSize = 40;
+  const [selectionMode, setSelectionMode] = useState(false);
+  const [selectedIds, setSelectedIds] = useState<Set<number>>(() => new Set());
+  const [markBusy, setMarkBusy] = useState(false);
+
+  const { data: stats } = useQuery({ queryKey: ["stats"], queryFn: getStats });
+  const { data: lists } = useQuery({ queryKey: ["lists"], queryFn: getLists, staleTime: 60_000 });
+  const favoritesList = lists?.find((l) => l.name.includes("Favorites"));
+  const { data: favoriteTmdbIds = [] } = useQuery({
+    queryKey: ["list-tmdb-ids", favoritesList?.id, "Movie"],
+    queryFn: () => getListTmdbIds(favoritesList!.id, "Movie"),
+    enabled: !!favoritesList,
+  });
+  const favoriteSet = useMemo(() => new Set(favoriteTmdbIds), [favoriteTmdbIds]);
+  const englishCount = stats?.englishMovies ?? 0;
+  const arabicCount = stats?.arabicMovies ?? 0;
+
+  const { data, isLoading } = useMovies({
+    page,
+    pageSize,
+    lang,
+    search: searchQ || undefined,
+    genre: genre || undefined,
+    sort,
+    watch,
+  });
+
+  const total = data?.total ?? 0;
+
+  const toggleSelect = (id: number) => {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  };
+
+  const exitSelection = () => {
+    setSelectionMode(false);
+    setSelectedIds(new Set());
+  };
+
+  const markSelectedCompleted = async () => {
+    if (selectedIds.size === 0) return;
+    setMarkBusy(true);
+    try {
+      await bulkSetWatchStatus({
+        movieIds: [...selectedIds],
+        watchStatus: "Completed",
+      });
+      exitSelection();
+      void qc.invalidateQueries({ queryKey: ["movies"] });
+      void qc.invalidateQueries({ queryKey: ["stats"] });
+      void qc.invalidateQueries({ queryKey: ["home-movies"] });
+    } catch (e) {
+      console.error(e);
+    } finally {
+      setMarkBusy(false);
+    }
+  };
+
+  const markSelectedUnwatched = async () => {
+    if (selectedIds.size === 0) return;
+    setMarkBusy(true);
+    try {
+      await bulkSetWatchStatus({
+        movieIds: [...selectedIds],
+        watchStatus: "Unwatched",
+      });
+      exitSelection();
+      void qc.invalidateQueries({ queryKey: ["movies"] });
+      void qc.invalidateQueries({ queryKey: ["stats"] });
+      void qc.invalidateQueries({ queryKey: ["home-movies"] });
+    } catch (e) {
+      console.error(e);
+    } finally {
+      setMarkBusy(false);
+    }
+  };
+
+  const removeSelectedFromLibrary = async () => {
+    if (selectedIds.size === 0) return;
+    setMarkBusy(true);
+    try {
+      await bulkRemoveFromLibrary({ movieIds: [...selectedIds] });
+      exitSelection();
+      void qc.invalidateQueries({ queryKey: ["movies"] });
+      void qc.invalidateQueries({ queryKey: ["stats"] });
+      void qc.invalidateQueries({ queryKey: ["home-movies"] });
+      void qc.invalidateQueries({ queryKey: ["unmatched"] });
+    } catch (e) {
+      console.error(e);
+    } finally {
+      setMarkBusy(false);
+    }
+  };
+
+  const deleteSelectedFromDevice = async () => {
+    if (selectedIds.size === 0) return;
+    if (
+      !window.confirm(
+        `Permanently delete ${selectedIds.size} movie file(s) from this device and remove them from the library? This cannot be undone.`,
+      )
+    )
+      return;
+    setMarkBusy(true);
+    try {
+      const r = await bulkDeleteFromDevice({ movieIds: [...selectedIds] });
+      exitSelection();
+      void qc.invalidateQueries({ queryKey: ["movies"] });
+      void qc.invalidateQueries({ queryKey: ["stats"] });
+      void qc.invalidateQueries({ queryKey: ["home-movies"] });
+      void qc.invalidateQueries({ queryKey: ["unmatched"] });
+      if (r.errors?.length)
+        window.alert(`Some files could not be deleted:\n${r.errors.slice(0, 8).join("\n")}`);
+    } catch (e) {
+      console.error(e);
+    } finally {
+      setMarkBusy(false);
+    }
+  };
+
+  return (
+    <div>
+      <div className="mb-6 flex flex-wrap items-start justify-between gap-4">
+        <div>
+          <h1 className="text-3xl font-bold text-white">Movies</h1>
+          <p className="mt-1 text-sm text-pitflix-muted">{total} titles in your library</p>
+        </div>
+        <div className="flex flex-wrap items-center gap-2">
+          {selectionMode ? (
+            <>
+              <span className="text-xs text-pitflix-muted">{selectedIds.size} selected</span>
+              <button
+                type="button"
+                disabled={markBusy || selectedIds.size === 0}
+                className="rounded-lg bg-green-600/90 px-3 py-2 text-xs font-semibold text-white hover:bg-green-500 disabled:opacity-50"
+                onClick={() => void markSelectedCompleted()}
+              >
+                {markBusy ? "…" : "Mark watched"}
+              </button>
+              <button
+                type="button"
+                disabled={markBusy || selectedIds.size === 0}
+                className="rounded-lg border border-pitflix-card px-3 py-2 text-xs text-pitflix-muted hover:text-white disabled:opacity-50"
+                onClick={() => void markSelectedUnwatched()}
+              >
+                Mark unwatched
+              </button>
+              <button
+                type="button"
+                disabled={markBusy || selectedIds.size === 0}
+                className="rounded-lg border border-pitflix-card px-3 py-2 text-xs text-pitflix-muted hover:text-white disabled:opacity-50"
+                onClick={() => void removeSelectedFromLibrary()}
+              >
+                Remove from library
+              </button>
+              <button
+                type="button"
+                disabled={markBusy || selectedIds.size === 0}
+                className="rounded-lg bg-red-900/80 px-3 py-2 text-xs font-semibold text-red-100 hover:bg-red-800 disabled:opacity-50"
+                onClick={() => void deleteSelectedFromDevice()}
+              >
+                Delete from device…
+              </button>
+              <button
+                type="button"
+                className="rounded-lg border border-pitflix-card px-3 py-2 text-xs text-pitflix-muted hover:text-white"
+                onClick={exitSelection}
+              >
+                Cancel
+              </button>
+            </>
+          ) : (
+            <button
+              type="button"
+              className="rounded-lg border border-pitflix-primary/50 px-3 py-2 text-xs font-medium text-white hover:bg-pitflix-primary/20"
+              onClick={() => setSelectionMode(true)}
+            >
+              Select titles
+            </button>
+          )}
+        </div>
+      </div>
+
+      <div className="mb-6 flex w-fit gap-1 rounded-xl bg-pitflix-card p-1">
+        {(
+          [
+            { key: "en" as const, label: "English", count: englishCount },
+            { key: "ar" as const, label: "Arabic", count: arabicCount },
+          ] as const
+        ).map(({ key, label, count }) => (
+          <button
+            key={key}
+            type="button"
+            onClick={() => {
+              setLang(key);
+              setPage(1);
+            }}
+            className={cn(
+              "rounded-lg px-6 py-2 text-sm font-medium transition-all",
+              lang === key
+                ? "bg-pitflix-primary text-white shadow-lg"
+                : "text-pitflix-muted hover:text-white",
+            )}
+          >
+            {label}
+            <span className="ml-2 text-xs opacity-70">{count}</span>
+          </button>
+        ))}
+      </div>
+
+      <div className="mb-6 flex flex-wrap gap-3">
+        <div className="relative min-w-48 flex-1">
+          <span className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-sm text-pitflix-subtle">
+            🔍
+          </span>
+          <input
+            value={search}
+            onChange={(e) => {
+              setSearch(e.target.value);
+              setPage(1);
+            }}
+            placeholder="Search titles..."
+            className="w-full rounded-xl border border-pitflix-card bg-pitflix-card py-2.5 pl-9 pr-4 text-sm text-white placeholder:text-pitflix-subtle transition-colors focus:border-pitflix-primary focus:outline-none"
+          />
+        </div>
+        <select
+          value={sort}
+          onChange={(e) => {
+            setSort(e.target.value);
+            setPage(1);
+          }}
+          className="min-w-32 cursor-pointer rounded-xl border border-pitflix-card bg-pitflix-card px-4 py-2.5 text-sm text-white focus:border-pitflix-primary focus:outline-none"
+        >
+          <option value="title">Sort: A-Z</option>
+          <option value="year">Sort: Year</option>
+          <option value="rating">Sort: Rating</option>
+          <option value="dateAdded">Sort: Added</option>
+        </select>
+        <select
+          value={genre}
+          onChange={(e) => {
+            setGenre(e.target.value);
+            setPage(1);
+          }}
+          className="min-w-32 cursor-pointer rounded-xl border border-pitflix-card bg-pitflix-card px-4 py-2.5 text-sm text-white focus:border-pitflix-primary focus:outline-none"
+        >
+          <option value="">All Genres</option>
+          {COMMON_GENRES.map((g) => (
+            <option key={g} value={g}>
+              {g}
+            </option>
+          ))}
+        </select>
+        <select
+          value={watch}
+          onChange={(e) => {
+            setWatch(e.target.value);
+            setPage(1);
+          }}
+          className="min-w-36 cursor-pointer rounded-xl border border-pitflix-card bg-pitflix-card px-4 py-2.5 text-sm text-white focus:border-pitflix-primary focus:outline-none"
+        >
+          <option value="all">All</option>
+          <option value="unwatched">Unwatched</option>
+          <option value="watching">Watching</option>
+          <option value="completed">Completed</option>
+        </select>
+      </div>
+
+      {isLoading ? (
+        <div className="flex justify-center py-20">
+          <Spinner />
+        </div>
+      ) : (
+        <>
+          <div className="grid grid-cols-2 gap-x-6 gap-y-10 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 2xl:grid-cols-7">
+            {((data?.items ?? []) as MediaCard[]).map((m) => (
+              <PosterCard
+                key={m.id}
+                item={m}
+                mediaType="Movie"
+                className="justify-self-center"
+                isFavorite={favoriteSet.has(m.tmdbId)}
+                selectionMode={selectionMode}
+                selected={selectedIds.has(m.id)}
+                onToggleSelect={() => toggleSelect(m.id)}
+              />
+            ))}
+          </div>
+          <div className="mt-8">
+            <Pagination
+              currentPage={data?.currentPage ?? page}
+              totalPages={data?.totalPages ?? 1}
+              totalItems={data?.total ?? 0}
+              pageSize={pageSize}
+              onPageChange={setPage}
+            />
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
