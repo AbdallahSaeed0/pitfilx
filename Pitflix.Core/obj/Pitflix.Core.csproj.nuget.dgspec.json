@@ -1,17 +1,17 @@
 {
   "format": 1,
   "restore": {
-    "f:\\PitFilx-app\\Pitflix.Core\\Pitflix.Core.csproj": {}
+    "F:\\PitFilx-app\\Pitflix.Core\\Pitflix.Core.csproj": {}
   },
   "projects": {
-    "f:\\PitFilx-app\\Pitflix.Core\\Pitflix.Core.csproj": {
+    "F:\\PitFilx-app\\Pitflix.Core\\Pitflix.Core.csproj": {
       "version": "1.0.0",
       "restore": {
-        "projectUniqueName": "f:\\PitFilx-app\\Pitflix.Core\\Pitflix.Core.csproj",
+        "projectUniqueName": "F:\\PitFilx-app\\Pitflix.Core\\Pitflix.Core.csproj",
         "projectName": "Pitflix.Core",
-        "projectPath": "f:\\PitFilx-app\\Pitflix.Core\\Pitflix.Core.csproj",
+        "projectPath": "F:\\PitFilx-app\\Pitflix.Core\\Pitflix.Core.csproj",
         "packagesPath": "C:\\Users\\Abd Allah\\.nuget\\packages\\",
-        "outputPath": "f:\\PitFilx-app\\Pitflix.Core\\obj\\",
+        "outputPath": "F:\\PitFilx-app\\Pitflix.Core\\obj\\",
         "projectStyle": "PackageReference",
         "configFilePaths": [
           "C:\\Users\\Abd Allah\\AppData\\Roaming\\NuGet\\NuGet.Config",
@@ -56,6 +56,12 @@
               "target": "Package",
               "version": "[8.0.11, )"
             },
+            "Microsoft.NET.ILLink.Tasks": {
+              "suppressParent": "All",
+              "target": "Package",
+              "version": "[8.0.24, )",
+              "autoReferenced": true
+            },
             "Newtonsoft.Json": {
               "target": "Package",
               "version": "[13.0.4, )"
@@ -78,11 +84,23 @@
               "version": "[8.0.24, 8.0.24]"
             },
             {
+              "name": "Microsoft.AspNetCore.App.Runtime.win-x64",
+              "version": "[8.0.24, 8.0.24]"
+            },
+            {
               "name": "Microsoft.NETCore.App.Ref",
               "version": "[8.0.24, 8.0.24]"
             },
             {
+              "name": "Microsoft.NETCore.App.Runtime.win-x64",
+              "version": "[8.0.24, 8.0.24]"
+            },
+            {
               "name": "Microsoft.WindowsDesktop.App.Ref",
+              "version": "[8.0.24, 8.0.24]"
+            },
+            {
+              "name": "Microsoft.WindowsDesktop.App.Runtime.win-x64",
               "version": "[8.0.24, 8.0.24]"
             }
           ],
@@ -92,6 +110,11 @@
             }
           },
           "runtimeIdentifierGraphPath": "C:\\Program Files\\dotnet\\sdk\\10.0.103/PortableRuntimeIdentifierGraph.json"
+        }
+      },
+      "runtimes": {
+        "win-x64": {
+          "#import": []
         }
       }
     }

@@ -69,7 +69,11 @@ If you lose the **private** key, you cannot ship signed updates that existing us
 
 ## Provide the private key when building releases
 
-`.env` is **not** loaded for signing. Use environment variables in the shell or CI:
+### Windows: `npm run tauri:build:win`
+
+If `src-tauri/.tauri-updater.key` exists locally, `scripts/tauri-build-windows.ps1` injects its contents into `TAURI_SIGNING_PRIVATE_KEY` for the `npx tauri build` step (so MSVC + updater signing work without you exporting variables by hand). **CI** should still supply the key via secrets (`TAURI_SIGNING_PRIVATE_KEY` or a protected file), not rely on a committed file.
+
+`.env` is **not** loaded for signing. Otherwise use environment variables in the shell or CI:
 
 **Windows (PowerShell):**
 

@@ -1,0 +1,11 @@
+{
+  "version": "0.3.1",
+  "notes": "New release for update.",
+  "pub_date": "2026-04-12T12:00:00Z",
+  "platforms": {
+    "windows-x86_64": {
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVReXRaUE0vUHdzUE9XTDlWU2Njb0N1V0VhUE12Y0FFc1VETDFaNzZWdCtHUUdldGkyazY2WmY0RXFnVi91WGZxM1lxRG8xdHNzYm50T1BDNUNLckxFQ2hoQzgwWk4vWmdrPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzc1OTUzNDU2CWZpbGU6UGl0ZmxpeF8wLjMuMF94NjQtc2V0dXAuZXhlCnM1V2JIMFAyaERWL2VVckpwcGdhSGdBZHJzNUhETThMTWlRQ2wxL0ovMVl4dzdDbnVTVHpWWTNkRlNtVWJBbXpMZmxGaklSQnJjMEthL0V4bFFtcER3PT0K",
+      "url": "https://github.com/AbdallahSaeed0/pitfilx/releases/download/v0.3.0/Pitflix_0.3.0_x64-setup.exe"
+    }
+  }
+}

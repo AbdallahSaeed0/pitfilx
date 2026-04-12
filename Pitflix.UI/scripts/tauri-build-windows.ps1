@@ -27,7 +27,8 @@ if (-not (Test-Path $vcvars)) {
   Write-Error "Missing: $vcvars"
 }
 
-$targetDir = Join-Path $env:TEMP "pitflix-tauri-target"
+# Project-local target dir avoids flaky writes under %TEMP% (short paths / cleanup races).
+$targetDir = Join-Path $uiRoot ".cargo-tauri-target"
 New-Item -ItemType Directory -Force -Path $targetDir | Out-Null
 
 Write-Host "VS: $vsPath"
@@ -37,7 +38,18 @@ Write-Host "If build still fails with 'link: extra operand', Git's usr\bin is ah
 Write-Host "Temporarily rename C:\Program Files\Git\usr\bin\link.exe or use 'x64 Native Tools for VS' prompt."
 Write-Host ""
 
-$batch = "call `"$vcvars`" && set `"CARGO_TARGET_DIR=$targetDir`" && cd /d `"$uiRoot`" && npx tauri build"
+# npm runs this script in a fresh PowerShell, so signing env vars must be set inside cmd for `npx tauri build`.
+# Tauri's bundler reads `TAURI_SIGNING_PRIVATE_KEY` (inline secret), not only *_PATH.
+$localKey = Join-Path $uiRoot "src-tauri\.tauri-updater.key"
+$signPrefix = ""
+if (Test-Path $localKey) {
+  $keyContent = (Get-Content -Raw $localKey).Trim()
+  $signPrefix = "set `"TAURI_SIGNING_PRIVATE_KEY=$keyContent`" && "
+  Write-Host "Using updater signing key from: $localKey"
+  Write-Host ""
+}
+
+$batch = "call `"$vcvars`" && set `"CARGO_TARGET_DIR=$targetDir`" && $signPrefix cd /d `"$uiRoot`" && npx tauri build"
 $p = Start-Process -FilePath "cmd.exe" -ArgumentList "/c", $batch -NoNewWindow -Wait -PassThru
 
 Write-Host ""
