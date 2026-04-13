@@ -12,11 +12,29 @@ const meta = {
 /** Built-in TMDB-driven rows merged into saved layouts when missing (persisted order survives across versions). */
 export const DEFAULT_HOME_SPECIAL_SECTIONS: HomeSectionConfig[] = [
   {
+    id: "home_latest_trailers",
+    title: "Latest trailers",
+    subtitle: "Popular & recent — high-signal titles only",
+    enabled: true,
+    order: -6,
+    sourceType: "latest_trailers",
+    layoutStyle: "poster-row",
+  },
+  {
+    id: "home_coming_soon_trailers",
+    title: "Coming soon with trailer",
+    subtitle: "Future releases with an official trailer",
+    enabled: true,
+    order: -5,
+    sourceType: "coming_soon_trailers",
+    layoutStyle: "poster-row",
+  },
+  {
     id: "home_coming_soon",
     title: "Coming soon",
     subtitle: "Upcoming releases only — future dates",
     enabled: true,
-    order: -3,
+    order: -4,
     sourceType: "coming_soon",
     layoutStyle: "poster-row",
   },
@@ -25,17 +43,8 @@ export const DEFAULT_HOME_SPECIAL_SECTIONS: HomeSectionConfig[] = [
     title: "Next episodes",
     subtitle: "From your library — air dates ahead",
     enabled: true,
-    order: -2,
+    order: -3,
     sourceType: "next_episodes",
-    layoutStyle: "poster-row",
-  },
-  {
-    id: "home_upcoming_trailers",
-    title: "Upcoming trailers",
-    subtitle: "Trending upcoming movies & series with a trailer",
-    enabled: true,
-    order: -1,
-    sourceType: "upcoming_trending_trailers",
     layoutStyle: "poster-row",
   },
 ];
@@ -172,7 +181,7 @@ export function mergeHomeLayoutWithDefaults(saved: HomeSectionConfig[]): HomeSec
   for (const s of saved) {
     if (!DEFAULT_HOME_SECTIONS.some((c) => c.id === s.id)) merged.push(s);
   }
-  return normalizeSectionOrders(merged);
+  return normalizeSectionOrders(merged).filter((s) => s.id !== "home_watching_currently");
 }
 
 export function normalizeSectionOrders(sections: HomeSectionConfig[]): HomeSectionConfig[] {

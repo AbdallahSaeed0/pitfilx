@@ -1,6 +1,7 @@
 import type { MediaCard } from "./media";
 
 export type HomeSourceType =
+  | "watching_currently"
   | "continue_watching"
   | "recently_added"
   | "top_rated"
@@ -15,6 +16,8 @@ export type HomeSourceType =
   | "binge_series"
   | "coming_soon"
   | "next_episodes"
+  | "latest_trailers"
+  | "coming_soon_trailers"
   | "upcoming_trending_trailers"
   | "custom";
 

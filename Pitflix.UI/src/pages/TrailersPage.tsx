@@ -23,7 +23,12 @@ const modes: { id: TrailerBrowseMode; label: string; hint: string }[] = [
   {
     id: "latest",
     label: "Latest",
-    hint: "Recent-window titles plus trending / in theaters. Includes official trailers and teasers as separate clips when TMDB has both.",
+    hint: "New and upcoming trailers first (unreleased titles prioritized), one best clip per show — same logic as Home.",
+  },
+  {
+    id: "trending",
+    label: "Trending",
+    hint: "This week’s TMDB trending movies & series — trailer clips only, popularity-filtered.",
   },
 ];
 
@@ -65,7 +70,7 @@ export function TrailersPage() {
     else if (mode === "upcoming-tv") setFilter("tv");
   }, [mode]);
 
-  const showTypeFilter = mode === "latest" || mode === "all-upcoming";
+  const showTypeFilter = mode === "latest" || mode === "trending" || mode === "all-upcoming";
 
   const searchActive = debouncedSearch.trim().length >= 2;
   const q = useQuery({
@@ -87,11 +92,11 @@ export function TrailersPage() {
             Trailers
           </h1>
           <p className="mt-2 max-w-2xl text-sm text-pitflix-subtle">
-            <span className="font-medium text-white/90">Latest</span> loads a wide TMDB discover sweep for movies and
-            series with a release or first air from roughly the <strong>last four months</strong> through upcoming
-            titles, mixed with weekly trending and now playing / on-the-air. When TMDB lists both, you&apos;ll see
-            separate cards for an official <strong>trailer</strong> and a <strong>teaser</strong>. Other tabs focus on
-            unreleased slate. Search queries TMDB directly anytime.
+            <span className="font-medium text-white/90">Latest</span> matches Home: upcoming trailers first, then recent
+            drops (one clip per title).
+            <span className="font-medium text-white/90"> Trending</span> uses this week’s TMDB charts.{" "}
+            <span className="font-medium text-white/90">Upcoming</span> tabs require a future release date and a trailer
+            clip. Search queries TMDB directly anytime (at least 2 characters).
           </p>
         </div>
         <Link to="/" className="text-sm text-pitflix-primary hover:underline">

@@ -1,4 +1,5 @@
 import { useQuery } from "@tanstack/react-query";
+import { useMemo } from "react";
 import { CalendarClock } from "lucide-react";
 import { getComingSoon, type ComingSoonItem } from "../../api/homeDiscover";
 import { MediaImage } from "../../components/ui/MediaImage";
@@ -48,6 +49,28 @@ export function ComingSoonSection({ embedded = false }: ComingSoonProps) {
     staleTime: 120_000,
   });
 
+  const movies = useMemo(() => {
+    const list = [...(q.data?.movies ?? [])];
+    list.sort((a, b) => {
+      const da = a.releaseDate ?? "";
+      const db = b.releaseDate ?? "";
+      if (da !== db) return da.localeCompare(db);
+      return a.title.localeCompare(b.title, undefined, { sensitivity: "base" });
+    });
+    return list;
+  }, [q.data?.movies]);
+
+  const tv = useMemo(() => {
+    const list = [...(q.data?.tv ?? [])];
+    list.sort((a, b) => {
+      const da = a.releaseDate ?? "";
+      const db = b.releaseDate ?? "";
+      if (da !== db) return da.localeCompare(db);
+      return a.title.localeCompare(b.title, undefined, { sensitivity: "base" });
+    });
+    return list;
+  }, [q.data?.tv]);
+
   const wrapClass = embedded
     ? ""
     : "rounded-2xl border border-pitflix-card/40 bg-gradient-to-b from-pitflix-surface/40 to-pitflix-bg/20 p-6";
@@ -78,8 +101,6 @@ export function ComingSoonSection({ embedded = false }: ComingSoonProps) {
       </div>
     );
 
-  const movies = q.data?.movies ?? [];
-  const tv = q.data?.tv ?? [];
   if (movies.length === 0 && tv.length === 0) {
     return (
       <div
@@ -107,7 +128,9 @@ export function ComingSoonSection({ embedded = false }: ComingSoonProps) {
         {movies.length > 0 ? (
           <div>
             <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-pitflix-muted">Movies</p>
-            <div className="flex gap-3 overflow-x-auto pb-2">
+            <div
+              className="flex gap-3 overflow-x-auto pb-2 [scrollbar-color:rgba(139,92,246,0.4)_rgba(15,15,20,0.85)] [scrollbar-width:thin] [&::-webkit-scrollbar]:h-2 [&::-webkit-scrollbar-thumb]:rounded-full [&::-webkit-scrollbar-thumb]:bg-violet-500/40 [&::-webkit-scrollbar-track]:rounded-full [&::-webkit-scrollbar-track]:bg-black/40"
+            >
               {movies.map((m) => (
                 <Card key={`m-${m.tmdbId}`} item={m} />
               ))}
@@ -117,7 +140,9 @@ export function ComingSoonSection({ embedded = false }: ComingSoonProps) {
         {tv.length > 0 ? (
           <div>
             <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-pitflix-muted">Series</p>
-            <div className="flex gap-3 overflow-x-auto pb-2">
+            <div
+              className="flex gap-3 overflow-x-auto pb-2 [scrollbar-color:rgba(139,92,246,0.4)_rgba(15,15,20,0.85)] [scrollbar-width:thin] [&::-webkit-scrollbar]:h-2 [&::-webkit-scrollbar-thumb]:rounded-full [&::-webkit-scrollbar-thumb]:bg-violet-500/40 [&::-webkit-scrollbar-track]:rounded-full [&::-webkit-scrollbar-track]:bg-black/40"
+            >
               {tv.map((t) => (
                 <Card key={`t-${t.tmdbId}`} item={t} />
               ))}

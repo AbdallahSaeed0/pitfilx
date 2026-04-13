@@ -49,6 +49,10 @@ function crewAvatarSrc(c: CrewMember) {
   return undefined;
 }
 
+/** Hero poster: compact 2:3, same for movie and series detail. */
+const detailHeroPosterClass =
+  "hidden aspect-[2/3] w-[88px] max-h-[132px] shrink-0 overflow-hidden rounded-lg object-cover object-center shadow-xl ring-1 ring-white/10 sm:block sm:w-[96px] sm:max-h-[144px]";
+
 /** Routes must match library row kind; similar cards always set `tmdbMediaType` from the API. */
 function posterCardMediaType(item: MediaCard): "Movie" | "Series" {
   if (item.tmdbMediaType === "Series") return "Series";
@@ -109,29 +113,31 @@ export function MovieDetailPage() {
       >
         ← Back
       </button>
-      <div className="relative h-[420px] overflow-hidden rounded-xl">
-        {backdrop ? (
-          <div className="absolute inset-0 [&_img]:opacity-70">
-            <MediaImage
-              src={backdrop}
-              alt=""
-              className="h-full w-full bg-pitflix-card"
-              fallbackText=""
-            />
-          </div>
-        ) : (
-          <div className="absolute inset-0 bg-pitflix-card" />
-        )}
-        <div className="absolute inset-0 bg-gradient-to-r from-pitflix-bg via-pitflix-bg/60 to-transparent" />
-        <div className="absolute inset-0 bg-gradient-to-t from-pitflix-bg to-transparent" />
-        <div className="absolute bottom-0 left-0 flex max-w-[900px] items-end gap-6 p-8">
+      <div className="relative overflow-hidden rounded-xl bg-pitflix-card">
+        <div className="pointer-events-none absolute inset-0 min-h-[200px] sm:min-h-[240px]">
+          {backdrop ? (
+            <div className="absolute inset-0 [&_img]:opacity-70">
+              <MediaImage
+                src={backdrop}
+                alt=""
+                className="h-full w-full bg-pitflix-card"
+                fallbackText=""
+              />
+            </div>
+          ) : (
+            <div className="absolute inset-0 bg-pitflix-card" />
+          )}
+          <div className="absolute inset-0 bg-gradient-to-r from-pitflix-bg via-pitflix-bg/60 to-transparent" />
+          <div className="absolute inset-0 bg-gradient-to-t from-pitflix-bg to-transparent" />
+        </div>
+        <div className="relative z-10 flex w-full max-w-[min(100%,1040px)] flex-col gap-4 p-4 pt-24 sm:flex-row sm:items-start sm:gap-5 sm:p-8 sm:pt-28">
           <MediaImage
             src={poster}
             alt={movie.title}
-            className="hidden w-[140px] shrink-0 overflow-hidden rounded-lg shadow-2xl sm:block"
+            className={detailHeroPosterClass}
             fallbackText={movie.title}
           />
-          <div>
+          <div className="min-w-0 flex-1">
             <h1 className="text-3xl font-bold text-white sm:text-4xl">{movie.title}</h1>
             <p className="mt-2 text-sm text-pitflix-muted">
               {formatYear(movie.year)} · ★ {formatRating(movie.voteAverage)}
@@ -203,7 +209,7 @@ export function MovieDetailPage() {
                 if (newLibraryId !== mid) navigate(`/movie/${newLibraryId}`, { replace: true });
               }}
             />
-            <div className="mt-4 max-w-xl">
+            <div className="mt-4 w-full max-w-xl min-w-0">
               <RatingsPanel tmdbId={movie.tmdbId} mediaType="movie" />
             </div>
           </div>
@@ -399,29 +405,31 @@ export function ShowDetailPage() {
       >
         ← Back
       </button>
-      <div className="relative h-[420px] overflow-hidden rounded-xl">
-        {backdrop ? (
-          <div className="absolute inset-0 [&_img]:opacity-70">
-            <MediaImage
-              src={backdrop}
-              alt=""
-              className="h-full w-full bg-pitflix-card"
-              fallbackText=""
-            />
-          </div>
-        ) : (
-          <div className="absolute inset-0 bg-pitflix-card" />
-        )}
-        <div className="absolute inset-0 bg-gradient-to-r from-pitflix-bg via-pitflix-bg/60 to-transparent" />
-        <div className="absolute inset-0 bg-gradient-to-t from-pitflix-bg to-transparent" />
-        <div className="absolute bottom-0 left-0 flex max-w-[900px] items-end gap-6 p-8">
+      <div className="relative overflow-hidden rounded-xl bg-pitflix-card">
+        <div className="pointer-events-none absolute inset-0 min-h-[200px] sm:min-h-[240px]">
+          {backdrop ? (
+            <div className="absolute inset-0 [&_img]:opacity-70">
+              <MediaImage
+                src={backdrop}
+                alt=""
+                className="h-full w-full bg-pitflix-card"
+                fallbackText=""
+              />
+            </div>
+          ) : (
+            <div className="absolute inset-0 bg-pitflix-card" />
+          )}
+          <div className="absolute inset-0 bg-gradient-to-r from-pitflix-bg via-pitflix-bg/60 to-transparent" />
+          <div className="absolute inset-0 bg-gradient-to-t from-pitflix-bg to-transparent" />
+        </div>
+        <div className="relative z-10 flex w-full max-w-[min(100%,1040px)] flex-col gap-4 p-4 pt-24 sm:flex-row sm:items-start sm:gap-5 sm:p-8 sm:pt-28">
           <MediaImage
             src={poster}
             alt={show.title}
-            className="hidden w-[140px] shrink-0 overflow-hidden rounded-lg shadow-2xl sm:block"
+            className={detailHeroPosterClass}
             fallbackText={show.title}
           />
-          <div>
+          <div className="min-w-0 flex-1">
             <h1 className="text-3xl font-bold text-white sm:text-4xl">{show.title}</h1>
             <p className="mt-2 text-sm text-pitflix-muted">
               {formatYear(show.year)} · ★ {formatRating(show.voteAverage)}
@@ -504,7 +512,7 @@ export function ShowDetailPage() {
                 if (newLibraryId !== sid) navigate(`/series/${newLibraryId}`, { replace: true });
               }}
             />
-            <div className="mt-4 max-w-xl">
+            <div className="mt-4 w-full max-w-xl min-w-0">
               <RatingsPanel tmdbId={show.tmdbId} mediaType="tv" />
             </div>
           </div>

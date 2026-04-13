@@ -11,7 +11,7 @@ function phaseLabel(phase: ReturnType<typeof useAppUpdater>["phase"]): string | 
     case "downloading":
       return "Downloading update…";
     case "installing":
-      return "Installing update…";
+      return null;
     case "success":
       return "Finishing — the app will restart.";
     default:
@@ -119,7 +119,14 @@ export function AppUpdateSection() {
 
           {(phase === "downloading" || phase === "installing" || phase === "success") && (
             <div className="mt-4 space-y-2">
-              <p className="text-xs text-pitflix-muted">{phaseLabel(phase)}</p>
+              {phase === "installing" ? (
+                <>
+                  <p className="text-sm font-medium text-white">Pitflix will now close to complete the update.</p>
+                  <p className="text-[11px] text-pitflix-muted">Starting the installer…</p>
+                </>
+              ) : (
+                <p className="text-xs text-pitflix-muted">{phaseLabel(phase)}</p>
+              )}
               {phase === "downloading" && downloadPercent != null ? (
                 <div className="h-2 w-full overflow-hidden rounded-full bg-pitflix-bg">
                   <div

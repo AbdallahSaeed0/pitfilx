@@ -1,4 +1,4 @@
-import { isTauri } from "@tauri-apps/api/core";
+import { invoke, isTauri } from "@tauri-apps/api/core";
 import type { DownloadEvent, Update } from "@tauri-apps/plugin-updater";
 
 export function formatUpdaterError(err: unknown): string {
@@ -27,11 +27,17 @@ export async function fetchUpdateIfAny(): Promise<Update | null> {
   return check();
 }
 
-export async function downloadInstallAndRelaunch(
+/**
+ * Download the update, stop the bundled API sidecar (Windows: avoids file locks), then run the installer.
+ * On Windows the app exits from `install()` and does not return — `relaunch` only runs on platforms where install returns.
+ */
+export async function downloadUpdateThenInstall(
   update: Update,
   onEvent: (e: DownloadEvent) => void,
 ): Promise<void> {
+  await update.download(onEvent);
+  await invoke("prepare_update_exit");
   const { relaunch } = await import("@tauri-apps/plugin-process");
-  await update.downloadAndInstall(onEvent);
+  await update.install();
   await relaunch();
 }

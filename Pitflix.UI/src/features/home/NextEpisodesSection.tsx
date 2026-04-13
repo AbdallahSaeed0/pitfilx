@@ -12,21 +12,22 @@ function Row({
   title,
   sub,
   href,
+  external,
   releaseDate,
 }: {
   title: string;
   sub: string;
   href: string;
+  external?: boolean;
   releaseDate: string;
 }) {
   const target = airDateToUtcMs(releaseDate, null);
   const left = useCountdown(target);
   const cd = formatCountdown(left);
-  return (
-    <Link
-      to={href}
-      className="flex items-center justify-between gap-3 rounded-xl border border-pitflix-card/50 bg-pitflix-surface/40 px-4 py-3 transition-colors hover:border-pitflix-primary/40"
-    >
+  const className =
+    "flex items-center justify-between gap-3 rounded-xl border border-pitflix-card/50 bg-pitflix-surface/40 px-4 py-3 transition-colors hover:border-pitflix-primary/40";
+  const inner = (
+    <>
       <div className="min-w-0">
         <p className="truncate font-medium text-white">{title}</p>
         <p className="truncate text-xs text-pitflix-subtle">{sub}</p>
@@ -35,6 +36,17 @@ function Row({
         <p className="text-[11px] text-pitflix-muted">{releaseDate}</p>
         {cd ? <p className={cn("font-mono text-[11px] text-amber-100/90")}>{cd}</p> : null}
       </div>
+    </>
+  );
+  if (external)
+    return (
+      <a href={href} target="_blank" rel="noreferrer" className={className}>
+        {inner}
+      </a>
+    );
+  return (
+    <Link to={href} className={className}>
+      {inner}
     </Link>
   );
 }
@@ -169,15 +181,20 @@ export function NextEpisodesSection({ embedded = false }: NextEpisodesProps) {
         />
       </div>
       <div className="space-y-2">
-        {rows.map((r) => (
-          <Row
-            key={`${r.libraryShowId}-${r.airDate}-${r.season}-${r.episodeNumber}`}
-            title={r.showTitle}
-            sub={`${r.episodeTitle || "Episode"} · S${r.season ?? "?"}E${r.episodeNumber ?? "?"}`}
-            href={`/series/${r.libraryShowId}`}
-            releaseDate={r.airDate}
-          />
-        ))}
+        {rows.map((r) => {
+          const lib = r.libraryShowId != null;
+          const href = lib ? `/series/${r.libraryShowId}` : `https://www.themoviedb.org/tv/${r.showTmdbId}`;
+          return (
+            <Row
+              key={`${r.kind ?? "lib"}-${r.showTmdbId}-${r.airDate}-${r.season}-${r.episodeNumber}`}
+              title={r.showTitle}
+              sub={`${r.episodeTitle || "Episode"} · S${r.season ?? "?"}E${r.episodeNumber ?? "?"}`}
+              href={href}
+              external={!lib}
+              releaseDate={r.airDate}
+            />
+          );
+        })}
       </div>
     </div>
   );

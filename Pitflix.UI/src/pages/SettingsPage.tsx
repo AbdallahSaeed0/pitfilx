@@ -40,6 +40,9 @@ import { ApiHealthCheck } from "../components/ApiHealthCheck";
 import { ConfirmDialog } from "../components/ui/ConfirmDialog";
 import { getDesktopAutostartState, isWindowsHost, setDesktopAutostart } from "../utils/autostart";
 import { AppUpdateSection } from "../components/updater/AppUpdateSection";
+import { cn } from "../utils/cn";
+
+type SettingsTab = "library" | "stats" | "providers" | "playback" | "app" | "maintenance";
 
 function formatScanOrApiError(err: unknown): string {
   if (axios.isAxiosError(err)) {
@@ -125,6 +128,7 @@ export function SettingsPage() {
   const [osVerifyBusy, setOsVerifyBusy] = useState(false);
   const [autostartBusy, setAutostartBusy] = useState(false);
   const [autostartMessage, setAutostartMessage] = useState<string | null>(null);
+  const [settingsTab, setSettingsTab] = useState<SettingsTab>("library");
 
   const { data: autostartStatus } = useQuery({
     queryKey: ["autostart-status"],
@@ -482,19 +486,53 @@ export function SettingsPage() {
     (watchStats?.moviesCompleted ?? 0) + (watchStats?.seriesCompleted ?? 0);
 
   return (
-    <div className="mx-auto max-w-5xl p-6 md:p-8">
-      <h1 className="text-2xl font-bold text-white md:text-3xl">Settings</h1>
-      <p className="mt-1 text-xs text-pitflix-subtle">Library folders, external player, and maintenance</p>
+    <div className="mx-auto max-w-4xl space-y-4 p-4 md:p-6">
+      <header className="border-b border-white/5 pb-4">
+        <h1 className="text-2xl font-bold tracking-tight text-white md:text-3xl">Settings</h1>
+        <p className="mt-1.5 max-w-xl text-sm text-pitflix-subtle">
+          Library paths, integrations, playback, and maintenance — switch tabs to focus one area.
+        </p>
+      </header>
 
-      <div className="mt-4">
+      <nav className="sticky top-2 z-20 flex flex-wrap gap-1 rounded-xl border border-white/10 bg-pitflix-bg/95 px-2 py-1.5 shadow-lg shadow-black/20 backdrop-blur-md">
+        {(
+          [
+            ["library", "Library"],
+            ["stats", "Stats"],
+            ["providers", "API keys"],
+            ["playback", "Playback"],
+            ["app", "App & updates"],
+            ["maintenance", "Maintenance"],
+          ] as const
+        ).map(([id, label]) => (
+          <button
+            key={id}
+            type="button"
+            onClick={() => setSettingsTab(id)}
+            className={cn(
+              "rounded-lg px-2.5 py-1.5 text-[11px] font-medium transition-colors sm:px-3 sm:text-xs",
+              settingsTab === id
+                ? "bg-white/12 text-white"
+                : "text-pitflix-muted hover:bg-white/5 hover:text-white",
+            )}
+          >
+            {label}
+          </button>
+        ))}
+      </nav>
+
+      <div>
         <ApiHealthCheck />
       </div>
 
-      <div className="mt-5 grid grid-cols-1 gap-6 lg:grid-cols-2">
-        <div className="flex flex-col gap-6">
-          <section className="rounded-xl border border-pitflix-card/50 bg-pitflix-card p-5">
+      <div className="space-y-3">
+        <div className={cn(settingsTab !== "library" && "hidden", "space-y-3")}>
+          <section
+            id="settings-library"
+            className="rounded-xl border border-white/8 bg-pitflix-surface/35 p-4 shadow-md shadow-black/20"
+          >
             <div className="flex items-center justify-between gap-2">
-              <h2 className="text-sm font-semibold text-white">Library folders</h2>
+              <h2 className="text-base font-semibold text-white">Library folders</h2>
               <button
                 type="button"
                 disabled={pathBusy}
@@ -562,7 +600,7 @@ export function SettingsPage() {
             {libraryPickMessage ? <p className="mt-2 text-[11px] text-red-400/90">{libraryPickMessage}</p> : null}
           </section>
 
-          <section className="rounded-xl border border-pitflix-card/50 bg-pitflix-card p-5">
+          <section className="rounded-xl border border-white/8 bg-pitflix-surface/35 p-4 shadow-md shadow-black/20">
             <div className="flex items-center justify-between gap-2">
               <h2 className="text-sm font-semibold text-white">Auto-scan folders</h2>
               <button
@@ -626,7 +664,7 @@ export function SettingsPage() {
             {pinnedPickMessage ? <p className="mt-2 text-[11px] text-red-400/90">{pinnedPickMessage}</p> : null}
           </section>
 
-          <section className="rounded-xl border border-pitflix-card/50 bg-pitflix-card p-5">
+          <section className="rounded-xl border border-white/8 bg-pitflix-surface/35 p-4 shadow-md shadow-black/20">
             <div className="flex items-center justify-between gap-2">
               <h2 className="text-sm font-semibold text-white">Excluded folders</h2>
               <button
@@ -690,8 +728,13 @@ export function SettingsPage() {
             </div>
             {excludedPickMessage ? <p className="mt-2 text-[11px] text-red-400/90">{excludedPickMessage}</p> : null}
           </section>
+        </div>
 
-          <section className="rounded-xl border border-pitflix-card/50 bg-pitflix-card p-5">
+        <div className={cn(settingsTab !== "playback" && "hidden", "space-y-3")}>
+          <section
+            id="settings-playback"
+            className="rounded-xl border border-white/8 bg-pitflix-surface/35 p-4 shadow-md shadow-black/20"
+          >
             <h2 className="text-sm font-semibold text-white">External player</h2>
             <p className="mt-1 text-[10px] text-pitflix-subtle">
               PATH name or full .exe — resume uses VLC / mpv flags when possible.
@@ -766,8 +809,13 @@ export function SettingsPage() {
             </div>
             {playerMessage ? <p className="mt-2 text-[11px] text-pitflix-muted">{playerMessage}</p> : null}
           </section>
+        </div>
 
-          <section className="rounded-xl border border-pitflix-card/50 bg-pitflix-card p-5">
+        <div className={cn(settingsTab !== "app" && "hidden", "space-y-3")}>
+          <section
+            id="settings-app"
+            className="rounded-xl border border-white/8 bg-pitflix-surface/35 p-4 shadow-md shadow-black/20"
+          >
             <h2 className="text-sm font-semibold text-white">Application</h2>
             <p className="mt-1 text-[10px] text-pitflix-subtle">
               Desktop app settings
@@ -824,11 +872,16 @@ export function SettingsPage() {
             {autostartMessage ? <p className="mt-2 text-[11px] text-pitflix-muted">{autostartMessage}</p> : null}
           </section>
 
-          <AppUpdateSection />
+          <div id="settings-updates">
+            <AppUpdateSection />
+          </div>
         </div>
 
-        <div className="flex flex-col gap-6">
-          <section className="rounded-xl border border-pitflix-card/50 bg-pitflix-card p-5">
+        <div className={cn(settingsTab !== "stats" && "hidden", "space-y-3")}>
+          <section
+            id="settings-stats"
+            className="rounded-xl border border-white/8 bg-pitflix-surface/35 p-4 shadow-md shadow-black/20"
+          >
             <h2 className="mb-3 text-xs font-semibold uppercase tracking-wide text-pitflix-muted">Library stats</h2>
             <div className="grid grid-cols-3 gap-2">
               <div className="rounded-xl bg-pitflix-card p-3 text-center ring-1 ring-white/5">
@@ -846,7 +899,31 @@ export function SettingsPage() {
             </div>
           </section>
 
-          <section className="rounded-xl border border-pitflix-card/50 bg-pitflix-card p-5">
+          <section className="rounded-xl border border-white/8 bg-pitflix-surface/35 p-4 shadow-md shadow-black/20">
+            <h2 className="mb-2 text-xs font-semibold uppercase tracking-wide text-pitflix-muted">Watch overview</h2>
+            <p className="mb-3 text-[10px] text-pitflix-subtle">Matched library titles only.</p>
+            <div className="grid grid-cols-3 gap-2 text-center">
+              <div className="rounded-lg bg-pitflix-bg/80 py-2">
+                <p className="text-lg font-bold text-white">{watchNotStarted}</p>
+                <p className="text-[10px] text-pitflix-muted">Not watched</p>
+              </div>
+              <div className="rounded-lg bg-pitflix-bg/80 py-2">
+                <p className="text-lg font-bold text-white">{watchProgress}</p>
+                <p className="text-[10px] text-pitflix-muted">In progress</p>
+              </div>
+              <div className="rounded-lg bg-pitflix-bg/80 py-2">
+                <p className="text-lg font-bold text-white">{watchDone}</p>
+                <p className="text-[10px] text-pitflix-muted">Watched</p>
+              </div>
+            </div>
+          </section>
+        </div>
+
+        <div className={cn(settingsTab !== "providers" && "hidden", "space-y-3")}>
+          <section
+            id="settings-providers"
+            className="rounded-xl border border-white/8 bg-pitflix-surface/35 p-4 shadow-md shadow-black/20"
+          >
             <h2 className="mb-3 text-sm font-semibold text-white">API keys</h2>
             <p className="mb-4 text-[10px] text-pitflix-subtle">
               Stored in your Pitflix database for this Windows user — not in appsettings files.
@@ -987,27 +1064,13 @@ export function SettingsPage() {
               {apiKeyMsg ? <p className="text-[11px] text-pitflix-muted">{apiKeyMsg}</p> : null}
             </div>
           </section>
+        </div>
 
-          <section className="rounded-xl border border-pitflix-card/50 bg-pitflix-card p-5">
-            <h2 className="mb-2 text-xs font-semibold uppercase tracking-wide text-pitflix-muted">Watch overview</h2>
-            <p className="mb-3 text-[10px] text-pitflix-subtle">Matched library titles only.</p>
-            <div className="grid grid-cols-3 gap-2 text-center">
-              <div className="rounded-lg bg-pitflix-bg/80 py-2">
-                <p className="text-lg font-bold text-white">{watchNotStarted}</p>
-                <p className="text-[10px] text-pitflix-muted">Not watched</p>
-              </div>
-              <div className="rounded-lg bg-pitflix-bg/80 py-2">
-                <p className="text-lg font-bold text-white">{watchProgress}</p>
-                <p className="text-[10px] text-pitflix-muted">In progress</p>
-              </div>
-              <div className="rounded-lg bg-pitflix-bg/80 py-2">
-                <p className="text-lg font-bold text-white">{watchDone}</p>
-                <p className="text-[10px] text-pitflix-muted">Watched</p>
-              </div>
-            </div>
-          </section>
-
-          <section className="rounded-xl border border-pitflix-card/50 bg-pitflix-card p-5">
+        <div className={cn(settingsTab !== "maintenance" && "hidden", "space-y-3")}>
+          <section
+            id="settings-maintenance"
+            className="rounded-xl border border-white/8 bg-pitflix-surface/35 p-4 shadow-md shadow-black/20"
+          >
             <h2 className="mb-3 text-xs font-semibold uppercase tracking-wide text-pitflix-muted">Maintenance</h2>
             <div className="grid grid-cols-2 gap-2">
               <button

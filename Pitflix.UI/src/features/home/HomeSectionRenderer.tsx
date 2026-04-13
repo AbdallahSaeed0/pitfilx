@@ -18,10 +18,13 @@ import { ContinueWatchingRow } from "./ContinueWatchingRow";
 import { ComingSoonSection } from "./ComingSoonSection";
 import { NextEpisodesSection } from "./NextEpisodesSection";
 import { LatestTrailersSection } from "./LatestTrailersSection";
-
+import { ComingSoonTrailersSection } from "./ComingSoonTrailersSection";
 function seeAllHref(section: HomeSectionConfig): string | null {
+  if (section.sourceType === "watching_currently") return "/series";
   if (section.sourceType === "next_episodes") return "/next-episodes";
-  if (section.sourceType === "upcoming_trending_trailers") return "/trailers?mode=all-upcoming";
+  if (section.sourceType === "latest_trailers") return "/trailers?mode=latest";
+  if (section.sourceType === "coming_soon_trailers" || section.sourceType === "upcoming_trending_trailers")
+    return "/trailers?mode=all-upcoming";
   if (section.sourceType === "coming_soon") return null;
   if (section.mediaType === "series") return "/series";
   if (section.mediaType === "movie") return "/movies";
@@ -31,7 +34,11 @@ function seeAllHref(section: HomeSectionConfig): string | null {
 
 function isHomeDiscoverSpecial(st: HomeSectionConfig["sourceType"]): boolean {
   return (
-    st === "coming_soon" || st === "next_episodes" || st === "upcoming_trending_trailers"
+    st === "coming_soon" ||
+    st === "next_episodes" ||
+    st === "latest_trailers" ||
+    st === "coming_soon_trailers" ||
+    st === "upcoming_trending_trailers"
   );
 }
 
@@ -222,12 +229,18 @@ export function HomeSectionRenderer({
     );
   }
 
+  if (section.sourceType === "watching_currently") return null;
+
   if (isHomeDiscoverSpecial(section.sourceType)) {
     const inner =
       section.sourceType === "coming_soon" ? (
         <ComingSoonSection embedded />
       ) : section.sourceType === "next_episodes" ? (
         <NextEpisodesSection embedded />
+      ) : section.sourceType === "latest_trailers" ? (
+        <LatestTrailersSection embedded />
+      ) : section.sourceType === "coming_soon_trailers" || section.sourceType === "upcoming_trending_trailers" ? (
+        <ComingSoonTrailersSection embedded />
       ) : (
         <LatestTrailersSection embedded />
       );

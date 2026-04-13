@@ -1,0 +1,15 @@
+{
+  "default": null,
+  "permission": [
+    {
+      "identifier": "allow-prepare-update-exit",
+      "description": "Stop bundled API before updater install",
+      "commands": {
+        "allow": [
+          "prepare_update_exit"
+        ],
+        "deny": []
+      }
+    }
+  ]
+}

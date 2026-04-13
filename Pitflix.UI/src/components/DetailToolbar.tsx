@@ -227,14 +227,18 @@ export function DetailToolbar({
     document.getElementById("detail-similar")?.scrollIntoView({ behavior: "smooth", block: "start" });
 
   const btnClass =
-    "inline-flex items-center gap-1.5 rounded-lg border border-pitflix-card px-3 py-2.5 text-sm font-medium text-pitflix-muted transition-colors hover:border-pitflix-primary/50 hover:text-white disabled:opacity-45";
+    "inline-flex shrink-0 items-center gap-1.5 rounded-lg border border-pitflix-card px-3 py-2.5 text-sm font-medium text-pitflix-muted transition-colors hover:border-pitflix-primary/50 hover:text-white disabled:opacity-45";
+
+  const scrollRow =
+    "max-w-full overflow-x-auto overflow-y-visible pb-1 pt-0.5 [scrollbar-color:rgba(139,92,246,0.45)_rgba(15,15,20,0.85)] [scrollbar-width:thin] [&::-webkit-scrollbar]:h-2 [&::-webkit-scrollbar-thumb]:rounded-full [&::-webkit-scrollbar-thumb]:bg-violet-500/45 [&::-webkit-scrollbar-thumb]:hover:bg-violet-400/55 [&::-webkit-scrollbar-track]:rounded-full [&::-webkit-scrollbar-track]:bg-black/50";
 
   const hasPath = kind === "movie" ? !!filePath : !!folderPath;
 
   return (
-    <div className="mt-5 space-y-3">
+    <div className="mt-5 w-full min-w-0 space-y-3">
       <div className="flex flex-col gap-3">
-        <div className="flex flex-wrap items-center gap-2 sm:gap-3">
+        <div className={cn(scrollRow)}>
+          <div className="flex w-max flex-nowrap items-center gap-2 sm:gap-3">
           <button
             type="button"
             className={cn(btnClass, isCompleted && "border-green-600/50 text-green-400")}
@@ -275,8 +279,10 @@ export function DetailToolbar({
               ))}
             </select>
           </div>
+          </div>
         </div>
-        <div className="flex flex-wrap items-center gap-2 sm:gap-3">
+        <div className={cn(scrollRow)}>
+          <div className="flex w-max flex-nowrap items-center gap-2 sm:gap-3">
           <button type="button" className={btnClass} disabled={busy !== null} onClick={() => void onRefreshMetadata()}>
             <RefreshCw className={cn("h-4 w-4", busy === "refresh" && "animate-spin")} strokeWidth={2} />
             Refresh from TMDB
@@ -343,6 +349,7 @@ export function DetailToolbar({
               Delete from device
             </button>
           )}
+          </div>
         </div>
       </div>
       {actionMsg ? <p className="text-sm text-pitflix-muted">{actionMsg}</p> : null}

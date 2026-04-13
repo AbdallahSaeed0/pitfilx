@@ -4,7 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import type { Update } from "@tauri-apps/plugin-updater";
 import { useAppPrefsStore } from "../../store/appPrefsStore";
-import { downloadInstallAndRelaunch, fetchUpdateIfAny, formatUpdaterError } from "../../updater/updaterService";
+import { downloadUpdateThenInstall, fetchUpdateIfAny, formatUpdaterError } from "../../updater/updaterService";
 
 /**
  * One-time check after launch when `checkUpdatesOnStartup` is enabled. Never downloads without user action.
@@ -50,7 +50,7 @@ export function UpdateStartupBanner() {
     if (!update) return;
     setBusy(true);
     try {
-      await downloadInstallAndRelaunch(update, () => {});
+      await downloadUpdateThenInstall(update, () => {});
       setUpdate(null);
     } catch (e) {
       console.warn("[pitflix updater]", formatUpdaterError(e));

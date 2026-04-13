@@ -10,9 +10,12 @@ import type {
 
 const SOURCE_OPTIONS: { value: HomeSourceType; label: string }[] = [
   { value: "continue_watching", label: "Continue watching" },
+  { value: "watching_currently", label: "Watching currently (series progress)" },
   { value: "coming_soon", label: "Coming soon (TMDB)" },
   { value: "next_episodes", label: "Next episodes (library + TMDB)" },
-  { value: "upcoming_trending_trailers", label: "Upcoming trailers (trending + clip)" },
+  { value: "latest_trailers", label: "Latest trailers (upcoming-first, same as Trailers › Latest)" },
+  { value: "coming_soon_trailers", label: "Coming soon with trailer" },
+  { value: "upcoming_trending_trailers", label: "Upcoming trailers (legacy)" },
   { value: "recently_added", label: "Recently added" },
   { value: "top_rated", label: "Top rated (library)" },
   { value: "unfinished_series", label: "Unfinished series" },
@@ -81,7 +84,10 @@ function parseCsv(s: string): string[] {
 function canonicalHomeSectionId(sourceType: HomeSourceType, currentId: string): string {
   if (sourceType === "coming_soon") return "home_coming_soon";
   if (sourceType === "next_episodes") return "home_next_episodes";
-  if (sourceType === "upcoming_trending_trailers") return "home_upcoming_trailers";
+  if (sourceType === "watching_currently") return "home_watching_currently";
+  if (sourceType === "latest_trailers") return "home_latest_trailers";
+  if (sourceType === "coming_soon_trailers" || sourceType === "upcoming_trending_trailers")
+    return "home_coming_soon_trailers";
   return currentId;
 }
 

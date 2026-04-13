@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import type { DownloadEvent, Update } from "@tauri-apps/plugin-updater";
 import { isTauri } from "@tauri-apps/api/core";
 import {
-  downloadInstallAndRelaunch,
+  downloadUpdateThenInstall,
   fetchUpdateIfAny,
   formatUpdaterError,
   getDesktopAppVersion,
@@ -18,16 +18,6 @@ export type AppUpdaterPhase =
   | "installing"
   | "success"
   | "error";
-
-export type AppUpdaterState = {
-  phase: AppUpdaterPhase;
-  errorMessage: string | null;
-  currentVersion: string;
-  availableVersion: string | null;
-  releaseNotes: string | null;
-  releaseDate: string | null;
-  downloadPercent: number | null;
-};
 
 export function useAppUpdater() {
   const [phase, setPhase] = useState<AppUpdaterPhase>("idle");
@@ -133,7 +123,7 @@ export function useAppUpdater() {
     };
 
     try {
-      await downloadInstallAndRelaunch(update, onEvent);
+      await downloadUpdateThenInstall(update, onEvent);
       setPhase("success");
     } catch (e) {
       setPhase("error");

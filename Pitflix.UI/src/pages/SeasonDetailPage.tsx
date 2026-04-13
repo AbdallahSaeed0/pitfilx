@@ -1,5 +1,5 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { useMemo, useState } from "react";
+import { useCallback, useMemo, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import { setEpisodeWatchStatus } from "../api/episodes";
 import { rematchEpisodeFromFile } from "../api/library";
@@ -41,6 +41,19 @@ export function SeasonDetailPage() {
   const [episodePickId, setEpisodePickId] = useState<number | null>(null);
   const [episodeRematchBusyId, setEpisodeRematchBusyId] = useState<number | null>(null);
   const [episodeActionMsg, setEpisodeActionMsg] = useState<string | null>(null);
+  const [selectedIds, setSelectedIds] = useState<Set<number>>(() => new Set());
+  const [bulkBusy, setBulkBusy] = useState(false);
+
+  const toggleSelect = useCallback((id: number) => {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }, []);
+
+  const clearSelection = useCallback(() => setSelectedIds(new Set()), []);
 
   const { data, isLoading } = useQuery({
     queryKey: ["show-season", libraryId, season],
@@ -48,12 +61,95 @@ export function SeasonDetailPage() {
     enabled: Number.isFinite(libraryId) && libraryId > 0 && Number.isFinite(season),
   });
 
+  const selectAllInSeason = useCallback(() => {
+    const eps = (data?.episodes ?? []) as EpisodeRow[];
+    setSelectedIds(new Set(eps.map((e) => e.id)));
+  }, [data?.episodes]);
+
   const show = data?.show as { title?: string; tmdbId?: number; selectedPosterPath?: string; posterLocalPath?: string } | undefined;
   const episodes = (data?.episodes ?? []) as EpisodeRow[];
   const nextEpisode = data?.nextEpisode as
     | { id: number; season: number; episodeNumber: number; title?: string; filePath: string }
     | null
     | undefined;
+
+  const bulkMarkWatched = useCallback(async () => {
+    const ids = [...selectedIds];
+    if (ids.length === 0) return;
+    setBulkBusy(true);
+    try {
+      await Promise.all(ids.map((id) => setEpisodeWatchStatus(id, "Completed")));
+      void qc.invalidateQueries({ queryKey: ["show-season", libraryId, season] });
+      void qc.invalidateQueries({ queryKey: ["show", libraryId] });
+      clearSelection();
+    } catch {
+      setEpisodeActionMsg("Could not update watch status for all selected.");
+    } finally {
+      setBulkBusy(false);
+    }
+  }, [selectedIds, qc, libraryId, season, clearSelection]);
+
+  const bulkMarkUnwatched = useCallback(async () => {
+    const ids = [...selectedIds];
+    if (ids.length === 0) return;
+    setBulkBusy(true);
+    try {
+      await Promise.all(ids.map((id) => setEpisodeWatchStatus(id, "Unwatched")));
+      void qc.invalidateQueries({ queryKey: ["show-season", libraryId, season] });
+      void qc.invalidateQueries({ queryKey: ["show", libraryId] });
+      clearSelection();
+    } catch {
+      setEpisodeActionMsg("Could not update watch status for all selected.");
+    } finally {
+      setBulkBusy(false);
+    }
+  }, [selectedIds, qc, libraryId, season, clearSelection]);
+
+  const bulkRematch = useCallback(async () => {
+    const withFile = episodes.filter((e) => selectedIds.has(e.id) && e.filePath);
+    if (withFile.length === 0) {
+      setEpisodeActionMsg("Selected episodes have no video file to re-match.");
+      return;
+    }
+    const ok = await pitflixConfirm(
+      `Re-match ${withFile.length} episode file(s)? Each will be removed from the library and matched again.`,
+    );
+    if (!ok) return;
+    setBulkBusy(true);
+    setEpisodeActionMsg(null);
+    try {
+      for (const ep of withFile) {
+        const r = await rematchEpisodeFromFile(ep.id);
+        if (!r.success) {
+          setEpisodeActionMsg(r.error ?? "Re-match failed.");
+          return;
+        }
+        if (r.showId != null && r.showId !== libraryId) {
+          navigate(`/series/${r.showId}/season/${season}`, { replace: true });
+          clearSelection();
+          return;
+        }
+      }
+      void qc.invalidateQueries({ queryKey: ["show-season", libraryId, season] });
+      void qc.invalidateQueries({ queryKey: ["show", libraryId] });
+      clearSelection();
+      setEpisodeActionMsg("Re-match finished for selected files.");
+      window.setTimeout(() => setEpisodeActionMsg(null), 4500);
+    } catch {
+      setEpisodeActionMsg("Could not reach the API.");
+    } finally {
+      setBulkBusy(false);
+    }
+  }, [episodes, selectedIds, libraryId, season, navigate, qc, clearSelection]);
+
+  const bulkRelink = useCallback(() => {
+    if (selectedIds.size !== 1) {
+      setEpisodeActionMsg("Re-link one episode at a time — select a single episode.");
+      window.setTimeout(() => setEpisodeActionMsg(null), 4500);
+      return;
+    }
+    setEpisodePickId([...selectedIds][0]!);
+  }, [selectedIds]);
 
   const poster = useMemo(
     () => toPosterSrc(show?.selectedPosterPath || show?.posterLocalPath || undefined),
@@ -118,20 +214,50 @@ export function SeasonDetailPage() {
         <p className="mt-6 text-sm text-pitflix-muted">{episodeActionMsg}</p>
       ) : null}
 
-      <section className="mt-8">
-        <h2 className="mb-4 text-xl font-bold">Episodes</h2>
+      <section className="mt-8 pb-24">
+        <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
+          <h2 className="text-xl font-bold">Episodes</h2>
+          {episodes.length > 0 ? (
+            <div className="flex flex-wrap items-center gap-2 text-xs">
+              <button
+                type="button"
+                className="rounded-lg border border-white/10 bg-pitflix-card/80 px-2.5 py-1.5 font-medium text-pitflix-muted hover:text-white"
+                onClick={() => selectAllInSeason()}
+              >
+                Select all
+              </button>
+              <button
+                type="button"
+                className="rounded-lg border border-white/10 bg-pitflix-card/80 px-2.5 py-1.5 font-medium text-pitflix-muted hover:text-white"
+                onClick={() => clearSelection()}
+              >
+                Clear
+              </button>
+            </div>
+          ) : null}
+        </div>
         <div className="space-y-2">
           {episodes.map((ep) => {
             const isWatched = ep.watchStatus === "Completed";
             const isNextUp = nextEpisode != null && ep.id === nextEpisode.id;
             const epThumb = toPosterSrc(ep.stillLocalPath ?? undefined) ?? poster;
+            const isSelected = selectedIds.has(ep.id);
             return (
               <div
                 key={ep.id}
-                className={`group flex items-center gap-4 rounded-2xl border border-transparent bg-pitflix-bg/50 py-3 pl-4 pr-4 transition-all hover:border-pitflix-primary/30 hover:bg-pitflix-card/90 ${
+                className={`group flex items-center gap-3 rounded-2xl border border-transparent bg-pitflix-bg/50 py-3 pl-3 pr-4 transition-all hover:border-pitflix-primary/30 hover:bg-pitflix-card/90 sm:gap-4 sm:pl-4 ${
                   isNextUp ? "border-l-4 border-l-pitflix-primary" : ""
-                }`}
+                } ${isSelected ? "border-pitflix-primary/40 bg-pitflix-card/70 ring-1 ring-pitflix-primary/25" : ""}`}
               >
+                <label className="flex shrink-0 cursor-pointer items-center justify-center p-1">
+                  <input
+                    type="checkbox"
+                    className="h-4 w-4 rounded border-pitflix-card bg-pitflix-bg text-pitflix-primary focus:ring-pitflix-primary"
+                    checked={isSelected}
+                    onChange={() => toggleSelect(ep.id)}
+                    aria-label={`Select episode ${ep.episodeNumber}`}
+                  />
+                </label>
                 <MediaImage
                   src={epThumb}
                   alt=""
@@ -292,6 +418,59 @@ export function SeasonDetailPage() {
           }
         }}
       />
+
+      {selectedIds.size > 0 ? (
+        <div className="fixed bottom-0 left-0 right-0 z-40 border-t border-white/10 bg-pitflix-bg/95 px-4 py-3 shadow-[0_-8px_32px_rgba(0,0,0,0.5)] backdrop-blur-md">
+          <div className="mx-auto flex max-w-4xl flex-wrap items-center justify-between gap-3">
+            <p className="text-sm text-white">
+              <span className="font-semibold text-pitflix-primary">{selectedIds.size}</span>{" "}
+              {selectedIds.size === 1 ? "episode" : "episodes"} selected
+            </p>
+            <div className="flex flex-wrap gap-2">
+              <button
+                type="button"
+                disabled={bulkBusy}
+                className="rounded-lg bg-pitflix-primary px-3 py-2 text-xs font-semibold text-white hover:bg-pitflix-light disabled:opacity-45"
+                onClick={() => void bulkMarkWatched()}
+              >
+                Mark watched
+              </button>
+              <button
+                type="button"
+                disabled={bulkBusy}
+                className="rounded-lg border border-pitflix-card bg-pitflix-surface px-3 py-2 text-xs font-semibold text-pitflix-muted hover:text-white disabled:opacity-45"
+                onClick={() => void bulkMarkUnwatched()}
+              >
+                Mark not watched
+              </button>
+              <button
+                type="button"
+                disabled={bulkBusy}
+                className="rounded-lg border border-pitflix-card bg-pitflix-surface px-3 py-2 text-xs font-semibold text-pitflix-muted hover:text-white disabled:opacity-45"
+                onClick={() => void bulkRematch()}
+              >
+                Re-match files
+              </button>
+              <button
+                type="button"
+                disabled={bulkBusy}
+                className="rounded-lg border border-pitflix-card bg-pitflix-surface px-3 py-2 text-xs font-semibold text-pitflix-muted hover:text-white disabled:opacity-45"
+                onClick={() => bulkRelink()}
+              >
+                Re-link…
+              </button>
+              <button
+                type="button"
+                disabled={bulkBusy}
+                className="rounded-lg border border-white/10 px-3 py-2 text-xs text-pitflix-muted hover:text-white disabled:opacity-45"
+                onClick={() => clearSelection()}
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
     </div>
   );
 }

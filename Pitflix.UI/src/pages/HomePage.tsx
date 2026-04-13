@@ -12,9 +12,11 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import { fetchFeaturedFallback, fetchHomeLayout, saveHomeLayout } from "../api/homeLayout";
+import { getWatchingCurrently } from "../api/homeDiscover";
 import { dismissHistoryEntry, getHistory } from "../api/history";
 import { getStats } from "../api/stats";
 import { ContinueWatchingHero, ContinueWatchingMenuDialog, FeaturedFallbackHero } from "../features/home/ContinueWatchingHero";
+import { WatchingCurrentlySection } from "../features/home/WatchingCurrentlySection";
 import { HomeSectionRenderer } from "../features/home/HomeSectionRenderer";
 import { HomeSectionSlot } from "../features/home/HomeSectionSlot";
 import { QuickActionsStrip } from "../features/home/QuickActionsStrip";
@@ -82,6 +84,12 @@ export function HomePage() {
     staleTime: 120_000,
   });
 
+  const watchingQ = useQuery({
+    queryKey: ["home-watching-currently"],
+    queryFn: getWatchingCurrently,
+    staleTime: 45_000,
+  });
+
   useQuery({ queryKey: ["stats"], queryFn: getStats, staleTime: 60_000 });
 
   const saveMutation = useMutation({
@@ -115,6 +123,7 @@ export function HomePage() {
       void qc.invalidateQueries({ queryKey: ["home-series"] });
     }
     void qc.invalidateQueries({ predicate: (q) => q.queryKey[0] === "home-section" });
+    void qc.invalidateQueries({ queryKey: ["home-watching-currently"] });
   };
 
   const dismissContinueOnly = () => {
@@ -242,6 +251,10 @@ export function HomePage() {
         </div>
       ) : null}
 
+      <section className="mb-8">
+        <WatchingCurrentlySection />
+      </section>
+
       {historyQ.isLoading ? (
         <HeroSkeleton />
       ) : featured ? (
@@ -250,7 +263,7 @@ export function HomePage() {
           side={heroSide}
           onManageContinue={setContinueMenuId}
         />
-      ) : featuredQ.data ? (
+      ) : (watchingQ.data?.length ?? 0) === 0 && featuredQ.data ? (
         <FeaturedFallbackHero card={featuredQ.data} />
       ) : null}
 

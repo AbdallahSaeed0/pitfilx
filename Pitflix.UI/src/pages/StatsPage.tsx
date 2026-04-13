@@ -5,6 +5,7 @@ import { MediaImage } from "../components/ui/MediaImage";
 import { Spinner } from "../components/ui/Spinner";
 import type { MediaCard } from "../types/media";
 import { toPosterSrc } from "../utils/posterSrc";
+import { cn } from "../utils/cn";
 
 export function StatsPage() {
   const navigate = useNavigate();
@@ -25,44 +26,123 @@ export function StatsPage() {
   const circ = 2 * Math.PI * 36;
 
   return (
-    <div>
-      <button
-        type="button"
-        onClick={() => navigate(-1)}
-        className="mb-4 text-sm text-pitflix-muted hover:text-white"
-      >
-        ← Back
-      </button>
-      <h1 className="mb-8 text-3xl font-bold text-white">📊 Statistics</h1>
-
-      <div className="mb-6 grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
-        <StatCard emoji="🕐" value={`${hoursTotal}h`} label="Total watched" sub="Approx. from history" />
-        <StatCard emoji="🎬" value={String(data.totalMoviesWatched)} label="Movies watched" sub="Completed" />
-        <StatCard
-          emoji="📺"
-          value={`${data.totalEpisodesWatched} eps`}
-          label="Episodes watched"
-          sub={`${data.totalSeriesCompleted} series done`}
-        />
-        <StatCard emoji="🔥" value={`${data.watchStreak}`} label="Day streak" sub="Activity days in a row" />
+    <div className="mx-auto max-w-6xl space-y-10 pb-14">
+      <div>
+        <button
+          type="button"
+          onClick={() => navigate(-1)}
+          className="mb-3 text-sm text-pitflix-muted transition-colors hover:text-white"
+        >
+          ← Back
+        </button>
+        <h1 className="text-3xl font-bold tracking-tight text-white">Statistics</h1>
+        <p className="mt-2 max-w-2xl text-sm text-pitflix-subtle">
+          Library completion, momentum, and taste — from watch history and TMDB-backed metadata where available.
+        </p>
       </div>
 
-      <div className="mb-6 grid gap-6 lg:grid-cols-2">
-        <div className="rounded-xl bg-pitflix-card p-5">
-          <h2 className="mb-4 text-lg font-semibold text-white">Top genres</h2>
-          <div className="space-y-3">
+      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+        <StatCard
+          accent="from-violet-500/20 to-transparent"
+          value={`${hoursTotal}h`}
+          label="Total watch time"
+          sub="Estimated from session history"
+        />
+        <StatCard
+          accent="from-amber-500/20 to-transparent"
+          value={String(data.totalMoviesWatched)}
+          label="Movies completed"
+          sub="Marked finished in library"
+        />
+        <StatCard
+          accent="from-sky-500/20 to-transparent"
+          value={`${data.totalEpisodesWatched}`}
+          label="Episodes completed"
+          sub={`${data.totalSeriesCompleted} series fully done`}
+        />
+        <StatCard
+          accent="from-rose-500/20 to-transparent"
+          value={`${data.watchStreak}`}
+          label="Day streak"
+          sub="Consecutive days with activity"
+        />
+      </div>
+
+      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+        <StatCard
+          accent="from-emerald-500/15 to-transparent"
+          value={String(data.currentlyWatchingCount ?? 0)}
+          label="Currently watching"
+          sub="Shows with progress & a next episode in library"
+        />
+        <StatCard
+          accent="from-cyan-500/15 to-transparent"
+          value={String(data.episodesCompletedThisWeek ?? 0)}
+          label="Episodes this week"
+          sub="Finished episodes (UTC week)"
+        />
+        <StatCard
+          accent="from-fuchsia-500/15 to-transparent"
+          value={`${(data.seriesCompletionPercent ?? 0).toFixed(0)}%`}
+          label="Series completion"
+          sub="Matched series marked fully completed"
+        />
+        <StatCard
+          accent="from-orange-500/15 to-transparent"
+          value={String(data.rewatchSessionsApprox ?? 0)}
+          label="Rewatch sessions (est.)"
+          sub="Files played on 2+ separate days"
+        />
+      </div>
+
+      <div className="grid gap-6 lg:grid-cols-3">
+        <div className="rounded-2xl border border-pitflix-card/50 bg-gradient-to-b from-pitflix-surface/60 to-pitflix-bg/40 p-6 shadow-lg shadow-black/20">
+          <h2 className="mb-1 text-lg font-semibold text-white">Completed by decade</h2>
+          <p className="mb-5 text-xs text-pitflix-muted">
+            Based on release year on completed movies & series (library metadata)
+          </p>
+          <div className="space-y-4">
+            {(data.decadeTop ?? []).length === 0 ? (
+              <p className="text-sm text-pitflix-muted">Complete a few dated titles to see decade spread.</p>
+            ) : (
+              (() => {
+                const dt = data.decadeTop ?? [];
+                const maxD = Math.max(1, ...dt.map((x) => x.count));
+                return dt.map((d) => (
+                  <div key={d.decade}>
+                    <div className="mb-1.5 flex justify-between text-xs">
+                      <span className="font-medium text-white">{d.decade}</span>
+                      <span className="text-pitflix-muted">{d.count} completed</span>
+                    </div>
+                    <div className="h-2 w-full overflow-hidden rounded-full bg-pitflix-bg">
+                      <div
+                        className="h-full rounded-full bg-gradient-to-r from-emerald-500/80 to-teal-400/90"
+                        style={{ width: `${Math.min(100, (100 * d.count) / maxD)}%` }}
+                      />
+                    </div>
+                  </div>
+                ));
+              })()
+            )}
+          </div>
+        </div>
+
+        <div className="rounded-2xl border border-pitflix-card/50 bg-gradient-to-b from-pitflix-surface/60 to-pitflix-bg/40 p-6 shadow-lg shadow-black/20">
+          <h2 className="mb-1 text-lg font-semibold text-white">Top genres</h2>
+          <p className="mb-5 text-xs text-pitflix-muted">From completed movies & series with genre metadata</p>
+          <div className="space-y-4">
             {data.topGenres.length === 0 ? (
-              <p className="text-sm text-pitflix-muted">No completed titles with genres yet.</p>
+              <p className="text-sm text-pitflix-muted">Complete a few titles with genres to see this fill in.</p>
             ) : (
               data.topGenres.map((g) => (
                 <div key={g.genre}>
-                  <div className="mb-1 flex justify-between text-xs text-pitflix-muted">
-                    <span className="text-white">{g.genre}</span>
-                    <span>{g.count}</span>
+                  <div className="mb-1.5 flex justify-between text-xs">
+                    <span className="font-medium text-white">{g.genre}</span>
+                    <span className="text-pitflix-muted">{g.count} completed</span>
                   </div>
                   <div className="h-2 w-full overflow-hidden rounded-full bg-pitflix-bg">
                     <div
-                      className="h-full rounded-full bg-pitflix-primary"
+                      className="h-full rounded-full bg-gradient-to-r from-pitflix-primary to-violet-400"
                       style={{
                         width: `${Math.min(100, (100 * g.count) / Math.max(1, data.topGenres[0]?.count ?? 1))}%`,
                       }}
@@ -74,10 +154,11 @@ export function StatsPage() {
           </div>
         </div>
 
-        <div className="rounded-xl bg-pitflix-card p-5">
-          <h2 className="mb-4 text-lg font-semibold text-white">Movies vs series</h2>
-          <div className="flex flex-col items-center gap-4 sm:flex-row sm:justify-center">
-            <div className="relative h-28 w-28 shrink-0">
+        <div className="rounded-2xl border border-pitflix-card/50 bg-gradient-to-b from-pitflix-surface/60 to-pitflix-bg/40 p-6 shadow-lg shadow-black/20">
+          <h2 className="mb-1 text-lg font-semibold text-white">Movies vs series</h2>
+          <p className="mb-5 text-xs text-pitflix-muted">Weighted by completed movies vs episode/series completions</p>
+          <div className="flex flex-col items-center gap-6 sm:flex-row sm:justify-center sm:gap-10">
+            <div className="relative h-32 w-32 shrink-0">
               <svg viewBox="0 0 80 80" className="h-full w-full -rotate-90">
                 <circle cx="40" cy="40" r="36" fill="none" stroke="rgb(40,40,55)" strokeWidth="8" />
                 <circle
@@ -103,65 +184,77 @@ export function StatsPage() {
                 />
               </svg>
               <div className="absolute inset-0 flex flex-col items-center justify-center text-center">
-                <span className="text-xs font-bold text-pitflix-primary">{mp.toFixed(0)}%</span>
+                <span className="text-lg font-bold text-pitflix-primary">{mp.toFixed(0)}%</span>
                 <span className="text-[10px] text-pitflix-muted">movies</span>
               </div>
             </div>
-            <div className="text-sm text-pitflix-muted">
+            <div className="max-w-xs space-y-2 text-sm text-pitflix-muted">
               <p>
                 <span className="text-pitflix-primary">●</span> Movies {mp.toFixed(0)}%
               </p>
               <p>
                 <span className="text-violet-300">●</span> Series {sp.toFixed(0)}%
               </p>
-              <p className="mt-2 text-xs">Language mix: {data.topLanguage}</p>
+              <p className="border-t border-pitflix-card/40 pt-3 text-xs text-pitflix-subtle">
+                Library language mix: <span className="text-white">{data.topLanguage}</span>
+              </p>
             </div>
           </div>
         </div>
       </div>
 
       <div className="grid gap-6 lg:grid-cols-2">
-        <div className="rounded-xl bg-pitflix-card p-5">
+        <div className="rounded-2xl border border-pitflix-card/50 bg-pitflix-surface/35 p-6">
           <h2 className="mb-4 text-lg font-semibold text-white">Time</h2>
-          <div className="flex flex-wrap gap-8">
+          <div className="flex flex-wrap gap-10">
             <div>
               <p className="text-3xl font-bold text-pitflix-primary">{weekHrs}h</p>
-              <p className="text-xs text-pitflix-muted">This week</p>
+              <p className="text-xs text-pitflix-muted">This week (UTC)</p>
             </div>
             <div>
               <p className="text-3xl font-bold text-pitflix-primary">{monthHrs}h</p>
               <p className="text-xs text-pitflix-muted">This month</p>
             </div>
           </div>
-          <p className="mt-4 text-xs text-pitflix-subtle">
-            Most-watched genre: <span className="text-white">{data.mostWatchedGenre || "—"}</span> · Avg movie ★{" "}
-            {data.averageMovieRating.toFixed(1)} · Avg series ★ {data.averageSeriesRating.toFixed(1)}
+          <p className="mt-6 border-t border-pitflix-card/40 pt-4 text-xs text-pitflix-subtle">
+            Most common genre: <span className="font-medium text-white">{data.mostWatchedGenre || "—"}</span>
+            <br />
+            Avg TMDB rating — movies: <span className="text-white">{data.averageMovieRating.toFixed(1)}</span> ·
+            series: <span className="text-white">{data.averageSeriesRating.toFixed(1)}</span>
+            <br />
+            Series with status “Watching” in library:{" "}
+            <span className="text-white">{data.showsWatchingLibrary ?? 0}</span> · In-progress (next ep):{" "}
+            <span className="text-white">{data.currentlyWatchingCount ?? 0}</span>
           </p>
         </div>
 
-        <div className="rounded-xl bg-pitflix-card p-5">
+        <div className="rounded-2xl border border-pitflix-card/50 bg-pitflix-surface/35 p-6">
           <h2 className="mb-4 text-lg font-semibold text-white">Recently completed</h2>
-          <div className="scrollbar-hide flex gap-3 overflow-x-auto pb-2">
-            {(data.recentlyCompleted ?? []).map((item: MediaCard) => (
-              <div key={`${item.id}-stat`} className="w-24 shrink-0">
-                <button
-                  type="button"
-                  onClick={() =>
-                    navigate(item.mediaFilePath || item.filePath ? `/movie/${item.id}` : `/series/${item.id}`)
-                  }
-                  className="w-full text-left"
-                >
-                  <MediaImage
-                    src={toPosterSrc(item.selectedPosterPath || item.posterLocalPath || item.posterRemoteUrl)}
-                    alt={item.title}
-                    className="aspect-[2/3] w-full rounded-lg bg-pitflix-bg"
-                    fallbackText={item.title.slice(0, 8)}
-                  />
-                  <p className="mt-1 truncate text-[10px] font-medium text-white">{item.title}</p>
-                </button>
-              </div>
-            ))}
-          </div>
+          {(data.recentlyCompleted ?? []).length === 0 ? (
+            <p className="text-sm text-pitflix-muted">Nothing finished recently — keep watching!</p>
+          ) : (
+            <div className="scrollbar-hide flex gap-3 overflow-x-auto pb-2">
+              {(data.recentlyCompleted ?? []).map((item: MediaCard) => (
+                <div key={`${item.id}-stat`} className="w-24 shrink-0">
+                  <button
+                    type="button"
+                    onClick={() =>
+                      navigate(item.mediaFilePath || item.filePath ? `/movie/${item.id}` : `/series/${item.id}`)
+                    }
+                    className="w-full text-left transition-transform hover:scale-[1.02]"
+                  >
+                    <MediaImage
+                      src={toPosterSrc(item.selectedPosterPath || item.posterLocalPath || item.posterRemoteUrl)}
+                      alt={item.title}
+                      className="aspect-[2/3] w-full rounded-lg bg-pitflix-bg ring-1 ring-white/5"
+                      fallbackText={item.title.slice(0, 8)}
+                    />
+                    <p className="mt-1 truncate text-[10px] font-medium text-white">{item.title}</p>
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
         </div>
       </div>
     </div>
@@ -169,22 +262,28 @@ export function StatsPage() {
 }
 
 function StatCard({
-  emoji,
+  accent,
   value,
   label,
   sub,
 }: {
-  emoji: string;
+  accent: string;
   value: string;
   label: string;
   sub: string;
 }) {
   return (
-    <div className="rounded-xl bg-pitflix-card p-5">
-      <span className="text-2xl">{emoji}</span>
-      <p className="mt-2 text-2xl font-bold text-pitflix-primary">{value}</p>
-      <p className="text-sm font-medium text-white">{label}</p>
-      <p className="mt-1 text-xs text-pitflix-muted">{sub}</p>
+    <div
+      className={cn(
+        "relative overflow-hidden rounded-2xl border border-pitflix-card/50 bg-pitflix-card/80 p-5 shadow-md shadow-black/20",
+      )}
+    >
+      <div className={cn("pointer-events-none absolute inset-0 bg-gradient-to-br opacity-90", accent)} />
+      <div className="relative">
+        <p className="text-2xl font-bold tracking-tight text-white">{value}</p>
+        <p className="mt-2 text-sm font-medium text-white/95">{label}</p>
+        <p className="mt-1 text-xs text-pitflix-muted">{sub}</p>
+      </div>
     </div>
   );
 }

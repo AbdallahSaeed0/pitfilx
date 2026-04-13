@@ -7,9 +7,13 @@ This document describes how the Pitflix desktop app checks for updates, verifies
 1. **Configuration** lives in `src-tauri/tauri.conf.json` under `plugins.updater`:
    - **`pubkey`** — minisign **public** key (safe to commit). The app uses it to verify every update before install.
    - **`endpoints`** — HTTPS URLs Tauri tries in order until one returns HTTP 2xx with update JSON (or 204 = no update).
-2. The **frontend** calls `@tauri-apps/plugin-updater` `check()` / `downloadAndInstall()` — it does **not** embed URLs; changing staging vs production means changing the **built** `tauri.conf.json` (or maintaining separate branches / build configs).
+2. The **frontend** calls `check()`, then **`download` → `prepare_update_exit` (Rust) → `install`** (not a single `downloadAndInstall`) so the bundled API sidecar can exit before the Windows installer runs — see below. Update URLs are **not** embedded in the UI; they come from the **built** `tauri.conf.json`.
 3. **Signing** uses Tauri’s built-in minisign integration. **Windows Authenticode / paid code signing is separate** and not covered here.
 4. **User control**: Nothing downloads or installs unless the user uses **Settings → App updates** or confirms from the **startup banner** (when “check on launch” is enabled).
+
+### Windows and the bundled API sidecar
+
+On Windows, after the updater launches the installer it ends the app with `std::process::exit(0)`, so **`RunEvent::Exit` does not run** and handlers that only run there never fire. The bundled `pitflix-api-*.exe` process would otherwise keep running and **lock files** under `binaries/`, which often triggers NSIS/MSI “retry / abort” prompts. Pitflix calls the Rust command **`prepare_update_exit`** after the update package is downloaded and **before** `install()`: it stops the sidecar (same logic as normal exit) and briefly waits so handles can be released.
 
 ## Configure the update source
 
@@ -139,9 +143,10 @@ npm run tauri:build:win
 | File | Role |
 |------|------|
 | `src-tauri/tauri.conf.json` | `plugins.updater.pubkey`, `endpoints`, `bundle.createUpdaterArtifacts` |
-| `src-tauri/src/lib.rs` | Registers `tauri-plugin-updater` and `tauri-plugin-process` |
-| `src-tauri/capabilities/default.json` | `updater:default`, `process:default`, `process:allow-restart` |
-| `src/updater/updaterService.ts` | Shared check / install / relaunch helpers |
+| `src-tauri/src/lib.rs` | Plugins, `ApiChild` sidecar, `prepare_update_exit` command |
+| `src-tauri/capabilities/default.json` | Includes `allow-prepare-update-exit` |
+| `src-tauri/permissions/allow-prepare-update-exit.json` | ACL for `prepare_update_exit` |
+| `src/updater/updaterService.ts` | `download` → `prepare_update_exit` → `install` + `relaunch` |
 | `src/hooks/useAppUpdater.ts` | Settings UI state machine |
 | `src/components/updater/AppUpdateSection.tsx` | Settings UI |
 | `src/components/updater/UpdateStartupBanner.tsx` | Optional startup notification |

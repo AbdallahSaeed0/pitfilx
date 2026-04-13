@@ -7,8 +7,12 @@ export type RatingsAggregate = {
   imdbId: string | null;
   imdbRatingDisplay: string | null;
   imdbVoteCountDisplay: string | null;
+  /** e.g. php-imdb-detail, omdb */
+  imdbRatingSource?: string | null;
   rottenTomatoesCritics: string | null;
   rottenTomatoesAudience: string | null;
+  omdbResolvedVia?: string | null;
+  omdbMatchKind?: string | null;
 };
 
 export const getRatingsAggregate = (tmdbId: number, mediaType: "movie" | "tv") =>

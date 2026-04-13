@@ -14,7 +14,9 @@ use tauri::{image::Image, App, Manager, RunEvent};
 pub struct ApiChild(pub Mutex<Option<Child>>);
 
 impl ApiChild {
-    fn shutdown(&self) {
+    /// Stops the bundled Pitflix.API sidecar. Must run before the updater runs the Windows installer:
+    /// `std::process::exit(0)` skips `RunEvent::Exit`, so we cannot rely on exit handlers alone.
+    pub(crate) fn shutdown(&self) {
         let Ok(mut guard) = self.0.lock() else {
             return;
         };
@@ -23,6 +25,16 @@ impl ApiChild {
             let _ = child.wait();
         }
     }
+}
+
+/// Called from the UI after the update package is downloaded and immediately before `Update::install`.
+/// Ensures the API sidecar releases locks on `binaries/pitflix-api-*.exe` before NSIS/MSI runs.
+#[tauri::command]
+fn prepare_update_exit(app: tauri::AppHandle) {
+    log_to_sidecar_file("Pitflix: prepare_update_exit — stopping bundled API before updater install.");
+    app.state::<ApiChild>().shutdown();
+    #[cfg(windows)]
+    std::thread::sleep(Duration::from_millis(450));
 }
 
 fn skip_bundled_api() -> bool {
@@ -213,6 +225,7 @@ fn cleanup_broken_autostart_registry_entries() {}
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let app = tauri::Builder::default()
+        .invoke_handler(tauri::generate_handler![prepare_update_exit])
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
