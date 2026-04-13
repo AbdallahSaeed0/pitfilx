@@ -1,0 +1,132 @@
+{
+  "awardId": "academy-awards",
+  "year": 1961,
+  "label": "33rd Academy Awards (1961)",
+  "categories": [
+    {
+      "id": "best-director",
+      "name": "Best Director",
+      "nominees": [
+        {
+          "title": "Billy Wilder — The Apartment",
+          "mediaType": "movie",
+          "tmdbId": null,
+          "winner": true
+        },
+        {
+          "title": "Jules Dassin — Never on Sunday",
+          "mediaType": "movie",
+          "tmdbId": null,
+          "winner": false
+        },
+        {
+          "title": "Alfred Hitchcock — Psycho",
+          "mediaType": "movie",
+          "tmdbId": null,
+          "winner": false
+        },
+        {
+          "title": "Jack Cardiff — Sons and Lovers",
+          "mediaType": "movie",
+          "tmdbId": null,
+          "winner": false
+        },
+        {
+          "title": "Fred Zinnemann — The Sundowners",
+          "mediaType": "movie",
+          "tmdbId": null,
+          "winner": false
+        }
+      ]
+    },
+    {
+      "id": "best-supporting-actor",
+      "name": "Best Actor in a Supporting Role",
+      "nominees": [
+        {
+          "title": "Peter Ustinov — Spartacus",
+          "mediaType": "movie",
+          "tmdbId": null,
+          "winner": true
+        },
+        {
+          "title": "Peter Falk — Murder, Inc.",
+          "mediaType": "movie",
+          "tmdbId": null,
+          "winner": false
+        },
+        {
+          "title": "Jack Kruschen — The Apartment",
+          "mediaType": "movie",
+          "tmdbId": null,
+          "winner": false
+        },
+        {
+          "title": "Sal Mineo — Exodus",
+          "mediaType": "movie",
+          "tmdbId": null,
+          "winner": false
+        },
+        {
+          "title": "Chill Wills — The Alamo",
+          "mediaType": "movie",
+          "tmdbId": null,
+          "winner": false
+        }
+      ]
+    },
+    {
+      "id": "best-supporting-actress",
+      "name": "Best Actress in a Supporting Role",
+      "nominees": [
+        {
+          "title": "Shirley Jones — Elmer Gantry",
+          "mediaType": "movie",
+          "tmdbId": null,
+          "winner": true
+        },
+        {
+          "title": "Glynis Johns — The Sundowners",
+          "mediaType": "movie",
+          "tmdbId": null,
+          "winner": false
+        },
+        {
+          "title": "Shirley Knight — The Dark at the Top of the Stairs",
+          "mediaType": "movie",
+          "tmdbId": null,
+          "winner": false
+        },
+        {
+          "title": "Janet Leigh — Psycho",
+          "mediaType": "movie",
+          "tmdbId": null,
+          "winner": false
+        },
+        {
+          "title": "Mary Ure — Sons and Lovers",
+          "mediaType": "movie",
+          "tmdbId": null,
+          "winner": false
+        }
+      ]
+    }
+  ],
+  "dataSource": "wikipedia-mediawiki-api",
+  "notes": "Imported from English Wikipedia wikitext (Winners and nominees / {{Award category}}). CC BY-SA. Verify with AMPAS. tmdbId left null unless you enrich separately.",
+  "qa": {
+    "version": 1,
+    "lastAuditAt": "2026-04-07T17:54:39.511Z",
+    "isSeedEdition": false,
+    "needsNomineeBackfill": false,
+    "needsTmdbEnrichment": true,
+    "warnings": [],
+    "stats": {
+      "categoryCount": 3,
+      "nomineeCount": 15,
+      "winnerCount": 3,
+      "tmdbNull": 15,
+      "tmdbSet": 0
+    }
+  }
+}

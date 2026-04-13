@@ -1,0 +1,864 @@
+{
+  "awardId": "bafta",
+  "year": 2025,
+  "label": "78th British Academy Film Awards (2025)",
+  "categories": [
+    {
+      "id": "best-film",
+      "name": "Best Film",
+      "nominees": [
+        {
+          "title": "Conclave",
+          "mediaType": "movie",
+          "tmdbId": null,
+          "winner": true
+        },
+        {
+          "title": "Anora",
+          "mediaType": "movie",
+          "tmdbId": null,
+          "winner": false
+        },
+        {
+          "title": "The Brutalist",
+          "mediaType": "movie",
+          "tmdbId": null,
+          "winner": false
+        },
+        {
+          "title": "A Complete Unknown",
+          "mediaType": "movie",
+          "tmdbId": null,
+          "winner": false
+        },
+        {
+          "title": "Emilia Pérez",
+          "mediaType": "movie",
+          "tmdbId": null,
+          "winner": false
+        }
+      ]
+    },
+    {
+      "id": "outstanding-british-film",
+      "name": "Outstanding British Film",
+      "nominees": [
+        {
+          "title": "Conclave",
+          "mediaType": "movie",
+          "tmdbId": null,
+          "winner": true
+        },
+        {
+          "title": "Bird",
+          "mediaType": "movie",
+          "tmdbId": null,
+          "winner": false
+        },
+        {
+          "title": "Blitz",
+          "mediaType": "movie",
+          "tmdbId": null,
+          "winner": false
+        },
+        {
+          "title": "Gladiator II",
+          "mediaType": "movie",
+          "tmdbId": null,
+          "winner": false
+        },
+        {
+          "title": "Hard Truths",
+          "mediaType": "movie",
+          "tmdbId": null,
+          "winner": false
+        },
+        {
+          "title": "Kneecap",
+          "mediaType": "movie",
+          "tmdbId": null,
+          "winner": false
+        },
+        {
+          "title": "Lee",
+          "mediaType": "movie",
+          "tmdbId": null,
+          "winner": false
+        },
+        {
+          "title": "Love Lies Bleeding",
+          "mediaType": "movie",
+          "tmdbId": null,
+          "winner": false
+        },
+        {
+          "title": "The Outrun",
+          "mediaType": "movie",
+          "tmdbId": null,
+          "winner": false
+        },
+        {
+          "title": "Wallace & Gromit: Vengeance Most Fowl",
+          "mediaType": "movie",
+          "tmdbId": null,
+          "winner": false
+        }
+      ]
+    },
+    {
+      "id": "best-direction",
+      "name": "Best Director",
+      "nominees": [
+        {
+          "title": "Brady Corbet — The Brutalist",
+          "mediaType": "movie",
+          "tmdbId": null,
+          "winner": true
+        },
+        {
+          "title": "Jacques Audiard — Emilia Pérez",
+          "mediaType": "movie",
+          "tmdbId": null,
+          "winner": false
+        },
+        {
+          "title": "Sean Baker — Anora",
+          "mediaType": "movie",
+          "tmdbId": null,
+          "winner": false
+        },
+        {
+          "title": "Edward Berger — Conclave",
+          "mediaType": "movie",
+          "tmdbId": null,
+          "winner": false
+        },
+        {
+          "title": "Coralie Fargeat — The Substance",
+          "mediaType": "movie",
+          "tmdbId": null,
+          "winner": false
+        },
+        {
+          "title": "Denis Villeneuve — Dune: Part Two",
+          "mediaType": "movie",
+          "tmdbId": null,
+          "winner": false
+        }
+      ]
+    },
+    {
+      "id": "best-actor",
+      "name": "Best Actor in a Leading Role",
+      "nominees": [
+        {
+          "title": "Adrien Brody — The Brutalist",
+          "mediaType": "movie",
+          "tmdbId": null,
+          "winner": true
+        },
+        {
+          "title": "Timothée Chalamet — A Complete Unknown",
+          "mediaType": "movie",
+          "tmdbId": null,
+          "winner": false
+        },
+        {
+          "title": "Colman Domingo — Sing Sing",
+          "mediaType": "movie",
+          "tmdbId": null,
+          "winner": false
+        },
+        {
+          "title": "Ralph Fiennes — Conclave",
+          "mediaType": "movie",
+          "tmdbId": null,
+          "winner": false
+        },
+        {
+          "title": "Hugh Grant — Heretic",
+          "mediaType": "movie",
+          "tmdbId": null,
+          "winner": false
+        },
+        {
+          "title": "Sebastian Stan — The Apprentice",
+          "mediaType": "movie",
+          "tmdbId": null,
+          "winner": false
+        }
+      ]
+    },
+    {
+      "id": "best-actress",
+      "name": "Best Actress in a Leading Role",
+      "nominees": [
+        {
+          "title": "Mikey Madison — Anora",
+          "mediaType": "movie",
+          "tmdbId": null,
+          "winner": true
+        },
+        {
+          "title": "Cynthia Erivo — Wicked",
+          "mediaType": "movie",
+          "tmdbId": null,
+          "winner": false
+        },
+        {
+          "title": "Karla Sofía Gascón — Emilia Pérez",
+          "mediaType": "movie",
+          "tmdbId": null,
+          "winner": false
+        },
+        {
+          "title": "Marianne Jean-Baptiste — Hard Truths",
+          "mediaType": "movie",
+          "tmdbId": null,
+          "winner": false
+        },
+        {
+          "title": "Demi Moore — The Substance",
+          "mediaType": "movie",
+          "tmdbId": null,
+          "winner": false
+        },
+        {
+          "title": "Saoirse Ronan — The Outrun",
+          "mediaType": "movie",
+          "tmdbId": null,
+          "winner": false
+        }
+      ]
+    },
+    {
+      "id": "best-supporting-actor",
+      "name": "Best Actor in a Supporting Role",
+      "nominees": [
+        {
+          "title": "Kieran Culkin — A Real Pain",
+          "mediaType": "movie",
+          "tmdbId": null,
+          "winner": true
+        },
+        {
+          "title": "Yura Borisov — Anora",
+          "mediaType": "movie",
+          "tmdbId": null,
+          "winner": false
+        },
+        {
+          "title": "Clarence Maclin — Sing Sing",
+          "mediaType": "movie",
+          "tmdbId": null,
+          "winner": false
+        },
+        {
+          "title": "Edward Norton — A Complete Unknown",
+          "mediaType": "movie",
+          "tmdbId": null,
+          "winner": false
+        },
+        {
+          "title": "Guy Pearce — The Brutalist",
+          "mediaType": "movie",
+          "tmdbId": null,
+          "winner": false
+        },
+        {
+          "title": "Jeremy Strong — The Apprentice",
+          "mediaType": "movie",
+          "tmdbId": null,
+          "winner": false
+        }
+      ]
+    },
+    {
+      "id": "best-supporting-actress",
+      "name": "Best Actress in a Supporting Role",
+      "nominees": [
+        {
+          "title": "Zoe Saldaña — Emilia Pérez",
+          "mediaType": "movie",
+          "tmdbId": null,
+          "winner": true
+        },
+        {
+          "title": "Jamie Lee Curtis — The Last Showgirl",
+          "mediaType": "movie",
+          "tmdbId": null,
+          "winner": false
+        },
+        {
+          "title": "Selena Gomez — Emilia Pérez",
+          "mediaType": "movie",
+          "tmdbId": null,
+          "winner": false
+        },
+        {
+          "title": "Ariana Grande — Wicked",
+          "mediaType": "movie",
+          "tmdbId": null,
+          "winner": false
+        },
+        {
+          "title": "Felicity Jones — The Brutalist",
+          "mediaType": "movie",
+          "tmdbId": null,
+          "winner": false
+        },
+        {
+          "title": "Isabella Rossellini — Conclave",
+          "mediaType": "movie",
+          "tmdbId": null,
+          "winner": false
+        }
+      ]
+    },
+    {
+      "id": "best-film-not-english",
+      "name": "Best Film Not in the English Language",
+      "nominees": [
+        {
+          "title": "Emilia Pérez",
+          "mediaType": "movie",
+          "tmdbId": null,
+          "winner": true
+        },
+        {
+          "title": "I'm Still Here",
+          "mediaType": "movie",
+          "tmdbId": null,
+          "winner": false
+        },
+        {
+          "title": "Kneecap",
+          "mediaType": "movie",
+          "tmdbId": null,
+          "winner": false
+        },
+        {
+          "title": "The Seed of the Sacred Fig",
+          "mediaType": "movie",
+          "tmdbId": null,
+          "winner": false
+        }
+      ]
+    },
+    {
+      "id": "best-original-screenplay",
+      "name": "Best Original Screenplay",
+      "nominees": [
+        {
+          "title": "Jesse Eisenberg — A Real Pain",
+          "mediaType": "movie",
+          "tmdbId": null,
+          "winner": true
+        },
+        {
+          "title": "Sean Baker — Anora",
+          "mediaType": "movie",
+          "tmdbId": null,
+          "winner": false
+        },
+        {
+          "title": "Brady Corbet — Mona Fastvold",
+          "mediaType": "movie",
+          "tmdbId": null,
+          "winner": false
+        },
+        {
+          "title": "Coralie Fargeat — The Substance",
+          "mediaType": "movie",
+          "tmdbId": null,
+          "winner": false
+        },
+        {
+          "title": "Rich Peppiatt — Naoise Ó Cairealláin, Liam Óg Ó Hannaidh, and JJ Ó Dochartaigh",
+          "mediaType": "movie",
+          "tmdbId": null,
+          "winner": false
+        }
+      ]
+    },
+    {
+      "id": "best-adapted-screenplay",
+      "name": "Best Adapted Screenplay",
+      "nominees": [
+        {
+          "title": "Peter Straughan — Conclave",
+          "mediaType": "movie",
+          "tmdbId": null,
+          "winner": true
+        },
+        {
+          "title": "Jacques Audiard — Emilia Pérez",
+          "mediaType": "movie",
+          "tmdbId": null,
+          "winner": false
+        },
+        {
+          "title": "Clint Bentley — Greg Kwedar",
+          "mediaType": "movie",
+          "tmdbId": null,
+          "winner": false
+        },
+        {
+          "title": "James Mangold — Jay Cocks",
+          "mediaType": "movie",
+          "tmdbId": null,
+          "winner": false
+        },
+        {
+          "title": "RaMell Ross — Joslyn Barnes",
+          "mediaType": "movie",
+          "tmdbId": null,
+          "winner": false
+        }
+      ]
+    },
+    {
+      "id": "best-casting",
+      "name": "Best Casting",
+      "nominees": [
+        {
+          "title": "Anora — Sean Baker",
+          "mediaType": "movie",
+          "tmdbId": null,
+          "winner": true
+        },
+        {
+          "title": "The Apprentice",
+          "mediaType": "movie",
+          "tmdbId": null,
+          "winner": false
+        },
+        {
+          "title": "A Complete Unknown",
+          "mediaType": "movie",
+          "tmdbId": null,
+          "winner": false
+        },
+        {
+          "title": "Conclave — Nina Gold",
+          "mediaType": "movie",
+          "tmdbId": null,
+          "winner": false
+        },
+        {
+          "title": "Kneecap",
+          "mediaType": "movie",
+          "tmdbId": null,
+          "winner": false
+        }
+      ]
+    },
+    {
+      "id": "best-editing",
+      "name": "Best Editing",
+      "nominees": [
+        {
+          "title": "Conclave",
+          "mediaType": "movie",
+          "tmdbId": null,
+          "winner": true
+        },
+        {
+          "title": "Anora",
+          "mediaType": "movie",
+          "tmdbId": null,
+          "winner": false
+        },
+        {
+          "title": "Dune: Part Two",
+          "mediaType": "movie",
+          "tmdbId": null,
+          "winner": false
+        },
+        {
+          "title": "Emilia Pérez",
+          "mediaType": "movie",
+          "tmdbId": null,
+          "winner": false
+        },
+        {
+          "title": "Kneecap",
+          "mediaType": "movie",
+          "tmdbId": null,
+          "winner": false
+        }
+      ]
+    },
+    {
+      "id": "best-cinematography",
+      "name": "Best Cinematography",
+      "nominees": [
+        {
+          "title": "The Brutalist — Lol Crawley",
+          "mediaType": "movie",
+          "tmdbId": null,
+          "winner": true
+        },
+        {
+          "title": "Conclave — Stéphane Fontaine",
+          "mediaType": "movie",
+          "tmdbId": null,
+          "winner": false
+        },
+        {
+          "title": "Dune: Part Two — Greig Fraser",
+          "mediaType": "movie",
+          "tmdbId": null,
+          "winner": false
+        },
+        {
+          "title": "Emilia Pérez — Paul Guilhaume",
+          "mediaType": "movie",
+          "tmdbId": null,
+          "winner": false
+        },
+        {
+          "title": "Nosferatu — Jarin Blaschke",
+          "mediaType": "movie",
+          "tmdbId": null,
+          "winner": false
+        }
+      ]
+    },
+    {
+      "id": "best-costume-design",
+      "name": "Best Costume Design",
+      "nominees": [
+        {
+          "title": "Wicked — Paul Tazewell",
+          "mediaType": "movie",
+          "tmdbId": null,
+          "winner": true
+        },
+        {
+          "title": "Blitz — Jacqueline Durran",
+          "mediaType": "movie",
+          "tmdbId": null,
+          "winner": false
+        },
+        {
+          "title": "A Complete Unknown — Arianne Phillips",
+          "mediaType": "movie",
+          "tmdbId": null,
+          "winner": false
+        },
+        {
+          "title": "Conclave — Lisy Christl",
+          "mediaType": "movie",
+          "tmdbId": null,
+          "winner": false
+        },
+        {
+          "title": "Nosferatu — Linda Muir",
+          "mediaType": "movie",
+          "tmdbId": null,
+          "winner": false
+        }
+      ]
+    },
+    {
+      "id": "best-production-design",
+      "name": "Best Production Design",
+      "nominees": [
+        {
+          "title": "Wicked — Nathan Crowley",
+          "mediaType": "movie",
+          "tmdbId": null,
+          "winner": true
+        },
+        {
+          "title": "The Brutalist — Judy Becker",
+          "mediaType": "movie",
+          "tmdbId": null,
+          "winner": false
+        },
+        {
+          "title": "Conclave — Suzie Davies",
+          "mediaType": "movie",
+          "tmdbId": null,
+          "winner": false
+        },
+        {
+          "title": "Dune: Part Two — Patrice Vermette",
+          "mediaType": "movie",
+          "tmdbId": null,
+          "winner": false
+        },
+        {
+          "title": "Nosferatu — Craig Lathrop",
+          "mediaType": "movie",
+          "tmdbId": null,
+          "winner": false
+        }
+      ]
+    },
+    {
+      "id": "best-makeup-hair",
+      "name": "Best Make Up & Hair",
+      "nominees": [
+        {
+          "title": "The Substance",
+          "mediaType": "movie",
+          "tmdbId": null,
+          "winner": true
+        },
+        {
+          "title": "Dune: Part Two",
+          "mediaType": "movie",
+          "tmdbId": null,
+          "winner": false
+        },
+        {
+          "title": "Emilia Pérez",
+          "mediaType": "movie",
+          "tmdbId": null,
+          "winner": false
+        },
+        {
+          "title": "Nosferatu",
+          "mediaType": "movie",
+          "tmdbId": null,
+          "winner": false
+        },
+        {
+          "title": "Wicked",
+          "mediaType": "movie",
+          "tmdbId": null,
+          "winner": false
+        }
+      ]
+    },
+    {
+      "id": "best-original-score",
+      "name": "Best Original Score",
+      "nominees": [
+        {
+          "title": "The Brutalist — Daniel Blumberg",
+          "mediaType": "movie",
+          "tmdbId": null,
+          "winner": true
+        },
+        {
+          "title": "Conclave — Volker Bertelmann",
+          "mediaType": "movie",
+          "tmdbId": null,
+          "winner": false
+        },
+        {
+          "title": "Emilia Pérez — Camille",
+          "mediaType": "movie",
+          "tmdbId": null,
+          "winner": false
+        },
+        {
+          "title": "Nosferatu",
+          "mediaType": "movie",
+          "tmdbId": null,
+          "winner": false
+        },
+        {
+          "title": "The Wild Robot — Kris Bowers",
+          "mediaType": "movie",
+          "tmdbId": null,
+          "winner": false
+        }
+      ]
+    },
+    {
+      "id": "best-sound",
+      "name": "Best Sound",
+      "nominees": [
+        {
+          "title": "Dune: Part Two — Ron Bartlett",
+          "mediaType": "movie",
+          "tmdbId": null,
+          "winner": true
+        },
+        {
+          "title": "Blitz — John Casali",
+          "mediaType": "movie",
+          "tmdbId": null,
+          "winner": false
+        },
+        {
+          "title": "Gladiator II — Paul Massey",
+          "mediaType": "movie",
+          "tmdbId": null,
+          "winner": false
+        },
+        {
+          "title": "The Substance",
+          "mediaType": "movie",
+          "tmdbId": null,
+          "winner": false
+        },
+        {
+          "title": "Wicked — Simon Hayes",
+          "mediaType": "movie",
+          "tmdbId": null,
+          "winner": false
+        }
+      ]
+    },
+    {
+      "id": "best-visual-effects",
+      "name": "Best Special Visual Effects",
+      "nominees": [
+        {
+          "title": "Dune: Part Two — Paul Lambert",
+          "mediaType": "movie",
+          "tmdbId": null,
+          "winner": true
+        },
+        {
+          "title": "Better Man — Luke Millar",
+          "mediaType": "movie",
+          "tmdbId": null,
+          "winner": false
+        },
+        {
+          "title": "Gladiator II — Neil Corbould",
+          "mediaType": "movie",
+          "tmdbId": null,
+          "winner": false
+        },
+        {
+          "title": "Kingdom of the Planet of the Apes — Erik Winquist",
+          "mediaType": "movie",
+          "tmdbId": null,
+          "winner": false
+        },
+        {
+          "title": "Wicked — Pablo Helman",
+          "mediaType": "movie",
+          "tmdbId": null,
+          "winner": false
+        }
+      ]
+    },
+    {
+      "id": "best-animated-film",
+      "name": "Best Animated Film",
+      "nominees": [
+        {
+          "title": "Wallace & Gromit: Vengeance Most Fowl",
+          "mediaType": "movie",
+          "tmdbId": null,
+          "winner": true
+        },
+        {
+          "title": "Flow",
+          "mediaType": "movie",
+          "tmdbId": null,
+          "winner": false
+        },
+        {
+          "title": "Inside Out 2",
+          "mediaType": "movie",
+          "tmdbId": null,
+          "winner": false
+        },
+        {
+          "title": "The Wild Robot",
+          "mediaType": "movie",
+          "tmdbId": null,
+          "winner": false
+        }
+      ]
+    },
+    {
+      "id": "best-documentary",
+      "name": "Best Documentary",
+      "nominees": [
+        {
+          "title": "Super/Man: The Christopher Reeve Story",
+          "mediaType": "movie",
+          "tmdbId": null,
+          "winner": true
+        },
+        {
+          "title": "Black Box Diaries",
+          "mediaType": "movie",
+          "tmdbId": null,
+          "winner": false
+        },
+        {
+          "title": "Daughters",
+          "mediaType": "movie",
+          "tmdbId": null,
+          "winner": false
+        },
+        {
+          "title": "No Other Land",
+          "mediaType": "movie",
+          "tmdbId": null,
+          "winner": false
+        },
+        {
+          "title": "Will & Harper",
+          "mediaType": "movie",
+          "tmdbId": null,
+          "winner": false
+        }
+      ]
+    },
+    {
+      "id": "outstanding-debut-british",
+      "name": "Outstanding Debut by a British Writer, Director or Producer",
+      "nominees": [
+        {
+          "title": "Kneecap",
+          "mediaType": "movie",
+          "tmdbId": null,
+          "winner": true
+        },
+        {
+          "title": "Hoard",
+          "mediaType": "movie",
+          "tmdbId": null,
+          "winner": false
+        },
+        {
+          "title": "Monkey Man",
+          "mediaType": "movie",
+          "tmdbId": null,
+          "winner": false
+        },
+        {
+          "title": "Santosh",
+          "mediaType": "movie",
+          "tmdbId": null,
+          "winner": false
+        },
+        {
+          "title": "Sister Midnight",
+          "mediaType": "movie",
+          "tmdbId": null,
+          "winner": false
+        }
+      ]
+    }
+  ],
+  "dataSource": "wikipedia-mediawiki-api-bafta",
+  "notes": "Imported from English Wikipedia wikitext (Winners and nominees / {{Award category}}). CC BY-SA. Verify with BAFTA. tmdbId left null unless you enrich separately.",
+  "qa": {
+    "version": 1,
+    "lastAuditAt": "2026-04-07T17:54:39.574Z",
+    "isSeedEdition": false,
+    "needsNomineeBackfill": false,
+    "needsTmdbEnrichment": true,
+    "warnings": [],
+    "stats": {
+      "categoryCount": 22,
+      "nomineeCount": 118,
+      "winnerCount": 22,
+      "tmdbNull": 118,
+      "tmdbSet": 0
+    }
+  }
+}

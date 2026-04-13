@@ -1,0 +1,780 @@
+{
+  "awardId": "bafta",
+  "year": 2020,
+  "label": "73rd British Academy Film Awards (2020)",
+  "categories": [
+    {
+      "id": "best-film",
+      "name": "Best Film",
+      "nominees": [
+        {
+          "title": "1917",
+          "mediaType": "movie",
+          "tmdbId": null,
+          "winner": true
+        },
+        {
+          "title": "The Irishman",
+          "mediaType": "movie",
+          "tmdbId": null,
+          "winner": false
+        },
+        {
+          "title": "Joker",
+          "mediaType": "movie",
+          "tmdbId": null,
+          "winner": false
+        },
+        {
+          "title": "Once Upon a Time in Hollywood",
+          "mediaType": "movie",
+          "tmdbId": null,
+          "winner": false
+        },
+        {
+          "title": "Parasite",
+          "mediaType": "movie",
+          "tmdbId": null,
+          "winner": false
+        }
+      ]
+    },
+    {
+      "id": "outstanding-british-film",
+      "name": "Outstanding British Film",
+      "nominees": [
+        {
+          "title": "1917",
+          "mediaType": "movie",
+          "tmdbId": null,
+          "winner": true
+        },
+        {
+          "title": "Bait",
+          "mediaType": "movie",
+          "tmdbId": null,
+          "winner": false
+        },
+        {
+          "title": "For Sama",
+          "mediaType": "movie",
+          "tmdbId": null,
+          "winner": false
+        },
+        {
+          "title": "Rocketman",
+          "mediaType": "movie",
+          "tmdbId": null,
+          "winner": false
+        },
+        {
+          "title": "Sorry We Missed You",
+          "mediaType": "movie",
+          "tmdbId": null,
+          "winner": false
+        },
+        {
+          "title": "The Two Popes",
+          "mediaType": "movie",
+          "tmdbId": null,
+          "winner": false
+        }
+      ]
+    },
+    {
+      "id": "best-direction",
+      "name": "Best Director",
+      "nominees": [
+        {
+          "title": "Sam Mendes — 1917",
+          "mediaType": "movie",
+          "tmdbId": null,
+          "winner": true
+        },
+        {
+          "title": "Bong Joon-ho — Parasite",
+          "mediaType": "movie",
+          "tmdbId": null,
+          "winner": false
+        },
+        {
+          "title": "Martin Scorsese — The Irishman",
+          "mediaType": "movie",
+          "tmdbId": null,
+          "winner": false
+        },
+        {
+          "title": "Quentin Tarantino — Once Upon a Time in Hollywood",
+          "mediaType": "movie",
+          "tmdbId": null,
+          "winner": false
+        },
+        {
+          "title": "Todd Phillips — Joker",
+          "mediaType": "movie",
+          "tmdbId": null,
+          "winner": false
+        }
+      ]
+    },
+    {
+      "id": "best-actor",
+      "name": "Best Actor in a Leading Role",
+      "nominees": [
+        {
+          "title": "Joaquin Phoenix — Joker",
+          "mediaType": "movie",
+          "tmdbId": null,
+          "winner": true
+        },
+        {
+          "title": "Adam Driver — Marriage Story",
+          "mediaType": "movie",
+          "tmdbId": null,
+          "winner": false
+        },
+        {
+          "title": "Jonathan Pryce — The Two Popes",
+          "mediaType": "movie",
+          "tmdbId": null,
+          "winner": false
+        },
+        {
+          "title": "Leonardo DiCaprio — Once Upon a Time in Hollywood",
+          "mediaType": "movie",
+          "tmdbId": null,
+          "winner": false
+        },
+        {
+          "title": "Taron Egerton — Rocketman",
+          "mediaType": "movie",
+          "tmdbId": null,
+          "winner": false
+        }
+      ]
+    },
+    {
+      "id": "best-actress",
+      "name": "Best Actress in a Leading Role",
+      "nominees": [
+        {
+          "title": "Renée Zellweger — Judy",
+          "mediaType": "movie",
+          "tmdbId": null,
+          "winner": true
+        },
+        {
+          "title": "Charlize Theron — Bombshell",
+          "mediaType": "movie",
+          "tmdbId": null,
+          "winner": false
+        },
+        {
+          "title": "Jessie Buckley — Wild Rose",
+          "mediaType": "movie",
+          "tmdbId": null,
+          "winner": false
+        },
+        {
+          "title": "Saoirse Ronan — Little Women",
+          "mediaType": "movie",
+          "tmdbId": null,
+          "winner": false
+        },
+        {
+          "title": "Scarlett Johansson — Marriage Story",
+          "mediaType": "movie",
+          "tmdbId": null,
+          "winner": false
+        }
+      ]
+    },
+    {
+      "id": "best-supporting-actor",
+      "name": "Best Actor in a Supporting Role",
+      "nominees": [
+        {
+          "title": "Brad Pitt — Once Upon a Time in Hollywood",
+          "mediaType": "movie",
+          "tmdbId": null,
+          "winner": true
+        },
+        {
+          "title": "Al Pacino — The Irishman",
+          "mediaType": "movie",
+          "tmdbId": null,
+          "winner": false
+        },
+        {
+          "title": "Anthony Hopkins — The Two Popes",
+          "mediaType": "movie",
+          "tmdbId": null,
+          "winner": false
+        },
+        {
+          "title": "Joe Pesci — The Irishman",
+          "mediaType": "movie",
+          "tmdbId": null,
+          "winner": false
+        },
+        {
+          "title": "Tom Hanks — A Beautiful Day in the Neighborhood",
+          "mediaType": "movie",
+          "tmdbId": null,
+          "winner": false
+        }
+      ]
+    },
+    {
+      "id": "best-supporting-actress",
+      "name": "Best Actress in a Supporting Role",
+      "nominees": [
+        {
+          "title": "Laura Dern — Marriage Story",
+          "mediaType": "movie",
+          "tmdbId": null,
+          "winner": true
+        },
+        {
+          "title": "Florence Pugh — Little Women",
+          "mediaType": "movie",
+          "tmdbId": null,
+          "winner": false
+        },
+        {
+          "title": "Margot Robbie — Bombshell",
+          "mediaType": "movie",
+          "tmdbId": null,
+          "winner": false
+        },
+        {
+          "title": "Margot Robbie — Once Upon a Time in Hollywood",
+          "mediaType": "movie",
+          "tmdbId": null,
+          "winner": false
+        },
+        {
+          "title": "Scarlett Johansson — Jojo Rabbit",
+          "mediaType": "movie",
+          "tmdbId": null,
+          "winner": false
+        }
+      ]
+    },
+    {
+      "id": "best-film-not-english",
+      "name": "Best Film Not in the English Language",
+      "nominees": [
+        {
+          "title": "Parasite",
+          "mediaType": "movie",
+          "tmdbId": null,
+          "winner": true
+        },
+        {
+          "title": "The Farewell",
+          "mediaType": "movie",
+          "tmdbId": null,
+          "winner": false
+        },
+        {
+          "title": "For Sama",
+          "mediaType": "movie",
+          "tmdbId": null,
+          "winner": false
+        },
+        {
+          "title": "Pain and Glory",
+          "mediaType": "movie",
+          "tmdbId": null,
+          "winner": false
+        },
+        {
+          "title": "Portrait of a Lady on Fire",
+          "mediaType": "movie",
+          "tmdbId": null,
+          "winner": false
+        }
+      ]
+    },
+    {
+      "id": "best-original-screenplay",
+      "name": "Best Original Screenplay",
+      "nominees": [
+        {
+          "title": "Parasite — Bong Joon-ho",
+          "mediaType": "movie",
+          "tmdbId": null,
+          "winner": true
+        },
+        {
+          "title": "Booksmart — Susanna Fogel",
+          "mediaType": "movie",
+          "tmdbId": null,
+          "winner": false
+        },
+        {
+          "title": "Knives Out — Rian Johnson",
+          "mediaType": "movie",
+          "tmdbId": null,
+          "winner": false
+        },
+        {
+          "title": "Marriage Story — Noah Baumbach",
+          "mediaType": "movie",
+          "tmdbId": null,
+          "winner": false
+        },
+        {
+          "title": "Once Upon a Time in Hollywood — Quentin Tarantino",
+          "mediaType": "movie",
+          "tmdbId": null,
+          "winner": false
+        }
+      ]
+    },
+    {
+      "id": "best-adapted-screenplay",
+      "name": "Best Adapted Screenplay",
+      "nominees": [
+        {
+          "title": "Jojo Rabbit — Taika Waititi",
+          "mediaType": "movie",
+          "tmdbId": null,
+          "winner": true
+        },
+        {
+          "title": "The Irishman — Steven Zaillian",
+          "mediaType": "movie",
+          "tmdbId": null,
+          "winner": false
+        },
+        {
+          "title": "Joker — Todd Phillips",
+          "mediaType": "movie",
+          "tmdbId": null,
+          "winner": false
+        },
+        {
+          "title": "Little Women — Greta Gerwig",
+          "mediaType": "movie",
+          "tmdbId": null,
+          "winner": false
+        },
+        {
+          "title": "The Two Popes — Anthony McCarten",
+          "mediaType": "movie",
+          "tmdbId": null,
+          "winner": false
+        }
+      ]
+    },
+    {
+      "id": "best-casting",
+      "name": "Best Casting",
+      "nominees": [
+        {
+          "title": "Joker",
+          "mediaType": "movie",
+          "tmdbId": null,
+          "winner": true
+        },
+        {
+          "title": "Marriage Story",
+          "mediaType": "movie",
+          "tmdbId": null,
+          "winner": false
+        },
+        {
+          "title": "Once Upon a Time in Hollywood",
+          "mediaType": "movie",
+          "tmdbId": null,
+          "winner": false
+        },
+        {
+          "title": "The Personal History of David Copperfield",
+          "mediaType": "movie",
+          "tmdbId": null,
+          "winner": false
+        },
+        {
+          "title": "The Two Popes — Nina Gold",
+          "mediaType": "movie",
+          "tmdbId": null,
+          "winner": false
+        }
+      ]
+    },
+    {
+      "id": "best-editing",
+      "name": "Best Editing",
+      "nominees": [
+        {
+          "title": "Ford v Ferrari",
+          "mediaType": "movie",
+          "tmdbId": null,
+          "winner": true
+        },
+        {
+          "title": "The Irishman",
+          "mediaType": "movie",
+          "tmdbId": null,
+          "winner": false
+        },
+        {
+          "title": "Jojo Rabbit",
+          "mediaType": "movie",
+          "tmdbId": null,
+          "winner": false
+        },
+        {
+          "title": "Joker",
+          "mediaType": "movie",
+          "tmdbId": null,
+          "winner": false
+        },
+        {
+          "title": "Once Upon a Time in Hollywood",
+          "mediaType": "movie",
+          "tmdbId": null,
+          "winner": false
+        }
+      ]
+    },
+    {
+      "id": "best-cinematography",
+      "name": "Best Cinematography",
+      "nominees": [
+        {
+          "title": "1917 — Roger Deakins",
+          "mediaType": "movie",
+          "tmdbId": null,
+          "winner": true
+        },
+        {
+          "title": "Ford v Ferrari — Phedon Papamichael",
+          "mediaType": "movie",
+          "tmdbId": null,
+          "winner": false
+        },
+        {
+          "title": "The Irishman — Rodrigo Prieto",
+          "mediaType": "movie",
+          "tmdbId": null,
+          "winner": false
+        },
+        {
+          "title": "Joker — Lawrence Sher",
+          "mediaType": "movie",
+          "tmdbId": null,
+          "winner": false
+        },
+        {
+          "title": "The Lighthouse — Jarin Blaschke",
+          "mediaType": "movie",
+          "tmdbId": null,
+          "winner": false
+        }
+      ]
+    },
+    {
+      "id": "best-costume-design",
+      "name": "Best Costume Design",
+      "nominees": [
+        {
+          "title": "Little Women — Jacqueline Durran",
+          "mediaType": "movie",
+          "tmdbId": null,
+          "winner": true
+        },
+        {
+          "title": "The Irishman — Christopher Peterson",
+          "mediaType": "movie",
+          "tmdbId": null,
+          "winner": false
+        },
+        {
+          "title": "Jojo Rabbit — Mayes C. Rubeo",
+          "mediaType": "movie",
+          "tmdbId": null,
+          "winner": false
+        },
+        {
+          "title": "Judy — Jany Temime",
+          "mediaType": "movie",
+          "tmdbId": null,
+          "winner": false
+        },
+        {
+          "title": "Once Upon a Time in Hollywood — Arianne Phillips",
+          "mediaType": "movie",
+          "tmdbId": null,
+          "winner": false
+        }
+      ]
+    },
+    {
+      "id": "best-production-design",
+      "name": "Best Production Design",
+      "nominees": [
+        {
+          "title": "1917 — Dennis Gassner",
+          "mediaType": "movie",
+          "tmdbId": null,
+          "winner": true
+        },
+        {
+          "title": "The Irishman — Bob Shaw",
+          "mediaType": "movie",
+          "tmdbId": null,
+          "winner": false
+        },
+        {
+          "title": "Jojo Rabbit — Ra Vincent",
+          "mediaType": "movie",
+          "tmdbId": null,
+          "winner": false
+        },
+        {
+          "title": "Joker",
+          "mediaType": "movie",
+          "tmdbId": null,
+          "winner": false
+        },
+        {
+          "title": "Once Upon a Time in Hollywood — Barbara Ling",
+          "mediaType": "movie",
+          "tmdbId": null,
+          "winner": false
+        }
+      ]
+    },
+    {
+      "id": "best-makeup-hair",
+      "name": "Best Make Up & Hair",
+      "nominees": [
+        {
+          "title": "Bombshell",
+          "mediaType": "movie",
+          "tmdbId": null,
+          "winner": true
+        },
+        {
+          "title": "1917",
+          "mediaType": "movie",
+          "tmdbId": null,
+          "winner": false
+        },
+        {
+          "title": "Joker",
+          "mediaType": "movie",
+          "tmdbId": null,
+          "winner": false
+        },
+        {
+          "title": "Judy",
+          "mediaType": "movie",
+          "tmdbId": null,
+          "winner": false
+        },
+        {
+          "title": "Rocketman",
+          "mediaType": "movie",
+          "tmdbId": null,
+          "winner": false
+        }
+      ]
+    },
+    {
+      "id": "best-sound",
+      "name": "Best Sound",
+      "nominees": [
+        {
+          "title": "1917 — Scott Millan",
+          "mediaType": "movie",
+          "tmdbId": null,
+          "winner": true
+        },
+        {
+          "title": "Ford v Ferrari — David Giammarco",
+          "mediaType": "movie",
+          "tmdbId": null,
+          "winner": false
+        },
+        {
+          "title": "Joker — Tod A. Maitland",
+          "mediaType": "movie",
+          "tmdbId": null,
+          "winner": false
+        },
+        {
+          "title": "Rocketman — Mike Prestwood Smith",
+          "mediaType": "movie",
+          "tmdbId": null,
+          "winner": false
+        },
+        {
+          "title": "Star Wars: The Rise of Skywalker — David Acord",
+          "mediaType": "movie",
+          "tmdbId": null,
+          "winner": false
+        }
+      ]
+    },
+    {
+      "id": "best-visual-effects",
+      "name": "Best Special Visual Effects",
+      "nominees": [
+        {
+          "title": "1917 — Greg Butler",
+          "mediaType": "movie",
+          "tmdbId": null,
+          "winner": true
+        },
+        {
+          "title": "Avengers: Endgame — Matt Aitken",
+          "mediaType": "movie",
+          "tmdbId": null,
+          "winner": false
+        },
+        {
+          "title": "The Irishman — Leandro Estebecorena",
+          "mediaType": "movie",
+          "tmdbId": null,
+          "winner": false
+        },
+        {
+          "title": "The Lion King — Andrew R. Jones",
+          "mediaType": "movie",
+          "tmdbId": null,
+          "winner": false
+        },
+        {
+          "title": "Star Wars: The Rise of Skywalker — Roger Guyett",
+          "mediaType": "movie",
+          "tmdbId": null,
+          "winner": false
+        }
+      ]
+    },
+    {
+      "id": "best-animated-film",
+      "name": "Best Animated Film",
+      "nominees": [
+        {
+          "title": "Klaus",
+          "mediaType": "movie",
+          "tmdbId": null,
+          "winner": true
+        },
+        {
+          "title": "Frozen 2",
+          "mediaType": "movie",
+          "tmdbId": null,
+          "winner": false
+        },
+        {
+          "title": "A Shaun the Sheep Movie: Farmageddon",
+          "mediaType": "movie",
+          "tmdbId": null,
+          "winner": false
+        },
+        {
+          "title": "Toy Story 4",
+          "mediaType": "movie",
+          "tmdbId": null,
+          "winner": false
+        }
+      ]
+    },
+    {
+      "id": "best-documentary",
+      "name": "Best Documentary",
+      "nominees": [
+        {
+          "title": "For Sama",
+          "mediaType": "movie",
+          "tmdbId": null,
+          "winner": true
+        },
+        {
+          "title": "American Factory",
+          "mediaType": "movie",
+          "tmdbId": null,
+          "winner": false
+        },
+        {
+          "title": "Apollo 11",
+          "mediaType": "movie",
+          "tmdbId": null,
+          "winner": false
+        },
+        {
+          "title": "Diego Maradona",
+          "mediaType": "movie",
+          "tmdbId": null,
+          "winner": false
+        },
+        {
+          "title": "The Great Hack",
+          "mediaType": "movie",
+          "tmdbId": null,
+          "winner": false
+        }
+      ]
+    },
+    {
+      "id": "outstanding-debut-british",
+      "name": "Outstanding Debut by a British Writer, Director or Producer",
+      "nominees": [
+        {
+          "title": "Bait",
+          "mediaType": "movie",
+          "tmdbId": null,
+          "winner": true
+        },
+        {
+          "title": "For Sama",
+          "mediaType": "movie",
+          "tmdbId": null,
+          "winner": false
+        },
+        {
+          "title": "Maiden",
+          "mediaType": "movie",
+          "tmdbId": null,
+          "winner": false
+        },
+        {
+          "title": "Only You",
+          "mediaType": "movie",
+          "tmdbId": null,
+          "winner": false
+        },
+        {
+          "title": "Retablo",
+          "mediaType": "movie",
+          "tmdbId": null,
+          "winner": false
+        }
+      ]
+    }
+  ],
+  "dataSource": "wikipedia-mediawiki-api-bafta",
+  "notes": "Imported from English Wikipedia wikitext (Winners and nominees / {{Award category}}). CC BY-SA. Verify with BAFTA. tmdbId left null unless you enrich separately.",
+  "qa": {
+    "version": 1,
+    "lastAuditAt": "2026-04-07T17:54:39.571Z",
+    "isSeedEdition": false,
+    "needsNomineeBackfill": false,
+    "needsTmdbEnrichment": true,
+    "warnings": [],
+    "stats": {
+      "categoryCount": 21,
+      "nomineeCount": 105,
+      "winnerCount": 21,
+      "tmdbNull": 105,
+      "tmdbSet": 0
+    }
+  }
+}

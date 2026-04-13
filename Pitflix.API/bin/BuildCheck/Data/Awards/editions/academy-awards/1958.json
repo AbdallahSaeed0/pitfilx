@@ -1,0 +1,132 @@
+{
+  "awardId": "academy-awards",
+  "year": 1958,
+  "label": "30th Academy Awards (1958)",
+  "categories": [
+    {
+      "id": "best-director",
+      "name": "Best Director",
+      "nominees": [
+        {
+          "title": "David Lean — The Bridge on the River Kwai",
+          "mediaType": "movie",
+          "tmdbId": null,
+          "winner": true
+        },
+        {
+          "title": "Sidney Lumet — 12 Angry Men",
+          "mediaType": "movie",
+          "tmdbId": null,
+          "winner": false
+        },
+        {
+          "title": "Mark Robson — Peyton Place",
+          "mediaType": "movie",
+          "tmdbId": null,
+          "winner": false
+        },
+        {
+          "title": "Joshua Logan — Sayonara",
+          "mediaType": "movie",
+          "tmdbId": null,
+          "winner": false
+        },
+        {
+          "title": "Billy Wilder — Witness for the Prosecution",
+          "mediaType": "movie",
+          "tmdbId": null,
+          "winner": false
+        }
+      ]
+    },
+    {
+      "id": "best-supporting-actor",
+      "name": "Best Actor in a Supporting Role",
+      "nominees": [
+        {
+          "title": "Red Buttons — Sayonara",
+          "mediaType": "movie",
+          "tmdbId": null,
+          "winner": true
+        },
+        {
+          "title": "Vittorio De Sica — A Farewell to Arms",
+          "mediaType": "movie",
+          "tmdbId": null,
+          "winner": false
+        },
+        {
+          "title": "Sessue Hayakawa — The Bridge on the River Kwai",
+          "mediaType": "movie",
+          "tmdbId": null,
+          "winner": false
+        },
+        {
+          "title": "Arthur Kennedy — Peyton Place",
+          "mediaType": "movie",
+          "tmdbId": null,
+          "winner": false
+        },
+        {
+          "title": "Russ Tamblyn — Peyton Place",
+          "mediaType": "movie",
+          "tmdbId": null,
+          "winner": false
+        }
+      ]
+    },
+    {
+      "id": "best-supporting-actress",
+      "name": "Best Actress in a Supporting Role",
+      "nominees": [
+        {
+          "title": "Miyoshi Umeki — Sayonara",
+          "mediaType": "movie",
+          "tmdbId": null,
+          "winner": true
+        },
+        {
+          "title": "Carolyn Jones — The Bachelor Party",
+          "mediaType": "movie",
+          "tmdbId": null,
+          "winner": false
+        },
+        {
+          "title": "Elsa Lanchester — Witness for the Prosecution",
+          "mediaType": "movie",
+          "tmdbId": null,
+          "winner": false
+        },
+        {
+          "title": "Hope Lange — Peyton Place",
+          "mediaType": "movie",
+          "tmdbId": null,
+          "winner": false
+        },
+        {
+          "title": "Diane Varsi — Peyton Place",
+          "mediaType": "movie",
+          "tmdbId": null,
+          "winner": false
+        }
+      ]
+    }
+  ],
+  "dataSource": "wikipedia-mediawiki-api",
+  "notes": "Imported from English Wikipedia wikitext (Winners and nominees / {{Award category}}). CC BY-SA. Verify with AMPAS. tmdbId left null unless you enrich separately.",
+  "qa": {
+    "version": 1,
+    "lastAuditAt": "2026-04-07T17:54:39.510Z",
+    "isSeedEdition": false,
+    "needsNomineeBackfill": false,
+    "needsTmdbEnrichment": true,
+    "warnings": [],
+    "stats": {
+      "categoryCount": 3,
+      "nomineeCount": 15,
+      "winnerCount": 3,
+      "tmdbNull": 15,
+      "tmdbSet": 0
+    }
+  }
+}

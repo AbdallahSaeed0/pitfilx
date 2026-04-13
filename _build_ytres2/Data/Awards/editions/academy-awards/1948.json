@@ -1,0 +1,168 @@
+{
+  "awardId": "academy-awards",
+  "year": 1948,
+  "label": "20th Academy Awards (1948)",
+  "categories": [
+    {
+      "id": "best-director",
+      "name": "Best Director",
+      "nominees": [
+        {
+          "title": "Elia Kazan — Gentleman's Agreement",
+          "mediaType": "movie",
+          "tmdbId": null,
+          "winner": true
+        },
+        {
+          "title": "Henry Koster — The Bishop's Wife",
+          "mediaType": "movie",
+          "tmdbId": null,
+          "winner": false
+        },
+        {
+          "title": "Edward Dmytryk — Crossfire",
+          "mediaType": "movie",
+          "tmdbId": null,
+          "winner": false
+        },
+        {
+          "title": "George Cukor — A Double Life",
+          "mediaType": "movie",
+          "tmdbId": null,
+          "winner": false
+        },
+        {
+          "title": "David Lean — Great Expectations",
+          "mediaType": "movie",
+          "tmdbId": null,
+          "winner": false
+        }
+      ]
+    },
+    {
+      "id": "best-supporting-actor",
+      "name": "Best Actor in a Supporting Role",
+      "nominees": [
+        {
+          "title": "Edmund Gwenn — Miracle on 34th Street",
+          "mediaType": "movie",
+          "tmdbId": null,
+          "winner": true
+        },
+        {
+          "title": "Charles Bickford — The Farmer's Daughter",
+          "mediaType": "movie",
+          "tmdbId": null,
+          "winner": false
+        },
+        {
+          "title": "Thomas Gomez — Ride the Pink Horse",
+          "mediaType": "movie",
+          "tmdbId": null,
+          "winner": false
+        },
+        {
+          "title": "Robert Ryan — Crossfire",
+          "mediaType": "movie",
+          "tmdbId": null,
+          "winner": false
+        },
+        {
+          "title": "Richard Widmark — Kiss of Death",
+          "mediaType": "movie",
+          "tmdbId": null,
+          "winner": false
+        }
+      ]
+    },
+    {
+      "id": "best-supporting-actress",
+      "name": "Best Actress in a Supporting Role",
+      "nominees": [
+        {
+          "title": "Celeste Holm — Gentleman's Agreement",
+          "mediaType": "movie",
+          "tmdbId": null,
+          "winner": true
+        },
+        {
+          "title": "Ethel Barrymore — The Paradine Case",
+          "mediaType": "movie",
+          "tmdbId": null,
+          "winner": false
+        },
+        {
+          "title": "Gloria Grahame — Crossfire",
+          "mediaType": "movie",
+          "tmdbId": null,
+          "winner": false
+        },
+        {
+          "title": "Marjorie Main — The Egg and I",
+          "mediaType": "movie",
+          "tmdbId": null,
+          "winner": false
+        },
+        {
+          "title": "Anne Revere",
+          "mediaType": "movie",
+          "tmdbId": null,
+          "winner": false
+        }
+      ]
+    },
+    {
+      "id": "best-original-screenplay",
+      "name": "Best Original Screenplay",
+      "nominees": [
+        {
+          "title": "The Bachelor and the Bobby-Soxer — Sidney Sheldon",
+          "mediaType": "movie",
+          "tmdbId": null,
+          "winner": true
+        },
+        {
+          "title": "Body and Soul — Abraham Polonsky",
+          "mediaType": "movie",
+          "tmdbId": null,
+          "winner": false
+        },
+        {
+          "title": "A Double Life — Ruth Gordon",
+          "mediaType": "movie",
+          "tmdbId": null,
+          "winner": false
+        },
+        {
+          "title": "Monsieur Verdoux — Charlie Chaplin",
+          "mediaType": "movie",
+          "tmdbId": null,
+          "winner": false
+        },
+        {
+          "title": "Shoeshine — Sergio Amidei",
+          "mediaType": "movie",
+          "tmdbId": null,
+          "winner": false
+        }
+      ]
+    }
+  ],
+  "dataSource": "wikipedia-mediawiki-api",
+  "notes": "Imported from English Wikipedia wikitext (Winners and nominees / {{Award category}}). CC BY-SA. Verify with AMPAS. tmdbId left null unless you enrich separately.",
+  "qa": {
+    "version": 1,
+    "lastAuditAt": "2026-04-07T17:54:39.507Z",
+    "isSeedEdition": false,
+    "needsNomineeBackfill": false,
+    "needsTmdbEnrichment": true,
+    "warnings": [],
+    "stats": {
+      "categoryCount": 4,
+      "nomineeCount": 20,
+      "winnerCount": 4,
+      "tmdbNull": 20,
+      "tmdbSet": 0
+    }
+  }
+}

@@ -1,0 +1,96 @@
+{
+  "awardId": "golden-globes",
+  "year": 1972,
+  "label": "29th Golden Globe Awards (1972)",
+  "categories": [
+    {
+      "id": "best-picture-drama",
+      "name": "Best Motion Picture – Drama",
+      "nominees": [
+        {
+          "title": "The French Connection",
+          "mediaType": "movie",
+          "tmdbId": null,
+          "winner": true
+        },
+        {
+          "title": "A Clockwork Orange",
+          "mediaType": "movie",
+          "tmdbId": null,
+          "winner": false
+        },
+        {
+          "title": "The Last Picture Show",
+          "mediaType": "movie",
+          "tmdbId": null,
+          "winner": false
+        },
+        {
+          "title": "Mary, Queen of Scots",
+          "mediaType": "movie",
+          "tmdbId": null,
+          "winner": false
+        },
+        {
+          "title": "Summer of '42",
+          "mediaType": "movie",
+          "tmdbId": null,
+          "winner": false
+        }
+      ]
+    },
+    {
+      "id": "best-picture-musical-comedy",
+      "name": "Best Motion Picture – Musical or Comedy",
+      "nominees": [
+        {
+          "title": "Fiddler on the Roof",
+          "mediaType": "movie",
+          "tmdbId": null,
+          "winner": true
+        },
+        {
+          "title": "The Boy Friend",
+          "mediaType": "movie",
+          "tmdbId": null,
+          "winner": false
+        },
+        {
+          "title": "Kotch",
+          "mediaType": "movie",
+          "tmdbId": null,
+          "winner": false
+        },
+        {
+          "title": "A New Leaf",
+          "mediaType": "movie",
+          "tmdbId": null,
+          "winner": false
+        },
+        {
+          "title": "Plaza Suite",
+          "mediaType": "movie",
+          "tmdbId": null,
+          "winner": false
+        }
+      ]
+    }
+  ],
+  "dataSource": "wikipedia-mediawiki-api-golden-globes",
+  "notes": "Imported from English Wikipedia (Winners and nominees: {{Award category}} and/or legacy Film/Television wikitables). CC BY-SA. Verify with Golden Globes / DCP. tmdbId left null unless you enrich separately.",
+  "qa": {
+    "version": 1,
+    "lastAuditAt": "2026-04-07T17:54:39.581Z",
+    "isSeedEdition": false,
+    "needsNomineeBackfill": true,
+    "needsTmdbEnrichment": true,
+    "warnings": [],
+    "stats": {
+      "categoryCount": 2,
+      "nomineeCount": 10,
+      "winnerCount": 2,
+      "tmdbNull": 10,
+      "tmdbSet": 0
+    }
+  }
+}

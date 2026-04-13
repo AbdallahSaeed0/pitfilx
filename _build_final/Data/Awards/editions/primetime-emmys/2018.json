@@ -1,0 +1,702 @@
+{
+  "awardId": "primetime-emmys",
+  "year": 2018,
+  "label": "70th Primetime Emmy Awards (2018 ceremony)",
+  "categories": [
+    {
+      "id": "outstanding-drama-series",
+      "name": "Outstanding Drama Series",
+      "nominees": [
+        {
+          "title": "Game of Thrones",
+          "mediaType": "tv",
+          "tmdbId": null,
+          "winner": true
+        },
+        {
+          "title": "The Americans",
+          "mediaType": "tv",
+          "tmdbId": null,
+          "winner": false
+        },
+        {
+          "title": "The Crown",
+          "mediaType": "tv",
+          "tmdbId": null,
+          "winner": false
+        },
+        {
+          "title": "The Handmaid's Tale",
+          "mediaType": "tv",
+          "tmdbId": null,
+          "winner": false
+        },
+        {
+          "title": "Stranger Things",
+          "mediaType": "tv",
+          "tmdbId": null,
+          "winner": false
+        },
+        {
+          "title": "This Is Us",
+          "mediaType": "tv",
+          "tmdbId": null,
+          "winner": false
+        },
+        {
+          "title": "Westworld",
+          "mediaType": "tv",
+          "tmdbId": null,
+          "winner": false
+        }
+      ]
+    },
+    {
+      "id": "outstanding-comedy-series",
+      "name": "Outstanding Comedy Series",
+      "nominees": [
+        {
+          "title": "The Marvelous Mrs. Maisel",
+          "mediaType": "tv",
+          "tmdbId": null,
+          "winner": true
+        },
+        {
+          "title": "Atlanta",
+          "mediaType": "tv",
+          "tmdbId": null,
+          "winner": false
+        },
+        {
+          "title": "Barry",
+          "mediaType": "tv",
+          "tmdbId": null,
+          "winner": false
+        },
+        {
+          "title": "Black-ish",
+          "mediaType": "tv",
+          "tmdbId": null,
+          "winner": false
+        },
+        {
+          "title": "Curb Your Enthusiasm",
+          "mediaType": "tv",
+          "tmdbId": null,
+          "winner": false
+        },
+        {
+          "title": "GLOW",
+          "mediaType": "tv",
+          "tmdbId": null,
+          "winner": false
+        },
+        {
+          "title": "Silicon Valley",
+          "mediaType": "tv",
+          "tmdbId": null,
+          "winner": false
+        },
+        {
+          "title": "Unbreakable Kimmy Schmidt",
+          "mediaType": "tv",
+          "tmdbId": null,
+          "winner": false
+        }
+      ]
+    },
+    {
+      "id": "outstanding-limited-series",
+      "name": "Outstanding Limited or Anthology Series",
+      "nominees": [
+        {
+          "title": "The Assassination of Gianni Versace: American Crime Story",
+          "mediaType": "tv",
+          "tmdbId": null,
+          "winner": true
+        },
+        {
+          "title": "The Alienist",
+          "mediaType": "tv",
+          "tmdbId": null,
+          "winner": false
+        },
+        {
+          "title": "Genius: Picasso",
+          "mediaType": "tv",
+          "tmdbId": null,
+          "winner": false
+        },
+        {
+          "title": "Godless",
+          "mediaType": "tv",
+          "tmdbId": null,
+          "winner": false
+        },
+        {
+          "title": "Patrick Melrose",
+          "mediaType": "tv",
+          "tmdbId": null,
+          "winner": false
+        }
+      ]
+    },
+    {
+      "id": "emmy-lead-actor-drama",
+      "name": "Outstanding Lead Actor in a Drama Series",
+      "nominees": [
+        {
+          "title": "Matthew Rhys — The Americans",
+          "mediaType": "tv",
+          "tmdbId": null,
+          "winner": true
+        },
+        {
+          "title": "Jason Bateman — Ozark",
+          "mediaType": "tv",
+          "tmdbId": null,
+          "winner": false
+        },
+        {
+          "title": "Sterling K. Brown — This Is Us",
+          "mediaType": "tv",
+          "tmdbId": null,
+          "winner": false
+        },
+        {
+          "title": "Ed Harris — Westworld",
+          "mediaType": "tv",
+          "tmdbId": null,
+          "winner": false
+        },
+        {
+          "title": "Milo Ventimiglia",
+          "mediaType": "tv",
+          "tmdbId": null,
+          "winner": false
+        },
+        {
+          "title": "Jeffrey Wright",
+          "mediaType": "tv",
+          "tmdbId": null,
+          "winner": false
+        }
+      ]
+    },
+    {
+      "id": "emmy-lead-actor-comedy",
+      "name": "Outstanding Lead Actor in a Comedy Series",
+      "nominees": [
+        {
+          "title": "Bill Hader — Barry",
+          "mediaType": "tv",
+          "tmdbId": null,
+          "winner": true
+        },
+        {
+          "title": "Anthony Anderson — Black-ish",
+          "mediaType": "tv",
+          "tmdbId": null,
+          "winner": false
+        },
+        {
+          "title": "Ted Danson — The Good Place",
+          "mediaType": "tv",
+          "tmdbId": null,
+          "winner": false
+        },
+        {
+          "title": "Larry David — Curb Your Enthusiasm",
+          "mediaType": "tv",
+          "tmdbId": null,
+          "winner": false
+        },
+        {
+          "title": "Donald Glover — Atlanta",
+          "mediaType": "tv",
+          "tmdbId": null,
+          "winner": false
+        },
+        {
+          "title": "William H. Macy — Shameless",
+          "mediaType": "tv",
+          "tmdbId": null,
+          "winner": false
+        }
+      ]
+    },
+    {
+      "id": "emmy-lead-actress-drama",
+      "name": "Outstanding Lead Actress in a Drama Series",
+      "nominees": [
+        {
+          "title": "Claire Foy — The Crown",
+          "mediaType": "tv",
+          "tmdbId": null,
+          "winner": true
+        },
+        {
+          "title": "Tatiana Maslany — Orphan Black",
+          "mediaType": "tv",
+          "tmdbId": null,
+          "winner": false
+        },
+        {
+          "title": "Elisabeth Moss — The Handmaid's Tale",
+          "mediaType": "tv",
+          "tmdbId": null,
+          "winner": false
+        },
+        {
+          "title": "Sandra Oh — Killing Eve",
+          "mediaType": "tv",
+          "tmdbId": null,
+          "winner": false
+        },
+        {
+          "title": "Keri Russell — The Americans",
+          "mediaType": "tv",
+          "tmdbId": null,
+          "winner": false
+        },
+        {
+          "title": "Evan Rachel Wood — Westworld",
+          "mediaType": "tv",
+          "tmdbId": null,
+          "winner": false
+        }
+      ]
+    },
+    {
+      "id": "emmy-lead-actress-comedy",
+      "name": "Outstanding Lead Actress in a Comedy Series",
+      "nominees": [
+        {
+          "title": "Rachel Brosnahan — The Marvelous Mrs. Maisel",
+          "mediaType": "tv",
+          "tmdbId": null,
+          "winner": true
+        },
+        {
+          "title": "Pamela Adlon — Better Things",
+          "mediaType": "tv",
+          "tmdbId": null,
+          "winner": false
+        },
+        {
+          "title": "Allison Janney — Mom",
+          "mediaType": "tv",
+          "tmdbId": null,
+          "winner": false
+        },
+        {
+          "title": "Issa Rae — Insecure",
+          "mediaType": "tv",
+          "tmdbId": null,
+          "winner": false
+        },
+        {
+          "title": "Tracee Ellis Ross — Black-ish",
+          "mediaType": "tv",
+          "tmdbId": null,
+          "winner": false
+        },
+        {
+          "title": "Lily Tomlin — Grace and Frankie",
+          "mediaType": "tv",
+          "tmdbId": null,
+          "winner": false
+        }
+      ]
+    },
+    {
+      "id": "emmy-supporting-actor-drama",
+      "name": "Outstanding Supporting Actor in a Drama Series",
+      "nominees": [
+        {
+          "title": "Peter Dinklage — Game of Thrones",
+          "mediaType": "tv",
+          "tmdbId": null,
+          "winner": true
+        },
+        {
+          "title": "Nikolaj Coster-Waldau",
+          "mediaType": "tv",
+          "tmdbId": null,
+          "winner": false
+        },
+        {
+          "title": "Joseph Fiennes — The Handmaid's Tale",
+          "mediaType": "tv",
+          "tmdbId": null,
+          "winner": false
+        },
+        {
+          "title": "David Harbour — Stranger Things",
+          "mediaType": "tv",
+          "tmdbId": null,
+          "winner": false
+        },
+        {
+          "title": "Mandy Patinkin — Homeland",
+          "mediaType": "tv",
+          "tmdbId": null,
+          "winner": false
+        },
+        {
+          "title": "Matt Smith — The Crown",
+          "mediaType": "tv",
+          "tmdbId": null,
+          "winner": false
+        }
+      ]
+    },
+    {
+      "id": "emmy-supporting-actor-comedy",
+      "name": "Outstanding Supporting Actor in a Comedy Series",
+      "nominees": [
+        {
+          "title": "Henry Winkler — Barry",
+          "mediaType": "tv",
+          "tmdbId": null,
+          "winner": true
+        },
+        {
+          "title": "Louie Anderson — Baskets",
+          "mediaType": "tv",
+          "tmdbId": null,
+          "winner": false
+        },
+        {
+          "title": "Alec Baldwin — Saturday Night Live",
+          "mediaType": "tv",
+          "tmdbId": null,
+          "winner": false
+        },
+        {
+          "title": "Tituss Burgess — Unbreakable Kimmy Schmidt",
+          "mediaType": "tv",
+          "tmdbId": null,
+          "winner": false
+        },
+        {
+          "title": "Brian Tyree Henry — Atlanta",
+          "mediaType": "tv",
+          "tmdbId": null,
+          "winner": false
+        },
+        {
+          "title": "Tony Shalhoub — The Marvelous Mrs. Maisel",
+          "mediaType": "tv",
+          "tmdbId": null,
+          "winner": false
+        },
+        {
+          "title": "Kenan Thompson",
+          "mediaType": "tv",
+          "tmdbId": null,
+          "winner": false
+        }
+      ]
+    },
+    {
+      "id": "emmy-supporting-actress-drama",
+      "name": "Outstanding Supporting Actress in a Drama Series",
+      "nominees": [
+        {
+          "title": "Thandiwe Newton — Westworld",
+          "mediaType": "tv",
+          "tmdbId": null,
+          "winner": true
+        },
+        {
+          "title": "Alexis Bledel — The Handmaid's Tale",
+          "mediaType": "tv",
+          "tmdbId": null,
+          "winner": false
+        },
+        {
+          "title": "Millie Bobby Brown — Stranger Things",
+          "mediaType": "tv",
+          "tmdbId": null,
+          "winner": false
+        },
+        {
+          "title": "Ann Dowd",
+          "mediaType": "tv",
+          "tmdbId": null,
+          "winner": false
+        },
+        {
+          "title": "Lena Headey — Game of Thrones",
+          "mediaType": "tv",
+          "tmdbId": null,
+          "winner": false
+        },
+        {
+          "title": "Vanessa Kirby — The Crown",
+          "mediaType": "tv",
+          "tmdbId": null,
+          "winner": false
+        },
+        {
+          "title": "Yvonne Strahovski",
+          "mediaType": "tv",
+          "tmdbId": null,
+          "winner": false
+        }
+      ]
+    },
+    {
+      "id": "emmy-supporting-actress-comedy",
+      "name": "Outstanding Supporting Actress in a Comedy Series",
+      "nominees": [
+        {
+          "title": "Alex Borstein — The Marvelous Mrs. Maisel",
+          "mediaType": "tv",
+          "tmdbId": null,
+          "winner": true
+        },
+        {
+          "title": "Zazie Beetz — Atlanta",
+          "mediaType": "tv",
+          "tmdbId": null,
+          "winner": false
+        },
+        {
+          "title": "Aidy Bryant — Saturday Night Live",
+          "mediaType": "tv",
+          "tmdbId": null,
+          "winner": false
+        },
+        {
+          "title": "Betty Gilpin — GLOW",
+          "mediaType": "tv",
+          "tmdbId": null,
+          "winner": false
+        },
+        {
+          "title": "Leslie Jones",
+          "mediaType": "tv",
+          "tmdbId": null,
+          "winner": false
+        },
+        {
+          "title": "Kate McKinnon",
+          "mediaType": "tv",
+          "tmdbId": null,
+          "winner": false
+        },
+        {
+          "title": "Laurie Metcalf — Roseanne",
+          "mediaType": "tv",
+          "tmdbId": null,
+          "winner": false
+        },
+        {
+          "title": "Megan Mullally — Will & Grace",
+          "mediaType": "tv",
+          "tmdbId": null,
+          "winner": false
+        }
+      ]
+    },
+    {
+      "id": "emmy-directing-drama",
+      "name": "Outstanding Directing for a Drama Series",
+      "nominees": [
+        {
+          "title": "The Crown",
+          "mediaType": "tv",
+          "tmdbId": null,
+          "winner": true
+        },
+        {
+          "title": "Game of Thrones",
+          "mediaType": "tv",
+          "tmdbId": null,
+          "winner": false
+        },
+        {
+          "title": "The Dragon and the Wolf",
+          "mediaType": "tv",
+          "tmdbId": null,
+          "winner": false
+        },
+        {
+          "title": "The Handmaid's Tale",
+          "mediaType": "tv",
+          "tmdbId": null,
+          "winner": false
+        },
+        {
+          "title": "Ozark",
+          "mediaType": "tv",
+          "tmdbId": null,
+          "winner": false
+        },
+        {
+          "title": "Daniel Sackheim",
+          "mediaType": "tv",
+          "tmdbId": null,
+          "winner": false
+        },
+        {
+          "title": "Stranger Things",
+          "mediaType": "tv",
+          "tmdbId": null,
+          "winner": false
+        }
+      ]
+    },
+    {
+      "id": "emmy-directing-comedy",
+      "name": "Outstanding Directing for a Comedy Series",
+      "nominees": [
+        {
+          "title": "The Marvelous Mrs. Maisel",
+          "mediaType": "tv",
+          "tmdbId": null,
+          "winner": true
+        },
+        {
+          "title": "Atlanta",
+          "mediaType": "tv",
+          "tmdbId": null,
+          "winner": false
+        },
+        {
+          "title": "Teddy Perkins",
+          "mediaType": "tv",
+          "tmdbId": null,
+          "winner": false
+        },
+        {
+          "title": "Barry",
+          "mediaType": "tv",
+          "tmdbId": null,
+          "winner": false
+        },
+        {
+          "title": "The Big Bang Theory",
+          "mediaType": "tv",
+          "tmdbId": null,
+          "winner": false
+        },
+        {
+          "title": "GLOW",
+          "mediaType": "tv",
+          "tmdbId": null,
+          "winner": false
+        },
+        {
+          "title": "Silicon Valley",
+          "mediaType": "tv",
+          "tmdbId": null,
+          "winner": false
+        }
+      ]
+    },
+    {
+      "id": "emmy-writing-drama",
+      "name": "Outstanding Writing for a Drama Series",
+      "nominees": [
+        {
+          "title": "The Americans",
+          "mediaType": "tv",
+          "tmdbId": null,
+          "winner": true
+        },
+        {
+          "title": "The Crown",
+          "mediaType": "tv",
+          "tmdbId": null,
+          "winner": false
+        },
+        {
+          "title": "Game of Thrones",
+          "mediaType": "tv",
+          "tmdbId": null,
+          "winner": false
+        },
+        {
+          "title": "The Handmaid's Tale",
+          "mediaType": "tv",
+          "tmdbId": null,
+          "winner": false
+        },
+        {
+          "title": "Killing Eve",
+          "mediaType": "tv",
+          "tmdbId": null,
+          "winner": false
+        },
+        {
+          "title": "Stranger Things",
+          "mediaType": "tv",
+          "tmdbId": null,
+          "winner": false
+        }
+      ]
+    },
+    {
+      "id": "emmy-writing-comedy",
+      "name": "Outstanding Writing for a Comedy Series",
+      "nominees": [
+        {
+          "title": "The Marvelous Mrs. Maisel",
+          "mediaType": "tv",
+          "tmdbId": null,
+          "winner": true
+        },
+        {
+          "title": "Atlanta",
+          "mediaType": "tv",
+          "tmdbId": null,
+          "winner": false
+        },
+        {
+          "title": "Barbershop",
+          "mediaType": "tv",
+          "tmdbId": null,
+          "winner": false
+        },
+        {
+          "title": "Barry",
+          "mediaType": "tv",
+          "tmdbId": null,
+          "winner": false
+        },
+        {
+          "title": "Chapter Seven: Loud, Fast, and Keep Going",
+          "mediaType": "tv",
+          "tmdbId": null,
+          "winner": false
+        },
+        {
+          "title": "Silicon Valley",
+          "mediaType": "tv",
+          "tmdbId": null,
+          "winner": false
+        }
+      ]
+    }
+  ],
+  "dataSource": "wikipedia-mediawiki-api-primetime",
+  "notes": "Imported from English Wikipedia wikitext (Winners and nominees / {{Award category}}). CC BY-SA. Verify with Television Academy. tmdbId left null unless you enrich separately.",
+  "qa": {
+    "version": 1,
+    "lastAuditAt": "2026-04-07T17:54:39.621Z",
+    "isSeedEdition": false,
+    "needsNomineeBackfill": false,
+    "needsTmdbEnrichment": true,
+    "warnings": [],
+    "stats": {
+      "categoryCount": 15,
+      "nomineeCount": 98,
+      "winnerCount": 15,
+      "tmdbNull": 98,
+      "tmdbSet": 0
+    }
+  }
+}

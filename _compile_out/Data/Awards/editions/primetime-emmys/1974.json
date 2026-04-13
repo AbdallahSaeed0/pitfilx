@@ -1,0 +1,114 @@
+{
+  "awardId": "primetime-emmys",
+  "year": 1974,
+  "label": "26th Primetime Emmy Awards (1974 ceremony)",
+  "categories": [
+    {
+      "id": "outstanding-drama-series",
+      "name": "Outstanding Drama Series",
+      "nominees": [
+        {
+          "title": "Upstairs, Downstairs",
+          "mediaType": "tv",
+          "tmdbId": null,
+          "winner": true
+        },
+        {
+          "title": "Kojak",
+          "mediaType": "tv",
+          "tmdbId": null,
+          "winner": false
+        },
+        {
+          "title": "Police Story",
+          "mediaType": "tv",
+          "tmdbId": null,
+          "winner": false
+        },
+        {
+          "title": "The Streets of San Francisco",
+          "mediaType": "tv",
+          "tmdbId": null,
+          "winner": false
+        },
+        {
+          "title": "The Waltons",
+          "mediaType": "tv",
+          "tmdbId": null,
+          "winner": false
+        }
+      ]
+    },
+    {
+      "id": "outstanding-comedy-series",
+      "name": "Outstanding Comedy Series",
+      "nominees": [
+        {
+          "title": "M*A*S*H",
+          "mediaType": "tv",
+          "tmdbId": null,
+          "winner": true
+        },
+        {
+          "title": "All in the Family",
+          "mediaType": "tv",
+          "tmdbId": null,
+          "winner": false
+        },
+        {
+          "title": "The Mary Tyler Moore Show",
+          "mediaType": "tv",
+          "tmdbId": null,
+          "winner": false
+        },
+        {
+          "title": "The Odd Couple",
+          "mediaType": "tv",
+          "tmdbId": null,
+          "winner": false
+        }
+      ]
+    },
+    {
+      "id": "outstanding-limited-series",
+      "name": "Outstanding Limited or Anthology Series",
+      "nominees": [
+        {
+          "title": "Columbo",
+          "mediaType": "tv",
+          "tmdbId": null,
+          "winner": true
+        },
+        {
+          "title": "The Blue Knight",
+          "mediaType": "tv",
+          "tmdbId": null,
+          "winner": false
+        },
+        {
+          "title": "McCloud",
+          "mediaType": "tv",
+          "tmdbId": null,
+          "winner": false
+        }
+      ]
+    }
+  ],
+  "dataSource": "wikipedia-mediawiki-api-primetime",
+  "notes": "Imported from English Wikipedia wikitext (Winners and nominees / {{Award category}}). CC BY-SA. Verify with Television Academy. tmdbId left null unless you enrich separately.",
+  "qa": {
+    "version": 1,
+    "lastAuditAt": "2026-04-07T17:54:39.602Z",
+    "isSeedEdition": false,
+    "needsNomineeBackfill": false,
+    "needsTmdbEnrichment": true,
+    "warnings": [],
+    "stats": {
+      "categoryCount": 3,
+      "nomineeCount": 12,
+      "winnerCount": 3,
+      "tmdbNull": 12,
+      "tmdbSet": 0
+    }
+  }
+}

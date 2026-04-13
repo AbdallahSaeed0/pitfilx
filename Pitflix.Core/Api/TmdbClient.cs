@@ -173,6 +173,55 @@ public sealed class TmdbClient
         }
     }
 
+    /// <summary>Single TMDB round-trip for ratings enrichment: votes + external ids + title/year.</summary>
+    public async Task<TmdbRatingsAnchor?> TryGetRatingsAnchorAsync(int tmdbId, string mediaType,
+        CancellationToken cancellationToken = default)
+    {
+        if (tmdbId <= 0)
+            return null;
+
+        var isMovie = mediaType.Equals("Movie", StringComparison.OrdinalIgnoreCase);
+        var path = isMovie ? $"movie/{tmdbId}" : $"tv/{tmdbId}";
+        var url = AbsoluteApiUrl(
+            $"{path}?api_key={Uri.EscapeDataString(_apiKey)}&language=en-US&append_to_response=external_ids");
+        try
+        {
+            var json = await _http.GetStringAsync(url, cancellationToken).ConfigureAwait(false);
+            var root = JObject.Parse(json);
+            double? va = null;
+            int? vc = null;
+            if (root["vote_average"] != null && double.TryParse(root["vote_average"]!.ToString(),
+                    System.Globalization.NumberStyles.Float,
+                    System.Globalization.CultureInfo.InvariantCulture, out var v))
+                va = v;
+            if (root["vote_count"] != null && int.TryParse(root["vote_count"]!.ToString(), out var c))
+                vc = c;
+
+            var title = isMovie ? (string?)root["title"] : (string?)root["name"];
+            var date = isMovie ? (string?)root["release_date"] : (string?)root["first_air_date"];
+            int? year = null;
+            if (!string.IsNullOrEmpty(date) && date!.Length >= 4 &&
+                int.TryParse(date.AsSpan(0, 4), out var y))
+                year = y;
+
+            string? imdb = null;
+            var ext = root["external_ids"] as JObject;
+            if (ext != null && ext["imdb_id"] != null)
+                imdb = ((string?)ext["imdb_id"])?.Trim();
+
+            return new TmdbRatingsAnchor(
+                string.IsNullOrWhiteSpace(imdb) ? null : imdb,
+                string.IsNullOrWhiteSpace(title) ? "" : title.Trim(),
+                year,
+                va,
+                vc);
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
     /// <summary>Primary title from <c>movie/{{id}}</c> or <c>tv/{{id}}</c> (for cards when library title is missing/garbled).</summary>
     public async Task<string?> TryGetDisplayTitleAsync(int tmdbId, string mediaType,
         CancellationToken cancellationToken = default)
@@ -449,6 +498,42 @@ public sealed class TmdbClient
         }
     }
 
+    /// <summary>Popular movies (no release-date filter) — broad pool for “latest trailer” discovery by video <c>published_at</c>.</summary>
+    public async Task<List<TmdbDiscoverItem>> DiscoverPopularMoviesAsync(int page,
+        CancellationToken cancellationToken = default)
+    {
+        var url = AbsoluteApiUrl(
+            $"discover/movie?api_key={Uri.EscapeDataString(_apiKey)}&language=en-US" +
+            $"&sort_by=popularity.desc&page={Math.Clamp(page, 1, 500)}&region=US");
+        try
+        {
+            var json = await _http.GetStringAsync(url, cancellationToken).ConfigureAwait(false);
+            return ParseDiscoverMovies(json, excludeTmdbId: null);
+        }
+        catch
+        {
+            return new List<TmdbDiscoverItem>();
+        }
+    }
+
+    /// <summary>Popular TV (no first-air filter) — broad pool for latest-trailer discovery.</summary>
+    public async Task<List<TmdbDiscoverItem>> DiscoverPopularTvAsync(int page,
+        CancellationToken cancellationToken = default)
+    {
+        var url = AbsoluteApiUrl(
+            $"discover/tv?api_key={Uri.EscapeDataString(_apiKey)}&language=en-US" +
+            $"&sort_by=popularity.desc&page={Math.Clamp(page, 1, 500)}");
+        try
+        {
+            var json = await _http.GetStringAsync(url, cancellationToken).ConfigureAwait(false);
+            return ParseDiscoverTv(json, excludeTmdbId: null);
+        }
+        catch
+        {
+            return new List<TmdbDiscoverItem>();
+        }
+    }
+
     /// <summary>Movies whose primary release date is on or after <paramref name="fromYyyyMmDd"/> — for “recent” trailer grids.</summary>
     public async Task<List<TmdbDiscoverItem>> DiscoverMoviesPrimaryReleaseFromAsync(string fromYyyyMmDd, int page,
         CancellationToken cancellationToken = default)
@@ -543,6 +628,58 @@ public sealed class TmdbClient
             if (string.IsNullOrWhiteSpace(key))
                 continue;
             rows.Add((key.Trim(), name, type, YoutubePromoRank(type, name)));
+        }
+
+        return rows;
+    }
+
+    /// <summary>All YouTube promos with TMDB <c>published_at</c> for trailer-age sorting on Home.</summary>
+    public async Task<IReadOnlyList<(string Key, string Name, string Type, int Rank, DateTime? PublishedAtUtc)>>
+        GetYoutubePromosDetailedAsync(int tmdbId, string mediaType, CancellationToken cancellationToken = default)
+    {
+        if (tmdbId <= 0)
+            return Array.Empty<(string, string, string, int, DateTime?)>();
+
+        var isMovie = mediaType.Equals("Movie", StringComparison.OrdinalIgnoreCase);
+        var path = isMovie ? $"movie/{tmdbId}/videos" : $"tv/{tmdbId}/videos";
+        var url = AbsoluteApiUrl($"{path}?api_key={Uri.EscapeDataString(_apiKey)}");
+        try
+        {
+            var json = await _http.GetStringAsync(url, cancellationToken).ConfigureAwait(false);
+            var root = JObject.Parse(json);
+            return ParseYoutubePromoRowsDetailed(root["results"] as JArray);
+        }
+        catch
+        {
+            return Array.Empty<(string, string, string, int, DateTime?)>();
+        }
+    }
+
+    private static IReadOnlyList<(string Key, string Name, string Type, int Rank, DateTime? PublishedAtUtc)>
+        ParseYoutubePromoRowsDetailed(JArray? results)
+    {
+        var rows = new List<(string Key, string Name, string Type, int Rank, DateTime? PublishedAtUtc)>();
+        if (results == null)
+            return rows;
+
+        foreach (var t in results)
+        {
+            var site = ((string?)t?["site"] ?? "").Trim();
+            if (!site.Equals("YouTube", StringComparison.OrdinalIgnoreCase))
+                continue;
+            var type = ((string?)t?["type"] ?? "").Trim();
+            var name = (string?)t?["name"] ?? "Video";
+            var key = (string?)t?["key"];
+            if (string.IsNullOrWhiteSpace(key))
+                continue;
+            DateTime? pub = null;
+            var pubRaw = (string?)t?["published_at"];
+            if (!string.IsNullOrWhiteSpace(pubRaw) &&
+                DateTime.TryParse(pubRaw, System.Globalization.CultureInfo.InvariantCulture,
+                    System.Globalization.DateTimeStyles.AssumeUniversal | System.Globalization.DateTimeStyles.AdjustToUniversal,
+                    out var dto))
+                pub = dto;
+            rows.Add((key.Trim(), name, type, YoutubePromoRank(type, name), pub));
         }
 
         return rows;

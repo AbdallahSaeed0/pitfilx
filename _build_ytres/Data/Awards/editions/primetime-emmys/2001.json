@@ -1,0 +1,570 @@
+{
+  "awardId": "primetime-emmys",
+  "year": 2001,
+  "label": "53rd Primetime Emmy Awards (2001 ceremony)",
+  "categories": [
+    {
+      "id": "outstanding-drama-series",
+      "name": "Outstanding Drama Series",
+      "nominees": [
+        {
+          "title": "The West Wing",
+          "mediaType": "tv",
+          "tmdbId": null,
+          "winner": true
+        },
+        {
+          "title": "ER",
+          "mediaType": "tv",
+          "tmdbId": null,
+          "winner": false
+        },
+        {
+          "title": "Law & Order",
+          "mediaType": "tv",
+          "tmdbId": null,
+          "winner": false
+        },
+        {
+          "title": "The Practice",
+          "mediaType": "tv",
+          "tmdbId": null,
+          "winner": false
+        },
+        {
+          "title": "The Sopranos",
+          "mediaType": "tv",
+          "tmdbId": null,
+          "winner": false
+        }
+      ]
+    },
+    {
+      "id": "outstanding-comedy-series",
+      "name": "Outstanding Comedy Series",
+      "nominees": [
+        {
+          "title": "Sex and the City",
+          "mediaType": "tv",
+          "tmdbId": null,
+          "winner": true
+        },
+        {
+          "title": "Everybody Loves Raymond",
+          "mediaType": "tv",
+          "tmdbId": null,
+          "winner": false
+        },
+        {
+          "title": "Frasier",
+          "mediaType": "tv",
+          "tmdbId": null,
+          "winner": false
+        },
+        {
+          "title": "Malcolm in the Middle",
+          "mediaType": "tv",
+          "tmdbId": null,
+          "winner": false
+        },
+        {
+          "title": "Will & Grace",
+          "mediaType": "tv",
+          "tmdbId": null,
+          "winner": false
+        }
+      ]
+    },
+    {
+      "id": "outstanding-limited-series",
+      "name": "Outstanding Limited or Anthology Series",
+      "nominees": [
+        {
+          "title": "Anne Frank",
+          "mediaType": "tv",
+          "tmdbId": null,
+          "winner": true
+        },
+        {
+          "title": "Armistead Maupin's Further Tales of the City",
+          "mediaType": "tv",
+          "tmdbId": null,
+          "winner": false
+        },
+        {
+          "title": "Horatio Hornblower",
+          "mediaType": "tv",
+          "tmdbId": null,
+          "winner": false
+        },
+        {
+          "title": "Life with Judy Garland: Me and My Shadows",
+          "mediaType": "tv",
+          "tmdbId": null,
+          "winner": false
+        },
+        {
+          "title": "Nuremberg",
+          "mediaType": "tv",
+          "tmdbId": null,
+          "winner": false
+        }
+      ]
+    },
+    {
+      "id": "emmy-lead-actor-drama",
+      "name": "Outstanding Lead Actor in a Drama Series",
+      "nominees": [
+        {
+          "title": "James Gandolfini — The Sopranos",
+          "mediaType": "tv",
+          "tmdbId": null,
+          "winner": true
+        },
+        {
+          "title": "Andre Braugher — Gideon's Crossing",
+          "mediaType": "tv",
+          "tmdbId": null,
+          "winner": false
+        },
+        {
+          "title": "Dennis Franz — NYPD Blue",
+          "mediaType": "tv",
+          "tmdbId": null,
+          "winner": false
+        },
+        {
+          "title": "Rob Lowe — The West Wing",
+          "mediaType": "tv",
+          "tmdbId": null,
+          "winner": false
+        },
+        {
+          "title": "Martin Sheen",
+          "mediaType": "tv",
+          "tmdbId": null,
+          "winner": false
+        }
+      ]
+    },
+    {
+      "id": "emmy-lead-actor-comedy",
+      "name": "Outstanding Lead Actor in a Comedy Series",
+      "nominees": [
+        {
+          "title": "Eric McCormack — Will & Grace",
+          "mediaType": "tv",
+          "tmdbId": null,
+          "winner": true
+        },
+        {
+          "title": "Kelsey Grammer — Frasier",
+          "mediaType": "tv",
+          "tmdbId": null,
+          "winner": false
+        },
+        {
+          "title": "John Lithgow — 3rd Rock from the Sun",
+          "mediaType": "tv",
+          "tmdbId": null,
+          "winner": false
+        },
+        {
+          "title": "Frankie Muniz — Malcolm in the Middle",
+          "mediaType": "tv",
+          "tmdbId": null,
+          "winner": false
+        },
+        {
+          "title": "Ray Romano — Everybody Loves Raymond",
+          "mediaType": "tv",
+          "tmdbId": null,
+          "winner": false
+        }
+      ]
+    },
+    {
+      "id": "emmy-lead-actress-drama",
+      "name": "Outstanding Lead Actress in a Drama Series",
+      "nominees": [
+        {
+          "title": "Edie Falco — The Sopranos",
+          "mediaType": "tv",
+          "tmdbId": null,
+          "winner": true
+        },
+        {
+          "title": "Lorraine Bracco",
+          "mediaType": "tv",
+          "tmdbId": null,
+          "winner": false
+        },
+        {
+          "title": "Amy Brenneman — Judging Amy",
+          "mediaType": "tv",
+          "tmdbId": null,
+          "winner": false
+        },
+        {
+          "title": "Marg Helgenberger — CSI: Crime Scene Investigation",
+          "mediaType": "tv",
+          "tmdbId": null,
+          "winner": false
+        },
+        {
+          "title": "Sela Ward — Once and Again",
+          "mediaType": "tv",
+          "tmdbId": null,
+          "winner": false
+        }
+      ]
+    },
+    {
+      "id": "emmy-lead-actress-comedy",
+      "name": "Outstanding Lead Actress in a Comedy Series",
+      "nominees": [
+        {
+          "title": "Patricia Heaton — Everybody Loves Raymond",
+          "mediaType": "tv",
+          "tmdbId": null,
+          "winner": true
+        },
+        {
+          "title": "Calista Flockhart — Ally McBeal",
+          "mediaType": "tv",
+          "tmdbId": null,
+          "winner": false
+        },
+        {
+          "title": "Jane Kaczmarek — Malcolm in the Middle",
+          "mediaType": "tv",
+          "tmdbId": null,
+          "winner": false
+        },
+        {
+          "title": "Debra Messing — Will & Grace",
+          "mediaType": "tv",
+          "tmdbId": null,
+          "winner": false
+        },
+        {
+          "title": "Sarah Jessica Parker — Sex and the City",
+          "mediaType": "tv",
+          "tmdbId": null,
+          "winner": false
+        }
+      ]
+    },
+    {
+      "id": "emmy-supporting-actor-drama",
+      "name": "Outstanding Supporting Actor in a Drama Series",
+      "nominees": [
+        {
+          "title": "Bradley Whitford — The West Wing",
+          "mediaType": "tv",
+          "tmdbId": null,
+          "winner": true
+        },
+        {
+          "title": "Dominic Chianese — The Sopranos",
+          "mediaType": "tv",
+          "tmdbId": null,
+          "winner": false
+        },
+        {
+          "title": "Michael Imperioli",
+          "mediaType": "tv",
+          "tmdbId": null,
+          "winner": false
+        },
+        {
+          "title": "Richard Schiff",
+          "mediaType": "tv",
+          "tmdbId": null,
+          "winner": false
+        },
+        {
+          "title": "John Spencer",
+          "mediaType": "tv",
+          "tmdbId": null,
+          "winner": false
+        }
+      ]
+    },
+    {
+      "id": "emmy-supporting-actor-comedy",
+      "name": "Outstanding Supporting Actor in a Comedy Series",
+      "nominees": [
+        {
+          "title": "Peter MacNicol — Ally McBeal",
+          "mediaType": "tv",
+          "tmdbId": null,
+          "winner": true
+        },
+        {
+          "title": "Peter Boyle — Everybody Loves Raymond",
+          "mediaType": "tv",
+          "tmdbId": null,
+          "winner": false
+        },
+        {
+          "title": "Robert Downey Jr.",
+          "mediaType": "tv",
+          "tmdbId": null,
+          "winner": false
+        },
+        {
+          "title": "Sean Hayes — Will & Grace",
+          "mediaType": "tv",
+          "tmdbId": null,
+          "winner": false
+        },
+        {
+          "title": "David Hyde Pierce — Frasier",
+          "mediaType": "tv",
+          "tmdbId": null,
+          "winner": false
+        }
+      ]
+    },
+    {
+      "id": "emmy-supporting-actress-drama",
+      "name": "Outstanding Supporting Actress in a Drama Series",
+      "nominees": [
+        {
+          "title": "Allison Janney — The West Wing",
+          "mediaType": "tv",
+          "tmdbId": null,
+          "winner": true
+        },
+        {
+          "title": "Stockard Channing",
+          "mediaType": "tv",
+          "tmdbId": null,
+          "winner": false
+        },
+        {
+          "title": "Tyne Daly — Judging Amy",
+          "mediaType": "tv",
+          "tmdbId": null,
+          "winner": false
+        },
+        {
+          "title": "Maura Tierney — ER",
+          "mediaType": "tv",
+          "tmdbId": null,
+          "winner": false
+        },
+        {
+          "title": "Aida Turturro — The Sopranos",
+          "mediaType": "tv",
+          "tmdbId": null,
+          "winner": false
+        }
+      ]
+    },
+    {
+      "id": "emmy-supporting-actress-comedy",
+      "name": "Outstanding Supporting Actress in a Comedy Series",
+      "nominees": [
+        {
+          "title": "Doris Roberts — Everybody Loves Raymond",
+          "mediaType": "tv",
+          "tmdbId": null,
+          "winner": true
+        },
+        {
+          "title": "Jennifer Aniston — Friends",
+          "mediaType": "tv",
+          "tmdbId": null,
+          "winner": false
+        },
+        {
+          "title": "Kim Cattrall — Sex and the City",
+          "mediaType": "tv",
+          "tmdbId": null,
+          "winner": false
+        },
+        {
+          "title": "Lisa Kudrow",
+          "mediaType": "tv",
+          "tmdbId": null,
+          "winner": false
+        },
+        {
+          "title": "Megan Mullally — Will & Grace",
+          "mediaType": "tv",
+          "tmdbId": null,
+          "winner": false
+        }
+      ]
+    },
+    {
+      "id": "emmy-directing-drama",
+      "name": "Outstanding Directing for a Drama Series",
+      "nominees": [
+        {
+          "title": "The West Wing",
+          "mediaType": "tv",
+          "tmdbId": null,
+          "winner": true
+        },
+        {
+          "title": "ER",
+          "mediaType": "tv",
+          "tmdbId": null,
+          "winner": false
+        },
+        {
+          "title": "The Sopranos",
+          "mediaType": "tv",
+          "tmdbId": null,
+          "winner": false
+        },
+        {
+          "title": "Pine Barrens",
+          "mediaType": "tv",
+          "tmdbId": null,
+          "winner": false
+        },
+        {
+          "title": "University",
+          "mediaType": "tv",
+          "tmdbId": null,
+          "winner": false
+        },
+        {
+          "title": "Laura Innes",
+          "mediaType": "tv",
+          "tmdbId": null,
+          "winner": false
+        }
+      ]
+    },
+    {
+      "id": "emmy-directing-comedy",
+      "name": "Outstanding Directing for a Comedy Series",
+      "nominees": [
+        {
+          "title": "Malcolm in the Middle",
+          "mediaType": "tv",
+          "tmdbId": null,
+          "winner": true
+        },
+        {
+          "title": "Ed",
+          "mediaType": "tv",
+          "tmdbId": null,
+          "winner": false
+        },
+        {
+          "title": "Jeff Melman",
+          "mediaType": "tv",
+          "tmdbId": null,
+          "winner": false
+        },
+        {
+          "title": "Sex and the City",
+          "mediaType": "tv",
+          "tmdbId": null,
+          "winner": false
+        },
+        {
+          "title": "Will & Grace",
+          "mediaType": "tv",
+          "tmdbId": null,
+          "winner": false
+        }
+      ]
+    },
+    {
+      "id": "emmy-writing-drama",
+      "name": "Outstanding Writing for a Drama Series",
+      "nominees": [
+        {
+          "title": "The Sopranos",
+          "mediaType": "tv",
+          "tmdbId": null,
+          "winner": true
+        },
+        {
+          "title": "Amour Fou",
+          "mediaType": "tv",
+          "tmdbId": null,
+          "winner": false
+        },
+        {
+          "title": "Pine Barrens",
+          "mediaType": "tv",
+          "tmdbId": null,
+          "winner": false
+        },
+        {
+          "title": "Second Opinion",
+          "mediaType": "tv",
+          "tmdbId": null,
+          "winner": false
+        },
+        {
+          "title": "The West Wing",
+          "mediaType": "tv",
+          "tmdbId": null,
+          "winner": false
+        }
+      ]
+    },
+    {
+      "id": "emmy-writing-comedy",
+      "name": "Outstanding Writing for a Comedy Series",
+      "nominees": [
+        {
+          "title": "Malcolm in the Middle",
+          "mediaType": "tv",
+          "tmdbId": null,
+          "winner": true
+        },
+        {
+          "title": "Ed",
+          "mediaType": "tv",
+          "tmdbId": null,
+          "winner": false
+        },
+        {
+          "title": "Freaks and Geeks",
+          "mediaType": "tv",
+          "tmdbId": null,
+          "winner": false
+        },
+        {
+          "title": "Sex and the City",
+          "mediaType": "tv",
+          "tmdbId": null,
+          "winner": false
+        },
+        {
+          "title": "Will & Grace",
+          "mediaType": "tv",
+          "tmdbId": null,
+          "winner": false
+        }
+      ]
+    }
+  ],
+  "dataSource": "wikipedia-mediawiki-api-primetime",
+  "notes": "Imported from English Wikipedia wikitext (Winners and nominees / {{Award category}}). CC BY-SA. Verify with Television Academy. tmdbId left null unless you enrich separately.",
+  "qa": {
+    "version": 1,
+    "lastAuditAt": "2026-04-07T17:54:39.613Z",
+    "isSeedEdition": false,
+    "needsNomineeBackfill": false,
+    "needsTmdbEnrichment": true,
+    "warnings": [],
+    "stats": {
+      "categoryCount": 15,
+      "nomineeCount": 76,
+      "winnerCount": 15,
+      "tmdbNull": 76,
+      "tmdbSet": 0
+    }
+  }
+}

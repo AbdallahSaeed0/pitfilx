@@ -1,0 +1,168 @@
+{
+  "awardId": "golden-globes",
+  "year": 2003,
+  "label": "60th Golden Globe Awards (2003)",
+  "categories": [
+    {
+      "id": "best-picture-drama",
+      "name": "Best Motion Picture – Drama",
+      "nominees": [
+        {
+          "title": "The Hours",
+          "mediaType": "movie",
+          "tmdbId": null,
+          "winner": true
+        },
+        {
+          "title": "About Schmidt",
+          "mediaType": "movie",
+          "tmdbId": null,
+          "winner": false
+        },
+        {
+          "title": "Gangs of New York",
+          "mediaType": "movie",
+          "tmdbId": null,
+          "winner": false
+        },
+        {
+          "title": "The Lord of the Rings: The Two Towers",
+          "mediaType": "movie",
+          "tmdbId": null,
+          "winner": false
+        },
+        {
+          "title": "The Pianist",
+          "mediaType": "movie",
+          "tmdbId": null,
+          "winner": false
+        }
+      ]
+    },
+    {
+      "id": "best-picture-musical-comedy",
+      "name": "Best Motion Picture – Musical or Comedy",
+      "nominees": [
+        {
+          "title": "Chicago",
+          "mediaType": "movie",
+          "tmdbId": null,
+          "winner": true
+        },
+        {
+          "title": "About a Boy",
+          "mediaType": "movie",
+          "tmdbId": null,
+          "winner": false
+        },
+        {
+          "title": "Adaptation.",
+          "mediaType": "movie",
+          "tmdbId": null,
+          "winner": false
+        },
+        {
+          "title": "My Big Fat Greek Wedding",
+          "mediaType": "movie",
+          "tmdbId": null,
+          "winner": false
+        },
+        {
+          "title": "Nicholas Nickleby",
+          "mediaType": "movie",
+          "tmdbId": null,
+          "winner": false
+        }
+      ]
+    },
+    {
+      "id": "best-tv-drama",
+      "name": "Best Television Series – Drama",
+      "nominees": [
+        {
+          "title": "The Shield",
+          "mediaType": "tv",
+          "tmdbId": null,
+          "winner": true
+        },
+        {
+          "title": "24",
+          "mediaType": "tv",
+          "tmdbId": null,
+          "winner": false
+        },
+        {
+          "title": "Six Feet Under",
+          "mediaType": "tv",
+          "tmdbId": null,
+          "winner": false
+        },
+        {
+          "title": "The Sopranos",
+          "mediaType": "tv",
+          "tmdbId": null,
+          "winner": false
+        },
+        {
+          "title": "The West Wing",
+          "mediaType": "tv",
+          "tmdbId": null,
+          "winner": false
+        }
+      ]
+    },
+    {
+      "id": "best-tv-musical-comedy",
+      "name": "Best Television Series – Musical or Comedy",
+      "nominees": [
+        {
+          "title": "Curb Your Enthusiasm",
+          "mediaType": "tv",
+          "tmdbId": null,
+          "winner": true
+        },
+        {
+          "title": "Friends",
+          "mediaType": "tv",
+          "tmdbId": null,
+          "winner": false
+        },
+        {
+          "title": "Sex and the City",
+          "mediaType": "tv",
+          "tmdbId": null,
+          "winner": false
+        },
+        {
+          "title": "The Simpsons",
+          "mediaType": "tv",
+          "tmdbId": null,
+          "winner": false
+        },
+        {
+          "title": "Will & Grace",
+          "mediaType": "tv",
+          "tmdbId": null,
+          "winner": false
+        }
+      ]
+    }
+  ],
+  "dataSource": "wikipedia-mediawiki-api-golden-globes",
+  "notes": "Imported from English Wikipedia (Winners and nominees: {{Award category}} maps film + TV craft/acting categories where templates match; legacy ===Film=== / ===Television=== tables still only extract the main picture/series blocks). CC BY-SA. Verify with Golden Globes / DCP. Wikidata script can seed gaps; TMDB enriches artwork in the API when configured. tmdbId left null in JSON unless enriched.",
+  "qa": {
+    "version": 1,
+    "lastAuditAt": "2026-04-07T17:54:39.589Z",
+    "isSeedEdition": false,
+    "needsNomineeBackfill": false,
+    "needsTmdbEnrichment": true,
+    "warnings": [],
+    "stats": {
+      "categoryCount": 4,
+      "nomineeCount": 20,
+      "winnerCount": 4,
+      "tmdbNull": 20,
+      "tmdbSet": 0
+    }
+  }
+}

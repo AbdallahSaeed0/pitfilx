@@ -986,3 +986,4 @@ F:\PitFilx-app\Pitflix.API\obj\x64\Release\net8.0-windows\win-x64\Pitflix.API.dl
 F:\PitFilx-app\Pitflix.API\obj\x64\Release\net8.0-windows\win-x64\refint\Pitflix.API.dll
 F:\PitFilx-app\Pitflix.API\obj\x64\Release\net8.0-windows\win-x64\Pitflix.API.genruntimeconfig.cache
 F:\PitFilx-app\Pitflix.API\obj\x64\Release\net8.0-windows\win-x64\ref\Pitflix.API.dll
+F:\PitFilx-app\Pitflix.API\bin\x64\Release\net8.0-windows\win-x64\External\php-imdb-detail\fetch_rating.php

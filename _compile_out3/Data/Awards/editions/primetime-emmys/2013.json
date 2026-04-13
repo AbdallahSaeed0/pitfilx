@@ -1,0 +1,642 @@
+{
+  "awardId": "primetime-emmys",
+  "year": 2013,
+  "label": "65th Primetime Emmy Awards (2013 ceremony)",
+  "categories": [
+    {
+      "id": "outstanding-drama-series",
+      "name": "Outstanding Drama Series",
+      "nominees": [
+        {
+          "title": "Breaking Bad",
+          "mediaType": "tv",
+          "tmdbId": null,
+          "winner": true
+        },
+        {
+          "title": "Downton Abbey",
+          "mediaType": "tv",
+          "tmdbId": null,
+          "winner": false
+        },
+        {
+          "title": "Game of Thrones",
+          "mediaType": "tv",
+          "tmdbId": null,
+          "winner": false
+        },
+        {
+          "title": "Homeland",
+          "mediaType": "tv",
+          "tmdbId": null,
+          "winner": false
+        },
+        {
+          "title": "House of Cards",
+          "mediaType": "tv",
+          "tmdbId": null,
+          "winner": false
+        },
+        {
+          "title": "Mad Men",
+          "mediaType": "tv",
+          "tmdbId": null,
+          "winner": false
+        }
+      ]
+    },
+    {
+      "id": "outstanding-comedy-series",
+      "name": "Outstanding Comedy Series",
+      "nominees": [
+        {
+          "title": "Modern Family",
+          "mediaType": "tv",
+          "tmdbId": null,
+          "winner": true
+        },
+        {
+          "title": "30 Rock",
+          "mediaType": "tv",
+          "tmdbId": null,
+          "winner": false
+        },
+        {
+          "title": "The Big Bang Theory",
+          "mediaType": "tv",
+          "tmdbId": null,
+          "winner": false
+        },
+        {
+          "title": "Girls",
+          "mediaType": "tv",
+          "tmdbId": null,
+          "winner": false
+        },
+        {
+          "title": "Louie",
+          "mediaType": "tv",
+          "tmdbId": null,
+          "winner": false
+        },
+        {
+          "title": "Veep",
+          "mediaType": "tv",
+          "tmdbId": null,
+          "winner": false
+        }
+      ]
+    },
+    {
+      "id": "outstanding-limited-series",
+      "name": "Outstanding Limited or Anthology Series",
+      "nominees": [
+        {
+          "title": "Behind the Candelabra",
+          "mediaType": "tv",
+          "tmdbId": null,
+          "winner": true
+        },
+        {
+          "title": "American Horror Story: Asylum",
+          "mediaType": "tv",
+          "tmdbId": null,
+          "winner": false
+        },
+        {
+          "title": "The Bible",
+          "mediaType": "tv",
+          "tmdbId": null,
+          "winner": false
+        },
+        {
+          "title": "Phil Spector",
+          "mediaType": "tv",
+          "tmdbId": null,
+          "winner": false
+        },
+        {
+          "title": "Political Animals",
+          "mediaType": "tv",
+          "tmdbId": null,
+          "winner": false
+        },
+        {
+          "title": "Top of the Lake",
+          "mediaType": "tv",
+          "tmdbId": null,
+          "winner": false
+        }
+      ]
+    },
+    {
+      "id": "emmy-lead-actor-drama",
+      "name": "Outstanding Lead Actor in a Drama Series",
+      "nominees": [
+        {
+          "title": "Jeff Daniels — The Newsroom",
+          "mediaType": "tv",
+          "tmdbId": null,
+          "winner": true
+        },
+        {
+          "title": "Hugh Bonneville — Downton Abbey",
+          "mediaType": "tv",
+          "tmdbId": null,
+          "winner": false
+        },
+        {
+          "title": "Bryan Cranston — Breaking Bad",
+          "mediaType": "tv",
+          "tmdbId": null,
+          "winner": false
+        },
+        {
+          "title": "Jon Hamm — Mad Men",
+          "mediaType": "tv",
+          "tmdbId": null,
+          "winner": false
+        },
+        {
+          "title": "Damian Lewis — Homeland",
+          "mediaType": "tv",
+          "tmdbId": null,
+          "winner": false
+        },
+        {
+          "title": "Kevin Spacey — House of Cards",
+          "mediaType": "tv",
+          "tmdbId": null,
+          "winner": false
+        }
+      ]
+    },
+    {
+      "id": "emmy-lead-actor-comedy",
+      "name": "Outstanding Lead Actor in a Comedy Series",
+      "nominees": [
+        {
+          "title": "Jim Parsons — The Big Bang Theory",
+          "mediaType": "tv",
+          "tmdbId": null,
+          "winner": true
+        },
+        {
+          "title": "Alec Baldwin — 30 Rock",
+          "mediaType": "tv",
+          "tmdbId": null,
+          "winner": false
+        },
+        {
+          "title": "Jason Bateman — Arrested Development",
+          "mediaType": "tv",
+          "tmdbId": null,
+          "winner": false
+        },
+        {
+          "title": "Louis C.K. — Louie",
+          "mediaType": "tv",
+          "tmdbId": null,
+          "winner": false
+        },
+        {
+          "title": "Don Cheadle — House of Lies",
+          "mediaType": "tv",
+          "tmdbId": null,
+          "winner": false
+        },
+        {
+          "title": "Matt LeBlanc — Episodes",
+          "mediaType": "tv",
+          "tmdbId": null,
+          "winner": false
+        }
+      ]
+    },
+    {
+      "id": "emmy-lead-actress-drama",
+      "name": "Outstanding Lead Actress in a Drama Series",
+      "nominees": [
+        {
+          "title": "Claire Danes — Homeland",
+          "mediaType": "tv",
+          "tmdbId": null,
+          "winner": true
+        },
+        {
+          "title": "Connie Britton — Nashville",
+          "mediaType": "tv",
+          "tmdbId": null,
+          "winner": false
+        },
+        {
+          "title": "Michelle Dockery — Downton Abbey",
+          "mediaType": "tv",
+          "tmdbId": null,
+          "winner": false
+        },
+        {
+          "title": "Vera Farmiga — Bates Motel",
+          "mediaType": "tv",
+          "tmdbId": null,
+          "winner": false
+        },
+        {
+          "title": "Elisabeth Moss — Mad Men",
+          "mediaType": "tv",
+          "tmdbId": null,
+          "winner": false
+        },
+        {
+          "title": "Kerry Washington — Scandal",
+          "mediaType": "tv",
+          "tmdbId": null,
+          "winner": false
+        },
+        {
+          "title": "Robin Wright — House of Cards",
+          "mediaType": "tv",
+          "tmdbId": null,
+          "winner": false
+        }
+      ]
+    },
+    {
+      "id": "emmy-lead-actress-comedy",
+      "name": "Outstanding Lead Actress in a Comedy Series",
+      "nominees": [
+        {
+          "title": "Julia Louis-Dreyfus — Veep",
+          "mediaType": "tv",
+          "tmdbId": null,
+          "winner": true
+        },
+        {
+          "title": "Laura Dern — Enlightened",
+          "mediaType": "tv",
+          "tmdbId": null,
+          "winner": false
+        },
+        {
+          "title": "Lena Dunham — Girls",
+          "mediaType": "tv",
+          "tmdbId": null,
+          "winner": false
+        },
+        {
+          "title": "Edie Falco — Nurse Jackie",
+          "mediaType": "tv",
+          "tmdbId": null,
+          "winner": false
+        },
+        {
+          "title": "Tina Fey — 30 Rock",
+          "mediaType": "tv",
+          "tmdbId": null,
+          "winner": false
+        },
+        {
+          "title": "Amy Poehler — Parks and Recreation",
+          "mediaType": "tv",
+          "tmdbId": null,
+          "winner": false
+        }
+      ]
+    },
+    {
+      "id": "emmy-supporting-actor-drama",
+      "name": "Outstanding Supporting Actor in a Drama Series",
+      "nominees": [
+        {
+          "title": "Bobby Cannavale — Boardwalk Empire",
+          "mediaType": "tv",
+          "tmdbId": null,
+          "winner": true
+        },
+        {
+          "title": "Jonathan Banks — Breaking Bad",
+          "mediaType": "tv",
+          "tmdbId": null,
+          "winner": false
+        },
+        {
+          "title": "Jim Carter — Downton Abbey",
+          "mediaType": "tv",
+          "tmdbId": null,
+          "winner": false
+        },
+        {
+          "title": "Peter Dinklage — Game of Thrones",
+          "mediaType": "tv",
+          "tmdbId": null,
+          "winner": false
+        },
+        {
+          "title": "Mandy Patinkin — Homeland",
+          "mediaType": "tv",
+          "tmdbId": null,
+          "winner": false
+        },
+        {
+          "title": "Aaron Paul",
+          "mediaType": "tv",
+          "tmdbId": null,
+          "winner": false
+        }
+      ]
+    },
+    {
+      "id": "emmy-supporting-actor-comedy",
+      "name": "Outstanding Supporting Actor in a Comedy Series",
+      "nominees": [
+        {
+          "title": "Tony Hale — Veep",
+          "mediaType": "tv",
+          "tmdbId": null,
+          "winner": true
+        },
+        {
+          "title": "Ty Burrell — Modern Family",
+          "mediaType": "tv",
+          "tmdbId": null,
+          "winner": false
+        },
+        {
+          "title": "Adam Driver — Girls",
+          "mediaType": "tv",
+          "tmdbId": null,
+          "winner": false
+        },
+        {
+          "title": "Jesse Tyler Ferguson",
+          "mediaType": "tv",
+          "tmdbId": null,
+          "winner": false
+        },
+        {
+          "title": "Bill Hader — Saturday Night Live",
+          "mediaType": "tv",
+          "tmdbId": null,
+          "winner": false
+        },
+        {
+          "title": "Ed O'Neill",
+          "mediaType": "tv",
+          "tmdbId": null,
+          "winner": false
+        }
+      ]
+    },
+    {
+      "id": "emmy-supporting-actress-drama",
+      "name": "Outstanding Supporting Actress in a Drama Series",
+      "nominees": [
+        {
+          "title": "Anna Gunn — Breaking Bad",
+          "mediaType": "tv",
+          "tmdbId": null,
+          "winner": true
+        },
+        {
+          "title": "Morena Baccarin — Homeland",
+          "mediaType": "tv",
+          "tmdbId": null,
+          "winner": false
+        },
+        {
+          "title": "Christine Baranski — The Good Wife",
+          "mediaType": "tv",
+          "tmdbId": null,
+          "winner": false
+        },
+        {
+          "title": "Emilia Clarke — Game of Thrones",
+          "mediaType": "tv",
+          "tmdbId": null,
+          "winner": false
+        },
+        {
+          "title": "Christina Hendricks — Mad Men",
+          "mediaType": "tv",
+          "tmdbId": null,
+          "winner": false
+        },
+        {
+          "title": "Maggie Smith — Downton Abbey",
+          "mediaType": "tv",
+          "tmdbId": null,
+          "winner": false
+        }
+      ]
+    },
+    {
+      "id": "emmy-supporting-actress-comedy",
+      "name": "Outstanding Supporting Actress in a Comedy Series",
+      "nominees": [
+        {
+          "title": "Merritt Wever — Nurse Jackie",
+          "mediaType": "tv",
+          "tmdbId": null,
+          "winner": true
+        },
+        {
+          "title": "Mayim Bialik — The Big Bang Theory",
+          "mediaType": "tv",
+          "tmdbId": null,
+          "winner": false
+        },
+        {
+          "title": "Julie Bowen — Modern Family",
+          "mediaType": "tv",
+          "tmdbId": null,
+          "winner": false
+        },
+        {
+          "title": "Anna Chlumsky — Veep",
+          "mediaType": "tv",
+          "tmdbId": null,
+          "winner": false
+        },
+        {
+          "title": "Jane Krakowski — 30 Rock",
+          "mediaType": "tv",
+          "tmdbId": null,
+          "winner": false
+        },
+        {
+          "title": "Jane Lynch — Glee",
+          "mediaType": "tv",
+          "tmdbId": null,
+          "winner": false
+        },
+        {
+          "title": "Sofía Vergara",
+          "mediaType": "tv",
+          "tmdbId": null,
+          "winner": false
+        }
+      ]
+    },
+    {
+      "id": "emmy-directing-drama",
+      "name": "Outstanding Directing for a Drama Series",
+      "nominees": [
+        {
+          "title": "House of Cards",
+          "mediaType": "tv",
+          "tmdbId": null,
+          "winner": true
+        },
+        {
+          "title": "Boardwalk Empire",
+          "mediaType": "tv",
+          "tmdbId": null,
+          "winner": false
+        },
+        {
+          "title": "Breaking Bad",
+          "mediaType": "tv",
+          "tmdbId": null,
+          "winner": false
+        },
+        {
+          "title": "Downton Abbey",
+          "mediaType": "tv",
+          "tmdbId": null,
+          "winner": false
+        },
+        {
+          "title": "Homeland",
+          "mediaType": "tv",
+          "tmdbId": null,
+          "winner": false
+        }
+      ]
+    },
+    {
+      "id": "emmy-directing-comedy",
+      "name": "Outstanding Directing for a Comedy Series",
+      "nominees": [
+        {
+          "title": "Modern Family",
+          "mediaType": "tv",
+          "tmdbId": null,
+          "winner": true
+        },
+        {
+          "title": "30 Rock",
+          "mediaType": "tv",
+          "tmdbId": null,
+          "winner": false
+        },
+        {
+          "title": "Glee",
+          "mediaType": "tv",
+          "tmdbId": null,
+          "winner": false
+        },
+        {
+          "title": "Girls",
+          "mediaType": "tv",
+          "tmdbId": null,
+          "winner": false
+        },
+        {
+          "title": "Louie",
+          "mediaType": "tv",
+          "tmdbId": null,
+          "winner": false
+        }
+      ]
+    },
+    {
+      "id": "emmy-writing-drama",
+      "name": "Outstanding Writing for a Drama Series",
+      "nominees": [
+        {
+          "title": "Homeland",
+          "mediaType": "tv",
+          "tmdbId": null,
+          "winner": true
+        },
+        {
+          "title": "Breaking Bad",
+          "mediaType": "tv",
+          "tmdbId": null,
+          "winner": false
+        },
+        {
+          "title": "Say My Name",
+          "mediaType": "tv",
+          "tmdbId": null,
+          "winner": false
+        },
+        {
+          "title": "Downton Abbey",
+          "mediaType": "tv",
+          "tmdbId": null,
+          "winner": false
+        },
+        {
+          "title": "Game of Thrones",
+          "mediaType": "tv",
+          "tmdbId": null,
+          "winner": false
+        }
+      ]
+    },
+    {
+      "id": "emmy-writing-comedy",
+      "name": "Outstanding Writing for a Comedy Series",
+      "nominees": [
+        {
+          "title": "30 Rock",
+          "mediaType": "tv",
+          "tmdbId": null,
+          "winner": true
+        },
+        {
+          "title": "Hogcock!",
+          "mediaType": "tv",
+          "tmdbId": null,
+          "winner": false
+        },
+        {
+          "title": "Episodes",
+          "mediaType": "tv",
+          "tmdbId": null,
+          "winner": false
+        },
+        {
+          "title": "Louie",
+          "mediaType": "tv",
+          "tmdbId": null,
+          "winner": false
+        },
+        {
+          "title": "The Office",
+          "mediaType": "tv",
+          "tmdbId": null,
+          "winner": false
+        }
+      ]
+    }
+  ],
+  "dataSource": "wikipedia-mediawiki-api-primetime",
+  "notes": "Imported from English Wikipedia wikitext (Winners and nominees / {{Award category}}). CC BY-SA. Verify with Television Academy. tmdbId left null unless you enrich separately.",
+  "qa": {
+    "version": 1,
+    "lastAuditAt": "2026-04-07T17:54:39.618Z",
+    "isSeedEdition": false,
+    "needsNomineeBackfill": false,
+    "needsTmdbEnrichment": true,
+    "warnings": [],
+    "stats": {
+      "categoryCount": 15,
+      "nomineeCount": 88,
+      "winnerCount": 15,
+      "tmdbNull": 88,
+      "tmdbSet": 0
+    }
+  }
+}

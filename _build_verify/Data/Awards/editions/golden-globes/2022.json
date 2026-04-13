@@ -1,0 +1,204 @@
+{
+  "awardId": "golden-globes",
+  "year": 2022,
+  "label": "79th Golden Globe Awards (2022)",
+  "categories": [
+    {
+      "id": "best-picture-drama",
+      "name": "Best Motion Picture – Drama",
+      "nominees": [
+        {
+          "title": "The Power of the Dog",
+          "mediaType": "movie",
+          "tmdbId": null,
+          "winner": true
+        },
+        {
+          "title": "Belfast",
+          "mediaType": "movie",
+          "tmdbId": null,
+          "winner": false
+        },
+        {
+          "title": "CODA",
+          "mediaType": "movie",
+          "tmdbId": null,
+          "winner": false
+        },
+        {
+          "title": "Dune",
+          "mediaType": "movie",
+          "tmdbId": null,
+          "winner": false
+        },
+        {
+          "title": "King Richard",
+          "mediaType": "movie",
+          "tmdbId": null,
+          "winner": false
+        }
+      ]
+    },
+    {
+      "id": "best-picture-musical-comedy",
+      "name": "Best Motion Picture – Musical or Comedy",
+      "nominees": [
+        {
+          "title": "West Side Story",
+          "mediaType": "movie",
+          "tmdbId": null,
+          "winner": true
+        },
+        {
+          "title": "Cyrano",
+          "mediaType": "movie",
+          "tmdbId": null,
+          "winner": false
+        },
+        {
+          "title": "Don't Look Up",
+          "mediaType": "movie",
+          "tmdbId": null,
+          "winner": false
+        },
+        {
+          "title": "Licorice Pizza",
+          "mediaType": "movie",
+          "tmdbId": null,
+          "winner": false
+        },
+        {
+          "title": "tick, tick... BOOM!",
+          "mediaType": "movie",
+          "tmdbId": null,
+          "winner": false
+        }
+      ]
+    },
+    {
+      "id": "best-tv-drama",
+      "name": "Best Television Series – Drama",
+      "nominees": [
+        {
+          "title": "Succession",
+          "mediaType": "tv",
+          "tmdbId": null,
+          "winner": true
+        },
+        {
+          "title": "Lupin",
+          "mediaType": "tv",
+          "tmdbId": null,
+          "winner": false
+        },
+        {
+          "title": "The Morning Show",
+          "mediaType": "tv",
+          "tmdbId": null,
+          "winner": false
+        },
+        {
+          "title": "Pose",
+          "mediaType": "tv",
+          "tmdbId": null,
+          "winner": false
+        },
+        {
+          "title": "Squid Game",
+          "mediaType": "tv",
+          "tmdbId": null,
+          "winner": false
+        }
+      ]
+    },
+    {
+      "id": "best-tv-musical-comedy",
+      "name": "Best Television Series – Musical or Comedy",
+      "nominees": [
+        {
+          "title": "Hacks",
+          "mediaType": "tv",
+          "tmdbId": null,
+          "winner": true
+        },
+        {
+          "title": "The Great",
+          "mediaType": "tv",
+          "tmdbId": null,
+          "winner": false
+        },
+        {
+          "title": "Only Murders in the Building",
+          "mediaType": "tv",
+          "tmdbId": null,
+          "winner": false
+        },
+        {
+          "title": "Reservation Dogs",
+          "mediaType": "tv",
+          "tmdbId": null,
+          "winner": false
+        },
+        {
+          "title": "Ted Lasso",
+          "mediaType": "tv",
+          "tmdbId": null,
+          "winner": false
+        }
+      ]
+    },
+    {
+      "id": "best-limited-tv",
+      "name": "Best Limited Series or Motion Picture Made for Television",
+      "nominees": [
+        {
+          "title": "The Underground Railroad",
+          "mediaType": "tv",
+          "tmdbId": null,
+          "winner": true
+        },
+        {
+          "title": "Dopesick",
+          "mediaType": "tv",
+          "tmdbId": null,
+          "winner": false
+        },
+        {
+          "title": "Impeachment: American Crime Story",
+          "mediaType": "tv",
+          "tmdbId": null,
+          "winner": false
+        },
+        {
+          "title": "Maid",
+          "mediaType": "tv",
+          "tmdbId": null,
+          "winner": false
+        },
+        {
+          "title": "Mare of Easttown",
+          "mediaType": "tv",
+          "tmdbId": null,
+          "winner": false
+        }
+      ]
+    }
+  ],
+  "dataSource": "wikipedia-mediawiki-api-golden-globes",
+  "notes": "Imported from English Wikipedia (Winners and nominees: {{Award category}} maps film + TV craft/acting categories where templates match; legacy ===Film=== / ===Television=== tables still only extract the main picture/series blocks). CC BY-SA. Verify with Golden Globes / DCP. Wikidata script can seed gaps; TMDB enriches artwork in the API when configured. tmdbId left null in JSON unless enriched.",
+  "qa": {
+    "version": 1,
+    "lastAuditAt": "2026-04-07T17:54:39.597Z",
+    "isSeedEdition": false,
+    "needsNomineeBackfill": false,
+    "needsTmdbEnrichment": true,
+    "warnings": [],
+    "stats": {
+      "categoryCount": 5,
+      "nomineeCount": 25,
+      "winnerCount": 5,
+      "tmdbNull": 25,
+      "tmdbSet": 0
+    }
+  }
+}

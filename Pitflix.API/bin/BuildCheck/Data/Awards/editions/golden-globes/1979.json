@@ -1,0 +1,96 @@
+{
+  "awardId": "golden-globes",
+  "year": 1979,
+  "label": "36th Golden Globe Awards (1979)",
+  "categories": [
+    {
+      "id": "best-picture-drama",
+      "name": "Best Motion Picture – Drama",
+      "nominees": [
+        {
+          "title": "Midnight Express",
+          "mediaType": "movie",
+          "tmdbId": null,
+          "winner": true
+        },
+        {
+          "title": "Coming Home",
+          "mediaType": "movie",
+          "tmdbId": null,
+          "winner": false
+        },
+        {
+          "title": "Days of Heaven",
+          "mediaType": "movie",
+          "tmdbId": null,
+          "winner": false
+        },
+        {
+          "title": "The Deer Hunter",
+          "mediaType": "movie",
+          "tmdbId": null,
+          "winner": false
+        },
+        {
+          "title": "An Unmarried Woman",
+          "mediaType": "movie",
+          "tmdbId": null,
+          "winner": false
+        }
+      ]
+    },
+    {
+      "id": "best-picture-musical-comedy",
+      "name": "Best Motion Picture – Musical or Comedy",
+      "nominees": [
+        {
+          "title": "Heaven Can Wait",
+          "mediaType": "movie",
+          "tmdbId": null,
+          "winner": true
+        },
+        {
+          "title": "California Suite",
+          "mediaType": "movie",
+          "tmdbId": null,
+          "winner": false
+        },
+        {
+          "title": "Foul Play",
+          "mediaType": "movie",
+          "tmdbId": null,
+          "winner": false
+        },
+        {
+          "title": "Grease",
+          "mediaType": "movie",
+          "tmdbId": null,
+          "winner": false
+        },
+        {
+          "title": "Movie Movie",
+          "mediaType": "movie",
+          "tmdbId": null,
+          "winner": false
+        }
+      ]
+    }
+  ],
+  "dataSource": "wikipedia-mediawiki-api-golden-globes",
+  "notes": "Imported from English Wikipedia (Winners and nominees: {{Award category}} and/or legacy Film/Television wikitables). CC BY-SA. Verify with Golden Globes / DCP. tmdbId left null unless you enrich separately.",
+  "qa": {
+    "version": 1,
+    "lastAuditAt": "2026-04-07T17:54:39.585Z",
+    "isSeedEdition": false,
+    "needsNomineeBackfill": true,
+    "needsTmdbEnrichment": true,
+    "warnings": [],
+    "stats": {
+      "categoryCount": 2,
+      "nomineeCount": 10,
+      "winnerCount": 2,
+      "tmdbNull": 10,
+      "tmdbSet": 0
+    }
+  }
+}

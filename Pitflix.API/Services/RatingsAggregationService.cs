@@ -1,23 +1,30 @@
 using Microsoft.Extensions.Caching.Memory;
+using Microsoft.Extensions.Logging;
 using Pitflix.Core.Api;
 using Pitflix.Core.Config;
 
 namespace Pitflix.API.Services;
 
+/// <summary>
+/// Tiered ratings: (1) PHP IMDb grabber when PHP is available, (2) OMDb for RT + IMDb gaps, (3) TMDB vote average as baseline.
+/// </summary>
 public sealed class RatingsAggregationService
 {
     private readonly IMemoryCache _cache;
-    private readonly IHttpClientFactory _httpFactory;
     private readonly OmdbRatingClient _omdb;
+    private readonly PhpImdbGrabberClient _phpImdb;
+    private readonly ILogger<RatingsAggregationService> _log;
 
     public RatingsAggregationService(
         IMemoryCache cache,
-        IHttpClientFactory httpFactory,
-        OmdbRatingClient omdb)
+        OmdbRatingClient omdb,
+        PhpImdbGrabberClient phpImdb,
+        ILogger<RatingsAggregationService> log)
     {
         _cache = cache;
-        _httpFactory = httpFactory;
         _omdb = omdb;
+        _phpImdb = phpImdb;
+        _log = log;
     }
 
     public async Task<RatingsAggregateDto> GetAggregateAsync(int tmdbId, string mediaType, CancellationToken ct)
@@ -32,62 +39,116 @@ public sealed class RatingsAggregationService
         var tmdb = TmdbClientFactory.Create();
         var apiKey = AppSettings.ResolvedTmdbApiKey;
         if (tmdb == null || string.IsNullOrEmpty(apiKey))
+        {
+            _log.LogDebug("Ratings: TMDB client or API key unavailable for {Media} {Id}", mediaType, tmdbId);
             return RatingsAggregateDto.Empty;
-
-        double? tmdbAvg = null;
-        int? tmdbVotes = null;
-        try
-        {
-            var isMovie = mediaType.Equals("Movie", StringComparison.OrdinalIgnoreCase);
-            var path = isMovie ? $"movie/{tmdbId}" : $"tv/{tmdbId}";
-            var url =
-                $"{TmdbClient.ApiBaseUrl.TrimEnd('/')}/{path}?api_key={Uri.EscapeDataString(apiKey)}&language=en-US";
-            using var http = _httpFactory.CreateClient();
-            var json = await http.GetStringAsync(new Uri(url), ct).ConfigureAwait(false);
-            var root = System.Text.Json.JsonDocument.Parse(json).RootElement;
-            if (root.TryGetProperty("vote_average", out var va) && va.TryGetDouble(out var v))
-                tmdbAvg = v;
-            if (root.TryGetProperty("vote_count", out var vc) && vc.TryGetInt32(out var c))
-                tmdbVotes = c;
-        }
-        catch
-        {
-            /* TMDB optional for block */
         }
 
-        string? imdbId = null;
-        try
+        var anchor = await tmdb.TryGetRatingsAnchorAsync(tmdbId, mediaType, ct).ConfigureAwait(false);
+        double? tmdbAvg = anchor?.VoteAverage;
+        int? tmdbVotes = anchor?.VoteCount;
+
+        string? imdbId = anchor?.ImdbId;
+        if (string.IsNullOrEmpty(imdbId))
         {
-            imdbId = await tmdb.TryGetImdbIdAsync(tmdbId, mediaType, ct).ConfigureAwait(false);
-        }
-        catch
-        {
-            /* ignore */
+            try
+            {
+                imdbId = await tmdb.TryGetImdbIdAsync(tmdbId, mediaType, ct).ConfigureAwait(false);
+            }
+            catch (Exception ex)
+            {
+                _log.LogDebug(ex, "Ratings: external_ids fallback failed for {Media} {Id}", mediaType, tmdbId);
+            }
         }
 
         string? imdbScore = null;
         string? imdbVotesStr = null;
+        string? imdbRatingSource = null;
         string? rtCritics = null;
         string? rtAudience = null;
+        var omdbVia = "none";
+        OmdbMatchKind matchKind = OmdbMatchKind.NoMatch;
 
-        if (imdbId != null && _omdb.IsConfigured)
+        if (!string.IsNullOrEmpty(imdbId))
         {
             try
             {
-                var o = await _omdb.TryGetByImdbIdAsync(imdbId, ct).ConfigureAwait(false);
-                if (o != null)
+                var php = await _phpImdb.TryFetchAsync(imdbId, ct).ConfigureAwait(false);
+                if (php != null)
                 {
-                    imdbScore = o.ImdbRatingOutOf10;
-                    imdbVotesStr = o.ImdbVoteCount;
-                    rtCritics = o.RottenTomatoesCriticsPercent;
-                    rtAudience = o.AudiencePercent;
+                    imdbScore = php.RatingDisplay;
+                    imdbVotesStr = php.VoteCountDisplay;
+                    imdbRatingSource = php.Source;
                 }
             }
-            catch
+            catch (Exception ex)
             {
-                /* optional */
+                _log.LogDebug(ex, "Ratings: PHP IMDb tier failed for {Imdb}", imdbId);
             }
         }
+
+        OmdbTitleResult? omdbResult = null;
+        if (_omdb.IsConfigured)
+        {
+            if (!string.IsNullOrEmpty(imdbId))
+            {
+                try
+                {
+                    omdbResult = await _omdb.TryGetByImdbIdAsync(imdbId, ct).ConfigureAwait(false);
+                    if (omdbResult != null)
+                    {
+                        omdbVia = "imdb_id";
+                        matchKind = OmdbMatchKind.TitleExact;
+                    }
+                    else
+                        _log.LogDebug("Ratings: OMDb returned no payload for IMDb id {Imdb}", imdbId);
+                }
+                catch (Exception ex)
+                {
+                    _log.LogWarning(ex, "Ratings: OMDb by IMDb id failed for {Imdb}", imdbId);
+                }
+            }
+
+            if (omdbResult == null && anchor != null && !string.IsNullOrWhiteSpace(anchor.Title))
+            {
+                var omdbType = mediaType.Equals("Movie", StringComparison.OrdinalIgnoreCase) ? "movie" : "series";
+                try
+                {
+                    var (byTitle, kind) = await _omdb
+                        .TryGetByTitleYearTypeAsync(anchor.Title, anchor.Year, omdbType, ct)
+                        .ConfigureAwait(false);
+                    omdbResult = byTitle;
+                    matchKind = kind;
+                    if (byTitle != null)
+                        omdbVia = "title_year";
+                    if (kind == OmdbMatchKind.RateLimited)
+                        _log.LogWarning("Ratings: OMDb rate limited during title match for {Title}", anchor.Title);
+                    else if (kind == OmdbMatchKind.NoMatch)
+                        _log.LogDebug("Ratings: OMDb no title match for {Title} ({Type})", anchor.Title, omdbType);
+                    else if (kind == OmdbMatchKind.Ambiguous)
+                        _log.LogInformation("Ratings: OMDb ambiguous title match for {Title}", anchor.Title);
+                }
+                catch (Exception ex)
+                {
+                    _log.LogWarning(ex, "Ratings: OMDb title match failed for {Title}", anchor.Title);
+                }
+            }
+
+            if (omdbResult != null)
+            {
+                if (string.IsNullOrEmpty(imdbScore) && !string.IsNullOrEmpty(omdbResult.ImdbRatingOutOf10))
+                {
+                    imdbScore = omdbResult.ImdbRatingOutOf10;
+                    imdbVotesStr = omdbResult.ImdbVoteCount;
+                    imdbRatingSource = "omdb";
+                }
+
+                rtCritics = omdbResult.RottenTomatoesCriticsPercent;
+                rtAudience = omdbResult.AudiencePercent;
+            }
+        }
+        else
+            _log.LogDebug("Ratings: OMDb API key not configured — TMDB + PHP only");
 
         var dto = new RatingsAggregateDto(
             FetchedAtUtc: DateTime.UtcNow,
@@ -96,10 +157,15 @@ public sealed class RatingsAggregationService
             ImdbId: imdbId,
             ImdbRatingDisplay: imdbScore,
             ImdbVoteCountDisplay: imdbVotesStr,
+            ImdbRatingSource: imdbRatingSource,
             RottenTomatoesCritics: rtCritics,
-            RottenTomatoesAudience: rtAudience);
+            RottenTomatoesAudience: rtAudience,
+            OmdbResolvedVia: omdbVia,
+            OmdbMatchKind: matchKind.ToString());
 
-        _cache.Set(key, dto, new MemoryCacheEntryOptions { AbsoluteExpirationRelativeToNow = TimeSpan.FromHours(8) });
+        var cacheMins = omdbVia == "none" && _omdb.IsConfigured ? 45 : 8 * 60;
+        _cache.Set(key, dto,
+            new MemoryCacheEntryOptions { AbsoluteExpirationRelativeToNow = TimeSpan.FromMinutes(cacheMins) });
         return dto;
     }
 
@@ -120,17 +186,46 @@ public sealed class RatingsAggregationService
         try
         {
             var map = await tmdb.TryGetTvSeasonEpisodesAsync(tvTmdbId, season, ct).ConfigureAwait(false);
-            if (map == null || !map.TryGetValue(episodeNumber, out var row) || row.VoteAverage is null or <= 0)
-                return null;
-
-            var dto = new EpisodeRatingDto(row.VoteAverage.Value, "TMDB");
-            _cache.Set(key, dto, TimeSpan.FromHours(12));
-            return dto;
+            if (map != null && map.TryGetValue(episodeNumber, out var row) && row.VoteAverage is > 0)
+            {
+                var dto = new EpisodeRatingDto(row.VoteAverage.Value, "TMDB");
+                _cache.Set(key, dto, TimeSpan.FromHours(12));
+                return dto;
+            }
         }
-        catch
+        catch (Exception ex)
         {
-            return null;
+            _log.LogDebug(ex, "Ratings: TMDB episode vote failed for TV {Id} S{Season}E{Ep}", tvTmdbId, season,
+                episodeNumber);
         }
+
+        if (_omdb.IsConfigured)
+        {
+            try
+            {
+                var seriesImdb = await tmdb.TryGetImdbIdAsync(tvTmdbId, "Series", ct).ConfigureAwait(false);
+                if (!string.IsNullOrEmpty(seriesImdb))
+                {
+                    var o = await _omdb.TryGetEpisodeBySeriesImdbIdAsync(seriesImdb, season, episodeNumber, ct)
+                        .ConfigureAwait(false);
+                    if (o != null &&
+                        double.TryParse(o.ImdbRatingOutOf10, System.Globalization.NumberStyles.Float,
+                            System.Globalization.CultureInfo.InvariantCulture, out var imdbEp))
+                    {
+                        var dto = new EpisodeRatingDto(imdbEp, "OMDb");
+                        _cache.Set(key, dto, TimeSpan.FromHours(12));
+                        return dto;
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                _log.LogDebug(ex, "Ratings: OMDb episode enrichment failed for TV {Id} S{Season}E{Ep}", tvTmdbId,
+                    season, episodeNumber);
+            }
+        }
+
+        return null;
     }
 }
 
@@ -141,11 +236,14 @@ public sealed record RatingsAggregateDto(
     string? ImdbId,
     string? ImdbRatingDisplay,
     string? ImdbVoteCountDisplay,
+    string? ImdbRatingSource,
     string? RottenTomatoesCritics,
-    string? RottenTomatoesAudience)
+    string? RottenTomatoesAudience,
+    string? OmdbResolvedVia,
+    string? OmdbMatchKind)
 {
     public static RatingsAggregateDto Empty { get; } = new(
-        DateTime.UtcNow, null, null, null, null, null, null, null);
+        DateTime.UtcNow, null, null, null, null, null, null, null, null, null, null);
 }
 
 public sealed record EpisodeRatingDto(double VoteAverage, string Source);

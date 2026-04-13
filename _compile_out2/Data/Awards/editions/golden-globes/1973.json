@@ -1,0 +1,96 @@
+{
+  "awardId": "golden-globes",
+  "year": 1973,
+  "label": "30th Golden Globe Awards (1973)",
+  "categories": [
+    {
+      "id": "best-picture-drama",
+      "name": "Best Motion Picture – Drama",
+      "nominees": [
+        {
+          "title": "The Godfather",
+          "mediaType": "movie",
+          "tmdbId": null,
+          "winner": true
+        },
+        {
+          "title": "Deliverance",
+          "mediaType": "movie",
+          "tmdbId": null,
+          "winner": false
+        },
+        {
+          "title": "Frenzy",
+          "mediaType": "movie",
+          "tmdbId": null,
+          "winner": false
+        },
+        {
+          "title": "The Poseidon Adventure",
+          "mediaType": "movie",
+          "tmdbId": null,
+          "winner": false
+        },
+        {
+          "title": "Sleuth",
+          "mediaType": "movie",
+          "tmdbId": null,
+          "winner": false
+        }
+      ]
+    },
+    {
+      "id": "best-picture-musical-comedy",
+      "name": "Best Motion Picture – Musical or Comedy",
+      "nominees": [
+        {
+          "title": "Cabaret",
+          "mediaType": "movie",
+          "tmdbId": null,
+          "winner": true
+        },
+        {
+          "title": "Avanti!",
+          "mediaType": "movie",
+          "tmdbId": null,
+          "winner": false
+        },
+        {
+          "title": "Butterflies Are Free",
+          "mediaType": "movie",
+          "tmdbId": null,
+          "winner": false
+        },
+        {
+          "title": "1776",
+          "mediaType": "movie",
+          "tmdbId": null,
+          "winner": false
+        },
+        {
+          "title": "Travels with My Aunt",
+          "mediaType": "movie",
+          "tmdbId": null,
+          "winner": false
+        }
+      ]
+    }
+  ],
+  "dataSource": "wikipedia-mediawiki-api-golden-globes",
+  "notes": "Imported from English Wikipedia (Winners and nominees: {{Award category}} and/or legacy Film/Television wikitables). CC BY-SA. Verify with Golden Globes / DCP. tmdbId left null unless you enrich separately.",
+  "qa": {
+    "version": 1,
+    "lastAuditAt": "2026-04-07T17:54:39.582Z",
+    "isSeedEdition": false,
+    "needsNomineeBackfill": true,
+    "needsTmdbEnrichment": true,
+    "warnings": [],
+    "stats": {
+      "categoryCount": 2,
+      "nomineeCount": 10,
+      "winnerCount": 2,
+      "tmdbNull": 10,
+      "tmdbSet": 0
+    }
+  }
+}

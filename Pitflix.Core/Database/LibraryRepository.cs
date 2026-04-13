@@ -471,25 +471,15 @@ public sealed class LibraryRepository
     /// Next episode to watch: after the latest completed episode in sequence; first episode if none completed;
     /// null if all are completed.
     /// </summary>
+    /// <summary>First episode in airing order that is not marked completed (the real “next up” with out-of-order watches).</summary>
     public static Episode? GetNextEpisodeForShow(IReadOnlyList<Episode> episodes)
     {
         if (episodes.Count == 0)
             return null;
 
         var ordered = episodes.OrderBy(e => e.Season).ThenBy(e => e.EpisodeNumber).ToList();
-        var watched = ordered
-            .Where(e => string.Equals(e.WatchStatus, WatchStatuses.Completed, StringComparison.OrdinalIgnoreCase))
-            .ToList();
-        if (watched.Count == 0)
-            return ordered[0];
-
-        var lastWatched = watched[^1];
-        var idx = ordered.FindIndex(e => e.Id == lastWatched.Id);
-        if (idx < 0)
-            return ordered[0];
-        if (idx + 1 >= ordered.Count)
-            return null;
-        return ordered[idx + 1];
+        return ordered.FirstOrDefault(e =>
+            !string.Equals(e.WatchStatus, WatchStatuses.Completed, StringComparison.OrdinalIgnoreCase));
     }
 
     public async Task<ScanLog> SaveScanLogAsync(ScanLog log, CancellationToken cancellationToken = default)
@@ -631,6 +621,180 @@ public sealed class LibraryRepository
         }
 
         return list;
+    }
+
+    /// <summary>
+    /// All in-progress series: at least one episode started, not fully completed, next episode exists in library.
+    /// Grouped per show; sort by latest activity then progress relevance.
+    /// </summary>
+    public async Task<IReadOnlyList<CurrentlyWatchingRow>> GetCurrentlyWatchingSeriesAsync(int recentDays = 21,
+        int maxItems = 200, CancellationToken cancellationToken = default)
+    {
+        _ = recentDays;
+
+        var histRows = await _db.WatchHistories.AsNoTracking()
+            .Where(h => h.MediaType == "Series")
+            .ToListAsync(cancellationToken)
+            .ConfigureAwait(false);
+
+        var pathToMaxPlay = new Dictionary<string, DateTime>(StringComparer.OrdinalIgnoreCase);
+        foreach (var h in histRows)
+        {
+            var fp = (h.FilePath ?? "").Trim();
+            if (fp.Length == 0)
+                continue;
+            foreach (var v in PathVariants(fp))
+            {
+                if (!pathToMaxPlay.TryGetValue(v, out var prev) || h.OpenedAt > prev)
+                    pathToMaxPlay[v] = h.OpenedAt;
+            }
+        }
+
+        var candidateShowIds = await _db.Shows.AsNoTracking()
+            .Where(s => s.IsMatched && s.TmdbId > 0)
+            .Select(s => s.Id)
+            .ToListAsync(cancellationToken)
+            .ConfigureAwait(false);
+
+        var rows = new List<(CurrentlyWatchingRow Row, double SortKey)>();
+
+        foreach (var sid in candidateShowIds)
+        {
+            var allEps = (await GetEpisodesForShowAsync(sid, cancellationToken).ConfigureAwait(false)).ToList();
+            if (allEps.Count == 0)
+                continue;
+
+            var show = await _db.Shows.AsNoTracking()
+                .FirstOrDefaultAsync(s => s.Id == sid, cancellationToken)
+                .ConfigureAwait(false);
+            if (show == null || !show.IsMatched || show.TmdbId <= 0)
+                continue;
+
+            var ordered = allEps.OrderBy(e => e.Season).ThenBy(e => e.EpisodeNumber).ToList();
+            var completed = ordered.Count(e =>
+                string.Equals(e.WatchStatus, WatchStatuses.Completed, StringComparison.OrdinalIgnoreCase));
+            var hasHistory = ordered.Any(e => TryMatchHistoryPlayTime(pathToMaxPlay, e.FilePath, out _));
+            var hasWatching = ordered.Any(e =>
+                string.Equals(e.WatchStatus, WatchStatuses.Watching, StringComparison.OrdinalIgnoreCase));
+            var hasStarted = completed > 0 || hasWatching || hasHistory;
+            if (!hasStarted)
+                continue;
+
+            var next = GetNextEpisodeForShow(ordered);
+            if (next == null)
+                continue;
+
+            var allEpisodesCompleted = ordered.All(e =>
+                string.Equals(e.WatchStatus, WatchStatuses.Completed, StringComparison.OrdinalIgnoreCase));
+            if (allEpisodesCompleted)
+                continue;
+
+            var total = ordered.Count;
+            var remaining = ordered.Count(e =>
+                !string.Equals(e.WatchStatus, WatchStatuses.Completed, StringComparison.OrdinalIgnoreCase));
+            if (remaining <= 0)
+                continue;
+
+            var lastPlayedAt = DateTime.MinValue;
+            Episode? lastFromHistory = null;
+            foreach (var ep in ordered)
+            {
+                if (!TryMatchHistoryPlayTime(pathToMaxPlay, ep.FilePath, out var t))
+                    continue;
+                if (t > lastPlayedAt)
+                {
+                    lastPlayedAt = t;
+                    lastFromHistory = ep;
+                }
+            }
+
+            Episode? lastWatchedEp = lastFromHistory;
+            if (lastWatchedEp == null)
+            {
+                Episode? bestCompleted = null;
+                foreach (var ep in ordered)
+                {
+                    if (!string.Equals(ep.WatchStatus, WatchStatuses.Completed, StringComparison.OrdinalIgnoreCase))
+                        continue;
+                    if (bestCompleted == null || ep.Season > bestCompleted.Season ||
+                        (ep.Season == bestCompleted.Season && ep.EpisodeNumber > bestCompleted.EpisodeNumber))
+                        bestCompleted = ep;
+                }
+
+                lastWatchedEp = bestCompleted;
+            }
+
+            if (lastWatchedEp == null)
+                lastWatchedEp = ordered.FirstOrDefault(e =>
+                    string.Equals(e.WatchStatus, WatchStatuses.Watching, StringComparison.OrdinalIgnoreCase));
+            if (lastWatchedEp == null)
+                lastWatchedEp = ordered[0];
+
+            if (lastPlayedAt == DateTime.MinValue)
+            {
+                var completedAts = ordered.Where(e => e.CompletedAt.HasValue).Select(e => e.CompletedAt!.Value)
+                    .ToList();
+                lastPlayedAt = completedAts.Count > 0 ? completedAts.Max() : show.DateAdded;
+            }
+
+            var progress = total > 0 ? (double)completed / total : 0.0;
+            var inProgressBoost = show.WatchStatus == WatchStatuses.Watching ? 1.0 : 0.0;
+            var sortKey = inProgressBoost * 10_000 + progress * 1_000 - remaining;
+
+            rows.Add((new CurrentlyWatchingRow
+            {
+                LibraryShowId = show.Id,
+                ShowTitle = show.Title ?? "",
+                ShowTmdbId = show.TmdbId,
+                PosterLocalPath = show.PosterLocalPath,
+                SelectedPosterPath = show.SelectedPosterPath,
+                LastWatchedSeason = lastWatchedEp.Season,
+                LastWatchedEpisode = lastWatchedEp.EpisodeNumber,
+                NextSeason = next.Season,
+                NextEpisode = next.EpisodeNumber,
+                EpisodesRemaining = remaining,
+                WatchedEpisodes = completed,
+                TotalEpisodes = total,
+                ProgressFraction = progress,
+                LastPlayedAtUtc = lastPlayedAt,
+            }, sortKey));
+        }
+
+        return rows
+            .OrderByDescending(x => x.Row.LastPlayedAtUtc)
+            .ThenByDescending(x => x.SortKey)
+            .Select(x => x.Row)
+            .Take(Math.Clamp(maxItems, 1, 500))
+            .ToList();
+    }
+
+    private static bool TryMatchHistoryPlayTime(
+        Dictionary<string, DateTime> pathToLastPlay,
+        string? episodeFilePath,
+        out DateTime playedAt)
+    {
+        playedAt = default;
+        var fp = (episodeFilePath ?? "").Trim();
+        if (fp.Length == 0)
+            return false;
+        foreach (var cand in PathVariants(fp))
+        {
+            if (pathToLastPlay.TryGetValue(cand, out playedAt))
+                return true;
+        }
+
+        return false;
+    }
+
+    private static IEnumerable<string> PathVariants(string path)
+    {
+        yield return path;
+        var a = path.Replace('\\', '/');
+        if (!string.Equals(a, path, StringComparison.Ordinal))
+            yield return a;
+        var b = path.Replace('/', '\\');
+        if (!string.Equals(b, path, StringComparison.Ordinal))
+            yield return b;
     }
 
     /// <summary>
@@ -1007,6 +1171,38 @@ public sealed class LibraryRepository
     {
         var clean = showIds.Where(i => i > 0).Distinct().ToList();
         await SaveSettingAsync(NextEpisodesPinnedKey, JsonSerializer.Serialize(clean), cancellationToken)
+            .ConfigureAwait(false);
+    }
+
+    private const string NextEpisodesFollowedExternalKey = "NextEpisodesFollowedExternalV1";
+
+    public async Task<IReadOnlyList<FollowedExternalShow>> GetFollowedExternalShowsAsync(
+        CancellationToken cancellationToken = default)
+    {
+        var raw = await GetSettingAsync(NextEpisodesFollowedExternalKey, cancellationToken).ConfigureAwait(false);
+        if (string.IsNullOrWhiteSpace(raw))
+            return Array.Empty<FollowedExternalShow>();
+        try
+        {
+            var list = JsonSerializer.Deserialize<List<FollowedExternalShow>>(raw);
+            return list?.Where(x => x.TmdbId > 0).OrderByDescending(x => x.AddedAtUtc).ToList()
+                   ?? (IReadOnlyList<FollowedExternalShow>)Array.Empty<FollowedExternalShow>();
+        }
+        catch
+        {
+            return Array.Empty<FollowedExternalShow>();
+        }
+    }
+
+    public async Task SaveFollowedExternalShowsAsync(IReadOnlyList<FollowedExternalShow> shows,
+        CancellationToken cancellationToken = default)
+    {
+        var clean = shows
+            .Where(x => x.TmdbId > 0 && !string.IsNullOrWhiteSpace(x.Title))
+            .GroupBy(x => x.TmdbId)
+            .Select(g => g.First())
+            .ToList();
+        await SaveSettingAsync(NextEpisodesFollowedExternalKey, JsonSerializer.Serialize(clean), cancellationToken)
             .ConfigureAwait(false);
     }
 
@@ -2660,6 +2856,47 @@ public sealed class LibraryRepository
 
         var mostGenre = topPairs.Count > 0 ? topPairs[0].Genre : "";
 
+        var matchedShowsCount = await _db.Shows.AsNoTracking().CountAsync(s => s.IsMatched, cancellationToken)
+            .ConfigureAwait(false);
+        var seriesCompletionPercent = matchedShowsCount > 0
+            ? 100.0 * seriesCompleted / matchedShowsCount
+            : 0.0;
+
+        var episodesCompletedThisWeek = await _db.Episodes.AsNoTracking()
+            .CountAsync(
+                e => e.WatchStatus == WatchStatuses.Completed && e.CompletedAt != null &&
+                     e.CompletedAt >= weekStart,
+                cancellationToken).ConfigureAwait(false);
+
+        var showsWatchingLibrary = await _db.Shows.AsNoTracking()
+            .CountAsync(s => s.IsMatched && s.WatchStatus == WatchStatuses.Watching, cancellationToken)
+            .ConfigureAwait(false);
+
+        var currentlyWatchingRows =
+            await GetCurrentlyWatchingSeriesAsync(21, 500, cancellationToken).ConfigureAwait(false);
+        var currentlyWatchingCount = currentlyWatchingRows.Count;
+
+        var decadeCounts = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+        foreach (var y in await _db.Movies.AsNoTracking()
+                     .Where(m => m.IsMatched && m.WatchStatus == WatchStatuses.Completed && m.Year != null)
+                     .Select(m => m.Year!.Value).ToListAsync(cancellationToken).ConfigureAwait(false))
+            AddDecade(decadeCounts, y);
+        foreach (var y in await _db.Shows.AsNoTracking()
+                     .Where(s => s.IsMatched && s.WatchStatus == WatchStatuses.Completed && s.Year != null)
+                     .Select(s => s.Year!.Value).ToListAsync(cancellationToken).ConfigureAwait(false))
+            AddDecade(decadeCounts, y);
+
+        var decadeTop = decadeCounts
+            .OrderByDescending(kv => kv.Value)
+            .Take(6)
+            .Select(kv => new WatchDecadeCount(kv.Key, kv.Value))
+            .ToList();
+
+        var rewatchSessionApprox = histories
+            .Where(h => !string.IsNullOrWhiteSpace(h.FilePath))
+            .GroupBy(h => h.FilePath!, StringComparer.OrdinalIgnoreCase)
+            .Count(g => g.Count() >= 2);
+
         var recentOrdered = new List<object>();
         foreach (var x in recentCards)
         {
@@ -2684,7 +2921,22 @@ public sealed class LibraryRepository
             seriesPercent,
             mostGenre,
             mRatings.Count > 0 ? mRatings.Average() : 0,
-            sRatings.Count > 0 ? sRatings.Average() : 0);
+            sRatings.Count > 0 ? sRatings.Average() : 0,
+            currentlyWatchingCount,
+            episodesCompletedThisWeek,
+            seriesCompletionPercent,
+            showsWatchingLibrary,
+            decadeTop,
+            rewatchSessionApprox);
+    }
+
+    private static void AddDecade(Dictionary<string, int> map, int year)
+    {
+        if (year < 1930 || year > DateTime.UtcNow.Year + 2)
+            return;
+        var bucket = year / 10 * 10;
+        var label = $"{bucket}s";
+        map[label] = map.TryGetValue(label, out var c) ? c + 1 : 1;
     }
 
     public async Task<string?> TryGetBackdropPathForPlayedFileAsync(string filePath, string? mediaType,
@@ -3554,6 +3806,8 @@ public sealed class LibraryRepository
 
 public sealed record WatchGenreCount(string Genre, int Count);
 
+public sealed record WatchDecadeCount(string DecadeLabel, int Count);
+
 public sealed record WatchStatisticsBundle(
     int TotalWatchTimeMinutes,
     int ThisWeekMinutes,
@@ -3569,7 +3823,13 @@ public sealed record WatchStatisticsBundle(
     double SeriesPercent,
     string MostWatchedGenre,
     double AverageMovieRating,
-    double AverageSeriesRating);
+    double AverageSeriesRating,
+    int CurrentlyWatchingCount,
+    int EpisodesCompletedThisWeek,
+    double SeriesCompletionPercent,
+    int ShowsWatchingLibrary,
+    IReadOnlyList<WatchDecadeCount> DecadeTop,
+    int RewatchSessionsApprox);
 
 public sealed record ListItemDisplayRow(int TmdbId, string MediaType, string Title, int? Year, string? PosterLocalPath,
     int? LibraryDatabaseId);

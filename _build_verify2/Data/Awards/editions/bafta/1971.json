@@ -1,0 +1,187 @@
+{
+  "awardId": "bafta",
+  "year": 1971,
+  "label": "24th British Academy Film Awards (1971)",
+  "categories": [
+    {
+      "id": "best-film",
+      "name": "Best Film",
+      "nominees": [
+        {
+          "title": "Kes",
+          "mediaType": "movie",
+          "tmdbId": null,
+          "winner": true
+        },
+        {
+          "title": "MASH",
+          "mediaType": "movie",
+          "tmdbId": null,
+          "winner": true
+        },
+        {
+          "title": "Ryan's Daughter",
+          "mediaType": "movie",
+          "tmdbId": null,
+          "winner": true
+        }
+      ]
+    },
+    {
+      "id": "best-direction",
+      "name": "Best Director",
+      "nominees": [
+        {
+          "title": "David Lean — Ryan's Daughter",
+          "mediaType": "movie",
+          "tmdbId": null,
+          "winner": true
+        },
+        {
+          "title": "Ken Loach — Kes",
+          "mediaType": "movie",
+          "tmdbId": null,
+          "winner": true
+        },
+        {
+          "title": "Robert Altman — MASH",
+          "mediaType": "movie",
+          "tmdbId": null,
+          "winner": true
+        }
+      ]
+    },
+    {
+      "id": "best-actor",
+      "name": "Best Actor in a Leading Role",
+      "nominees": [
+        {
+          "title": "Elliott Gould — Bob & Carol & Ted & Alice",
+          "mediaType": "movie",
+          "tmdbId": null,
+          "winner": true
+        },
+        {
+          "title": "Elliott Gould — MASH",
+          "mediaType": "movie",
+          "tmdbId": null,
+          "winner": true
+        },
+        {
+          "title": "George C. Scott — Patton",
+          "mediaType": "movie",
+          "tmdbId": null,
+          "winner": true
+        },
+        {
+          "title": "Paul Newman — Butch Cassidy and the Sundance Kid",
+          "mediaType": "movie",
+          "tmdbId": null,
+          "winner": true
+        }
+      ]
+    },
+    {
+      "id": "best-actress",
+      "name": "Best Actress in a Leading Role",
+      "nominees": [
+        {
+          "title": "Goldie Hawn — Cactus Flower",
+          "mediaType": "movie",
+          "tmdbId": null,
+          "winner": true
+        },
+        {
+          "title": "Goldie Hawn — There's a Girl in My Soup",
+          "mediaType": "movie",
+          "tmdbId": null,
+          "winner": true
+        },
+        {
+          "title": "Jane Fonda — They Shoot Horses, Don't They?",
+          "mediaType": "movie",
+          "tmdbId": null,
+          "winner": true
+        },
+        {
+          "title": "Sarah Miles — Ryan's Daughter",
+          "mediaType": "movie",
+          "tmdbId": null,
+          "winner": true
+        }
+      ]
+    },
+    {
+      "id": "best-supporting-actor",
+      "name": "Best Actor in a Supporting Role",
+      "nominees": [
+        {
+          "title": "Bernard Cribbins — The Railway Children",
+          "mediaType": "movie",
+          "tmdbId": null,
+          "winner": true
+        },
+        {
+          "title": "Gig Young — They Shoot Horses, Don't They?",
+          "mediaType": "movie",
+          "tmdbId": null,
+          "winner": true
+        },
+        {
+          "title": "John Mills — Ryan's Daughter",
+          "mediaType": "movie",
+          "tmdbId": null,
+          "winner": true
+        }
+      ]
+    },
+    {
+      "id": "best-supporting-actress",
+      "name": "Best Actress in a Supporting Role",
+      "nominees": [
+        {
+          "title": "Estelle Parsons — Watermelon Man",
+          "mediaType": "movie",
+          "tmdbId": null,
+          "winner": true
+        },
+        {
+          "title": "Maureen Stapleton — Airport",
+          "mediaType": "movie",
+          "tmdbId": null,
+          "winner": true
+        },
+        {
+          "title": "Evin Crowley — Ryan's Daughter",
+          "mediaType": "movie",
+          "tmdbId": null,
+          "winner": true
+        }
+      ]
+    }
+  ],
+  "dataSource": "wikipedia-mediawiki-api-bafta",
+  "notes": "Imported from English Wikipedia wikitext (Winners and nominees / {{Award category}}). CC BY-SA. Verify with BAFTA. tmdbId left null unless you enrich separately.",
+  "qa": {
+    "version": 1,
+    "lastAuditAt": "2026-04-07T17:54:39.547Z",
+    "isSeedEdition": false,
+    "needsNomineeBackfill": false,
+    "needsTmdbEnrichment": true,
+    "warnings": [
+      "category_multiple_winners:best-film:\"Best Film\" has 3 winners (verify tie vs data bug)",
+      "category_multiple_winners:best-direction:\"Best Director\" has 3 winners (verify tie vs data bug)",
+      "category_multiple_winners:best-actor:\"Best Actor in a Leading Role\" has 4 winners (verify tie vs data bug)",
+      "category_multiple_winners:best-actress:\"Best Actress in a Leading Role\" has 4 winners (verify tie vs data bug)",
+      "category_multiple_winners:best-supporting-actor:\"Best Actor in a Supporting Role\" has 3 winners (verify tie vs data bug)",
+      "category_multiple_winners:best-supporting-actress:\"Best Actress in a Supporting Role\" has 3 winners (verify tie vs data bug)"
+    ],
+    "stats": {
+      "categoryCount": 6,
+      "nomineeCount": 20,
+      "winnerCount": 20,
+      "tmdbNull": 20,
+      "tmdbSet": 0
+    }
+  }
+}

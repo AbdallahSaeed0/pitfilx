@@ -6,10 +6,13 @@ using System.Net.Sockets;
 using System.Text.Json;
 using System.Text.RegularExpressions;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.FileProviders;
 using Pitflix.API;
+using Pitflix.API.Dtos;
 using Pitflix.API.Services;
 using Pitflix.API.Services.Awards;
+using Pitflix.API.Services.Trailers;
 using Pitflix.Core.Api;
 using Pitflix.Core.Config;
 using Pitflix.Core.Database;
@@ -72,6 +75,7 @@ builder.Services.AddMemoryCache();
 builder.Services.AddHttpClient();
 builder.Services.AddHttpClient(nameof(OmdbRatingClient));
 builder.Services.AddTransient<OmdbRatingClient>();
+builder.Services.AddSingleton<PhpImdbGrabberClient>();
 builder.Services.AddSingleton<RatingsAggregationService>();
 builder.Services.AddSingleton<IAwardsDataProvider, FileAwardsDataProvider>();
 builder.Services.AddSingleton<AwardsService>();
@@ -2548,7 +2552,13 @@ app.MapGet("/api/stats/watch", async (LibraryRepository repo, CancellationToken 
         movieVsSeries = new { moviePercent = b.MoviePercent, seriesPercent = b.SeriesPercent },
         mostWatchedGenre = b.MostWatchedGenre,
         averageMovieRating = b.AverageMovieRating,
-        averageSeriesRating = b.AverageSeriesRating
+        averageSeriesRating = b.AverageSeriesRating,
+        currentlyWatchingCount = b.CurrentlyWatchingCount,
+        episodesCompletedThisWeek = b.EpisodesCompletedThisWeek,
+        seriesCompletionPercent = b.SeriesCompletionPercent,
+        showsWatchingLibrary = b.ShowsWatchingLibrary,
+        decadeTop = b.DecadeTop.Select(d => new { decade = d.DecadeLabel, count = d.Count }).ToList(),
+        rewatchSessionsApprox = b.RewatchSessionsApprox
     }, jsonSerializerOptions);
 });
 
@@ -3061,6 +3071,21 @@ app.MapPut("/api/home/next-episodes/pins", async (NextEpisodesPinsDto body, Libr
     return Results.Ok();
 });
 
+app.MapGet("/api/home/next-episodes/followed", async (LibraryRepository repo, CancellationToken ct) =>
+{
+    var list = await repo.GetFollowedExternalShowsAsync(ct).ConfigureAwait(false);
+    return Results.Json(list, jsonSerializerOptions);
+});
+
+app.MapPut("/api/home/next-episodes/followed", async (List<FollowedExternalShow>? body, LibraryRepository repo,
+    CancellationToken ct) =>
+{
+    if (body == null)
+        return Results.BadRequest();
+    await repo.SaveFollowedExternalShowsAsync(body, ct).ConfigureAwait(false);
+    return Results.Ok();
+});
+
 app.MapGet("/api/home/next-episodes", async (LibraryContext db, LibraryRepository repo, CancellationToken ct) =>
 {
     var tmdb = TmdbClientFactory.Create();
@@ -3099,8 +3124,14 @@ app.MapGet("/api/home/next-episodes", async (LibraryContext db, LibraryRepositor
     shows.AddRange(pinnedShows);
     shows.AddRange(rest);
 
+    var libTmdbIds = shows.Select(s => s.TmdbId).ToHashSet();
+    var followedExternal = (await repo.GetFollowedExternalShowsAsync(ct).ConfigureAwait(false))
+        .Where(f => !libTmdbIds.Contains(f.TmdbId))
+        .ToList();
+
     var today = DateOnly.FromDateTime(DateTime.UtcNow);
-    var bag = new ConcurrentBag<(bool Pinned, DateOnly Air, string SortTitle, object Row)>();
+    var bag = new ConcurrentBag<(int Tier, bool Pinned, DateOnly Air, string SortTitle, object Row)>();
+
     await Parallel.ForEachAsync(shows, new ParallelOptions { MaxDegreeOfParallelism = 6, CancellationToken = ct },
         async (s, token) =>
         {
@@ -3123,6 +3154,7 @@ app.MapGet("/api/home/next-episodes", async (LibraryContext db, LibraryRepositor
                 var isPinned = pinnedSet != null && pinnedSet.Contains(s.Id);
                 var row = new
                 {
+                    kind = "library",
                     libraryShowId = s.Id,
                     showTitle = s.Title,
                     showTmdbId = s.TmdbId,
@@ -3132,7 +3164,8 @@ app.MapGet("/api/home/next-episodes", async (LibraryContext db, LibraryRepositor
                     airDate = ad,
                     pinned = isPinned,
                 };
-                bag.Add((isPinned, airDay, s.Title ?? "", row));
+                var tier = isPinned ? 0 : 1;
+                bag.Add((tier, isPinned, airDay, s.Title ?? "", row));
             }
             catch
             {
@@ -3140,25 +3173,179 @@ app.MapGet("/api/home/next-episodes", async (LibraryContext db, LibraryRepositor
             }
         }).ConfigureAwait(false);
 
+    await Parallel.ForEachAsync(followedExternal, new ParallelOptions { MaxDegreeOfParallelism = 4, CancellationToken = ct },
+        async (f, token) =>
+        {
+            try
+            {
+                var air = await tmdb.TryGetTvNextAiringAsync(f.TmdbId, token).ConfigureAwait(false);
+                if (air == null || air.Value.NextEpisode == null)
+                    return;
+                var ne = air.Value.NextEpisode;
+                var name = (string?)ne["name"] ?? "";
+                var ad = (string?)ne["air_date"];
+                var sn = (int?)ne["season_number"];
+                var en = (int?)ne["episode_number"];
+                if (string.IsNullOrEmpty(ad) || ad.Length < 10)
+                    return;
+                if (!DateOnly.TryParse(ad.AsSpan(0, 10), out var airDay))
+                    return;
+                if (airDay < today)
+                    return;
+                string? posterUrl = null;
+                if (!string.IsNullOrWhiteSpace(f.PosterPath))
+                {
+                    var p = f.PosterPath.Trim();
+                    posterUrl = p.StartsWith("http", StringComparison.OrdinalIgnoreCase)
+                        ? p
+                        : $"https://image.tmdb.org/t/p/w500{p.TrimStart('/')}";
+                }
+                var row = new
+                {
+                    kind = "followed",
+                    libraryShowId = (int?)null,
+                    showTitle = string.IsNullOrWhiteSpace(f.Title) ? air.Value.ShowName : f.Title,
+                    showTmdbId = f.TmdbId,
+                    episodeTitle = name,
+                    season = sn,
+                    episodeNumber = en,
+                    airDate = ad,
+                    pinned = false,
+                    posterUrl,
+                    followed = true,
+                };
+                bag.Add((2, false, airDay, f.Title ?? "", row));
+            }
+            catch
+            {
+                /* skip */
+            }
+        }).ConfigureAwait(false);
+
     var ordered = bag
-        .OrderByDescending(x => x.Pinned)
+        .OrderBy(x => x.Tier)
+        .ThenByDescending(x => x.Pinned)
         .ThenBy(x => x.Air)
         .ThenBy(x => x.SortTitle, StringComparer.OrdinalIgnoreCase)
         .Select(x => x.Row)
-        .Take(40)
+        .Take(48)
         .ToList();
 
     return Results.Json(ordered, jsonSerializerOptions);
 });
 
-app.MapGet("/api/home/trailers", async (TrailersCuratedPriorityProvider curated, CancellationToken ct) =>
+app.MapGet("/api/home/watching-currently", async (LibraryRepository repo, CancellationToken ct) =>
+{
+    var rows = await repo.GetCurrentlyWatchingSeriesAsync(21, 200, ct).ConfigureAwait(false);
+    var tmdb = TmdbClientFactory.Create();
+    var list = rows
+        .Select(r => WatchingCurrentlyApiRow.From(r, ImageUrls.ToImageUrl(r.SelectedPosterPath ?? r.PosterLocalPath)))
+        .ToList();
+    if (tmdb != null && list.Count > 0)
+    {
+        await Parallel.ForEachAsync(list, new ParallelOptions { MaxDegreeOfParallelism = 5, CancellationToken = ct },
+            async (row, token) =>
+            {
+                if (!string.IsNullOrEmpty(row.PosterUrl) || row.ShowTmdbId <= 0)
+                    return;
+                try
+                {
+                    var art = await tmdb.GetArtworkPathsAsync(row.ShowTmdbId, "Series", token).ConfigureAwait(false);
+                    if (art != null && !string.IsNullOrEmpty(art.Value.PosterPath))
+                        row.PosterUrl = $"https://image.tmdb.org/t/p/w500{art.Value.PosterPath}";
+                }
+                catch
+                {
+                    /* optional */
+                }
+            }).ConfigureAwait(false);
+    }
+
+    return Results.Json(list, jsonSerializerOptions);
+});
+
+/// <summary>TMDB TV search for shows not necessarily in the library (Next Episodes discovery).</summary>
+app.MapGet("/api/discover/tv-search", async (string? q, CancellationToken ct) =>
 {
     var tmdb = TmdbClientFactory.Create();
-    if (tmdb == null)
+    if (tmdb == null || string.IsNullOrWhiteSpace(q) || q.Trim().Length < 2)
         return Results.Json(Array.Empty<object>(), jsonSerializerOptions);
 
-    var seen = new HashSet<string>(StringComparer.Ordinal);
+    var hits = await tmdb.SearchAsync(q.Trim(), "Series", false, ct, maxResults: 15).ConfigureAwait(false);
+    var mapped = hits.Select(h => new
+    {
+        tmdbId = h.Id,
+        title = h.Title,
+        year = string.IsNullOrEmpty(h.ReleaseDate) || h.ReleaseDate.Length < 4
+            ? (int?)null
+            : int.TryParse(h.ReleaseDate.AsSpan(0, 4), out var y) ? y : null,
+        posterUrl = string.IsNullOrEmpty(h.PosterPath) ? null : $"https://image.tmdb.org/t/p/w342{h.PosterPath}",
+    }).ToList();
+    return Results.Json(mapped, jsonSerializerOptions);
+});
+
+/// <summary>Next airing block for any TMDB TV id (library not required).</summary>
+app.MapGet("/api/discover/tv-schedule", async (int tmdbId, CancellationToken ct) =>
+{
+    var tmdb = TmdbClientFactory.Create();
+    if (tmdb == null || tmdbId <= 0)
+        return Results.Json(null, jsonSerializerOptions);
+
+    var air = await tmdb.TryGetTvNextAiringAsync(tmdbId, ct).ConfigureAwait(false);
+    if (air == null || air.Value.NextEpisode == null)
+    {
+        return Results.Json(new
+        {
+            ok = false,
+            showTitle = air?.ShowName,
+            message = "TMDB has no next episode to air for this series (ended, paused, or data missing)."
+        }, jsonSerializerOptions);
+    }
+
+    var ne = air.Value.NextEpisode;
+    var name = (string?)ne["name"] ?? "";
+    var ad = (string?)ne["air_date"];
+    var sn = (int?)ne["season_number"];
+    var en = (int?)ne["episode_number"];
+    return Results.Json(new
+    {
+        ok = true,
+        showTitle = air.Value.ShowName,
+        tmdbId = tmdbId,
+        episodeTitle = name,
+        season = sn,
+        episodeNumber = en,
+        airDate = ad
+    }, jsonSerializerOptions);
+});
+
+async Task<IResult> HomeTrailersLatestCore(TrailersCuratedPriorityProvider curated, TmdbClient tmdb,
+    IHttpClientFactory httpFactory, IConfiguration configuration, ILogger<Program> logger, CancellationToken ct)
+{
+    var cards = await TrailersFeedHelpers.BuildHomeLatestTrailerCardsAsync(
+            httpFactory, configuration, logger, curated, tmdb,
+            maxTrailers: 16, recentDays: 35, wantMovie: true, wantTv: true, ct,
+            maxApiPasses: 36)
+        .ConfigureAwait(false);
+    return Results.Json(cards.Select(c => new
+    {
+        tmdbId = c.TmdbId,
+        mediaType = c.MediaType,
+        title = c.Title,
+        posterUrl = c.PosterUrl,
+        backdropUrl = c.BackdropUrl,
+        youtubeKey = c.YoutubeKey,
+        trailerTitle = c.TrailerTitle,
+        releaseDate = c.ReleaseDate,
+        trailerPublishedAtUtc = c.TrailerPublishedAtUtc
+    }).ToList(), jsonSerializerOptions);
+}
+
+async Task<IResult> HomeTrailersUpcomingCore(TrailersCuratedPriorityProvider curated, TmdbClient tmdb,
+    CancellationToken ct)
+{
     var rawPool = await TrailersFeedHelpers.BuildHomeUpcomingTrendingTrailersPoolAsync(tmdb, ct).ConfigureAwait(false);
+    rawPool = TrailersFeedHelpers.FilterHomeTrailerPool(rawPool, strict: true);
 
     var curatedEntries = await curated.TryLoadAsync(ct).ConfigureAwait(false);
     var curatedKeys = new HashSet<string>(StringComparer.Ordinal);
@@ -3174,12 +3361,9 @@ app.MapGet("/api/home/trailers", async (TrailersCuratedPriorityProvider curated,
         rawPool.Add(header);
     }
 
-    var merged = TrailersFeedHelpers.RankTrailerCandidatePool(rawPool, wantMovie: true, wantTv: true, curatedKeys);
-
-    var cards = await TrailersFeedHelpers
-        .CollectTrailersForItemsAsync(tmdb, merged, 12, seen, ct)
+    var merged = TrailersFeedHelpers.RankTrailerCandidatePool(rawPool, true, true, curatedKeys);
+    var cards = await TrailersFeedHelpers.CollectHomeUpcomingTrailersAsync(tmdb, merged, 12, ct)
         .ConfigureAwait(false);
-
     return Results.Json(cards.Select(c => new
     {
         tmdbId = c.TmdbId,
@@ -3189,14 +3373,78 @@ app.MapGet("/api/home/trailers", async (TrailersCuratedPriorityProvider curated,
         backdropUrl = c.BackdropUrl,
         youtubeKey = c.YoutubeKey,
         trailerTitle = c.TrailerTitle,
-        releaseDate = c.ReleaseDate
+        releaseDate = c.ReleaseDate,
+        trailerPublishedAtUtc = c.TrailerPublishedAtUtc
     }).ToList(), jsonSerializerOptions);
+}
+
+/// <summary>Backward compatible — same as <c>/api/home/trailers/latest</c>.</summary>
+app.MapGet("/api/home/trailers", async (TrailersCuratedPriorityProvider curated, IHttpClientFactory httpFactory,
+        IConfiguration configuration, ILogger<Program> logger, CancellationToken ct) =>
+{
+    var tmdb = TmdbClientFactory.Create();
+    if (tmdb == null)
+        return Results.Json(Array.Empty<object>(), jsonSerializerOptions);
+    return await HomeTrailersLatestCore(curated, tmdb, httpFactory, configuration, logger, ct).ConfigureAwait(false);
+});
+
+app.MapGet("/api/home/trailers/latest", async (TrailersCuratedPriorityProvider curated, IHttpClientFactory httpFactory,
+        IConfiguration configuration, ILogger<Program> logger, CancellationToken ct) =>
+{
+    var tmdb = TmdbClientFactory.Create();
+    if (tmdb == null)
+        return Results.Json(Array.Empty<object>(), jsonSerializerOptions);
+    return await HomeTrailersLatestCore(curated, tmdb, httpFactory, configuration, logger, ct).ConfigureAwait(false);
+});
+
+/// <summary>One-shot RSS fetch + TMDB resolve stats (does not return full Home latest cards).</summary>
+app.MapGet("/api/home/trailers/rss-status", async (IHttpClientFactory httpFactory, IConfiguration configuration,
+        ILogger<Program> logger, CancellationToken ct) =>
+{
+    var tmdb = TmdbClientFactory.Create();
+    if (tmdb == null)
+        return Results.Json(new { ok = false, error = "tmdb_not_configured" }, jsonSerializerOptions);
+
+    try
+    {
+        var (_, diag) = await ScrapedTrailerPoolBuilder.BuildFromYoutubeRssAsync(
+            httpFactory, tmdb, configuration, ct, logger).ConfigureAwait(false);
+        return Results.Json(new
+        {
+            ok = true,
+            enabled = diag.Enabled,
+            channelsConfigured = diag.ChannelsConfigured,
+            rawEntriesFetched = diag.RawEntriesFetched,
+            resolvedToTmdb = diag.ResolvedToTmdb,
+            channelErrors = diag.ChannelErrors,
+            buildError = diag.BuildError,
+            youtubeSearchRawEntries = diag.YoutubeSearchRawEntries,
+            youtubeSearchError = diag.YoutubeSearchError,
+            invidiousRawEntries = diag.InvidiousRawEntries,
+            invidiousError = diag.InvidiousError
+        }, jsonSerializerOptions);
+    }
+    catch (Exception ex)
+    {
+        logger.LogWarning(ex, "Trailer RSS status endpoint failed");
+        return Results.Json(new { ok = false, error = ex.Message }, jsonSerializerOptions);
+    }
+});
+
+app.MapGet("/api/home/trailers/upcoming", async (TrailersCuratedPriorityProvider curated, CancellationToken ct) =>
+{
+    var tmdb = TmdbClientFactory.Create();
+    if (tmdb == null)
+        return Results.Json(Array.Empty<object>(), jsonSerializerOptions);
+    return await HomeTrailersUpcomingCore(curated, tmdb, ct).ConfigureAwait(false);
 });
 
 /// <param name="mode">latest | upcoming-movies | upcoming-tv | all-upcoming</param>
 /// <param name="filter">movie | tv | all</param>
 /// <param name="search">When at least 2 characters, TMDB search replaces the usual discover pool (still respects filter).</param>
-app.MapGet("/api/trailers/browse", async (TrailersCuratedPriorityProvider curated, string? mode, string? filter, string? search, CancellationToken ct) =>
+app.MapGet("/api/trailers/browse", async (TrailersCuratedPriorityProvider curated, IHttpClientFactory httpFactory,
+        IConfiguration configuration, ILogger<Program> logger, string? mode, string? filter, string? search,
+        CancellationToken ct) =>
 {
     var tmdb = TmdbClientFactory.Create();
     if (tmdb == null)
@@ -3223,6 +3471,48 @@ app.MapGet("/api/trailers/browse", async (TrailersCuratedPriorityProvider curate
         pool.AddRange(await tmdb.SearchDiscoverForTrailersAsync(searchTrim, wantMovie, wantTv, 15, ct)
             .ConfigureAwait(false));
         pool = TrailersFeedHelpers.RankTrailerCandidatePool(pool, wantMovie, wantTv);
+        if (modeNorm == "latest")
+        {
+            var latestSearch = await TrailersFeedHelpers
+                .CollectHomeLatestTrailersByPublishedWindowAsync(tmdb, pool, 48, 35, ct,
+                    upcomingTrailerPublishedDays: 105, maxApiPasses: 56, fetchBackdrop: false)
+                .ConfigureAwait(false);
+            var enrichedSearch = await TrailersFeedHelpers
+                .EnrichTrailerCardsWithCanonicalTmdbAsync(tmdb, latestSearch, ct)
+                .ConfigureAwait(false);
+            return Results.Json(enrichedSearch.Select(c => new
+            {
+                tmdbId = c.TmdbId,
+                mediaType = c.MediaType,
+                title = c.Title,
+                posterUrl = c.PosterUrl,
+                backdropUrl = c.BackdropUrl,
+                youtubeKey = c.YoutubeKey,
+                trailerTitle = c.TrailerTitle,
+                releaseDate = c.ReleaseDate,
+                trailerPublishedAtUtc = c.TrailerPublishedAtUtc
+            }).ToList(), jsonSerializerOptions);
+        }
+    }
+    else if (modeNorm == "latest")
+    {
+        var latestBrowse = await TrailersFeedHelpers.BuildHomeLatestTrailerCardsAsync(
+                httpFactory, configuration, logger, curated, tmdb,
+                maxTrailers: 48, recentDays: 35, wantMovie, wantTv, ct,
+                maxApiPasses: 72, maxRssTitlesToResolveOverride: 22)
+            .ConfigureAwait(false);
+        return Results.Json(latestBrowse.Select(c => new
+        {
+            tmdbId = c.TmdbId,
+            mediaType = c.MediaType,
+            title = c.Title,
+            posterUrl = c.PosterUrl,
+            backdropUrl = c.BackdropUrl,
+            youtubeKey = c.YoutubeKey,
+            trailerTitle = c.TrailerTitle,
+            releaseDate = c.ReleaseDate,
+            trailerPublishedAtUtc = c.TrailerPublishedAtUtc
+        }).ToList(), jsonSerializerOptions);
     }
     else
     {
@@ -3240,10 +3530,11 @@ app.MapGet("/api/trailers/browse", async (TrailersCuratedPriorityProvider curate
                 pool.Add(header);
         }
 
-        if (modeNorm == "latest")
+        if (modeNorm == "trending")
         {
-            pool.AddRange(await TrailersFeedHelpers.BuildLatestTrailerPoolAsync(tmdb, wantMovie, wantTv, ct)
-                .ConfigureAwait(false));
+            pool.AddRange(await tmdb.GetTrendingMoviesWeekAsync(ct).ConfigureAwait(false));
+            pool.AddRange(await tmdb.GetTrendingTvWeekAsync(ct).ConfigureAwait(false));
+            pool = TrailersFeedHelpers.FilterHomeTrailerPool(pool, strict: false);
             pool = TrailersFeedHelpers.RankTrailerCandidatePool(pool, wantMovie, wantTv, curatedKeys);
         }
 
@@ -3260,8 +3551,8 @@ app.MapGet("/api/trailers/browse", async (TrailersCuratedPriorityProvider curate
         pool = TrailersFeedHelpers.RankTrailerCandidatePool(pool, wantMovie, wantTv, curatedKeys);
     }
 
-    // Latest often emits trailer + teaser per title; allow a slightly higher cap.
-    var maxTrailers = modeNorm is "latest" ? 140 : 72;
+    // Trending / upcoming / search (non-latest): multi-clip grid (trailer + teaser per title when needed).
+    var maxTrailers = modeNorm == "trending" ? 140 : 72;
     var cards = await TrailersFeedHelpers
         .CollectTrailersForItemsAsync(tmdb, pool, maxTrailers, seen, ct)
         .ConfigureAwait(false);

@@ -1,0 +1,39 @@
+{
+  "awardId": "golden-globes",
+  "year": 1983,
+  "label": "Golden Globe Awards (1983)",
+  "categories": [
+    {
+      "id": "best-picture-drama",
+      "name": "Best Motion Picture – Drama",
+      "nominees": [
+        {
+          "title": "E.T. the Extra-Terrestrial",
+          "mediaType": "movie",
+          "tmdbId": 601,
+          "winner": true
+        }
+      ]
+    }
+  ],
+  "dataSource": "wikidata-sparql-seed",
+  "notes": "Auto-generated winner-only row from Wikidata (P166 + P585). Add nominees manually or re-run after improving the query. CC0 Wikidata — verify with official sources.",
+  "qa": {
+    "version": 1,
+    "lastAuditAt": "2026-04-07T17:54:39.585Z",
+    "isSeedEdition": true,
+    "needsNomineeBackfill": true,
+    "needsTmdbEnrichment": false,
+    "warnings": [
+      "single_category_edition::Only one category (often seed or incomplete)",
+      "likely_seed_edition::Winner-only / Wikidata seed indicators"
+    ],
+    "stats": {
+      "categoryCount": 1,
+      "nomineeCount": 1,
+      "winnerCount": 1,
+      "tmdbNull": 0,
+      "tmdbSet": 1
+    }
+  }
+}
