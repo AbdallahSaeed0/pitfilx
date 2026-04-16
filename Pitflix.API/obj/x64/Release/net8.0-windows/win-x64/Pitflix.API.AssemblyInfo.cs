@@ -13,7 +13,7 @@ using System.Reflection;
 [assembly: System.Reflection.AssemblyCompanyAttribute("Pitflix.API")]
 [assembly: System.Reflection.AssemblyConfigurationAttribute("Release")]
 [assembly: System.Reflection.AssemblyFileVersionAttribute("1.0.0.0")]
-[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.0.0+a9f5ad52111537e74b6df4e7388aa2386bab6842")]
+[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.0.0+dc17f90f316ebbfee638ffa3a88eeea3e3082463")]
 [assembly: System.Reflection.AssemblyProductAttribute("Pitflix.API")]
 [assembly: System.Reflection.AssemblyTitleAttribute("Pitflix.API")]
 [assembly: System.Reflection.AssemblyVersionAttribute("1.0.0.0")]
