@@ -47,7 +47,7 @@
   },
   "plugins": {
     "updater": {
-      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDNDMkNGQ0ZDQ0M5M0I1MzIKUldReXRaUE0vUHdzUENPdWhRbERjODFmd3NSRlFzeDY5V1YwZVV0SExZbmZVZE81NzRGeElyUFEK",
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDlFQkJFMkMwMzIzNEYyQTgKUldTbzhqUXl3T0s3bmhyc1lDMGorVGNCQjFXcFlDL01KbnBSOEJBTVc2MHRDak9KNXF2WmNNeGMK",
       "endpoints": [
         "https://github.com/AbdallahSaeed0/pitfilx/releases/latest/download/latest.json"
       ],
