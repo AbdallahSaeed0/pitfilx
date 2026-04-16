@@ -3407,21 +3407,76 @@ fn connect_ipc(client_path: &str, child: &mut Child) -> std::io::Result<std::fs:
 }
 
 fn find_mpv_exe(handle: &AppHandle) -> Option<PathBuf> {
+  // Mirror `find_sidecar_exe` in `lib.rs`: Tauri may place `externalBin` outputs either under
+  // `resources/binaries/` or directly under `resources/` (or next to the app exe).
   let target_triple = env!("TAURI_ENV_TARGET_TRIPLE");
-  let expected = format!("mpv-{}.exe", target_triple);
-  if let Ok(d) = handle.path().resource_dir() {
-    let p = d.join("binaries").join(&expected);
-    if p.is_file() {
-      return Some(p);
-    }
-  }
+  let expected_name = format!("mpv-{}.exe", target_triple);
+  let mut deterministic: Vec<PathBuf> = Vec::new();
+
   #[cfg(dev)]
   {
-    let p = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("binaries").join(&expected);
+    let base = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("binaries");
+    deterministic.push(base.join(&expected_name));
+  }
+
+  if let Ok(d) = handle.path().resource_dir() {
+    deterministic.push(d.join("binaries").join(&expected_name));
+    deterministic.push(d.join(&expected_name));
+    deterministic.push(d.join("binaries").join("mpv.exe"));
+  }
+
+  if let Ok(exe) = std::env::current_exe() {
+    if let Some(parent) = exe.parent() {
+      deterministic.push(parent.join("binaries").join(&expected_name));
+      deterministic.push(parent.join(&expected_name));
+      deterministic.push(parent.join("binaries").join("mpv.exe"));
+    }
+  }
+
+  for p in deterministic {
     if p.is_file() {
       return Some(p);
     }
   }
+
+  let mut dirs: Vec<PathBuf> = Vec::new();
+  #[cfg(dev)]
+  {
+    dirs.push(PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("binaries"));
+  }
+  if let Ok(d) = handle.path().resource_dir() {
+    dirs.push(d.clone());
+    dirs.push(d.join("binaries"));
+  }
+  if let Ok(exe) = std::env::current_exe() {
+    if let Some(parent) = exe.parent() {
+      dirs.push(parent.to_path_buf());
+      dirs.push(parent.join("binaries"));
+    }
+  }
+
+  for dir in dirs {
+    let Ok(read) = std::fs::read_dir(&dir) else {
+      continue;
+    };
+    for ent in read.flatten() {
+      let name = ent.file_name();
+      let name = name.to_string_lossy();
+      if name.ends_with(".pdb") {
+        continue;
+      }
+      let is_triple_sidecar = name.starts_with("mpv-") && name.ends_with(".exe");
+      let is_plain = name.eq_ignore_ascii_case("mpv.exe");
+      if !(is_triple_sidecar || is_plain) {
+        continue;
+      }
+      let p = ent.path();
+      if p.is_file() {
+        return Some(p);
+      }
+    }
+  }
+
   None
 }
 

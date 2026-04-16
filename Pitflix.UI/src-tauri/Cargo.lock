@@ -2786,7 +2786,7 @@ dependencies = [
 
 [[package]]
 name = "pitflixui"
-version = "0.3.5"
+version = "0.3.6"
 dependencies = [
  "libloading 0.8.9",
  "serde",
