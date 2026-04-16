@@ -2868,9 +2868,14 @@ fn spawn_mpv_embedded(
     // In packaged builds, prefer the Tauri resources dir where bundle.resources is extracted.
     if config_dir_opt.is_none() {
       if let Ok(resource_dir) = handle.path().resource_dir() {
-        let resource_config_dir = resource_dir.join("mpv-config");
-        if resource_config_dir.exists() {
-          config_dir_opt = Some(resource_config_dir);
+        let direct = resource_dir.join("mpv-config");
+        if direct.exists() {
+          config_dir_opt = Some(direct);
+        } else {
+          let nested = resource_dir.join("binaries").join("mpv-config");
+          if nested.exists() {
+            config_dir_opt = Some(nested);
+          }
         }
       }
     }
