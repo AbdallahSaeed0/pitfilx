@@ -11,6 +11,8 @@ export function formatUpdaterError(err: unknown): string {
       return "The update could not be verified (signature mismatch). Do not install; contact the Pitflix distributor.";
     if (lower.includes("404") || lower.includes("not found"))
       return "No update manifest was found at the configured URL. Ensure latest.json is published for this release.";
+    if (lower.includes("resource id") && lower.includes("invalid"))
+      return "Installer launched, but app relaunch failed on Windows. Close Pitflix manually and open it again.";
     return m;
   }
   return "Update failed.";
@@ -37,7 +39,18 @@ export async function downloadUpdateThenInstall(
 ): Promise<void> {
   await update.download(onEvent);
   await invoke("prepare_update_exit");
-  const { relaunch } = await import("@tauri-apps/plugin-process");
   await update.install();
-  await relaunch();
+  // On Windows, updater install typically exits/restarts outside this process.
+  // For some setups relaunch can throw "The resource id ... is invalid."
+  // Treat that as non-fatal and let user reopen app manually.
+  const { relaunch } = await import("@tauri-apps/plugin-process");
+  try {
+    await relaunch();
+  } catch (e) {
+    const msg = e instanceof Error ? e.message.toLowerCase() : String(e).toLowerCase();
+    if (msg.includes("resource id") && msg.includes("invalid")) {
+      return;
+    }
+    throw e;
+  }
 }
