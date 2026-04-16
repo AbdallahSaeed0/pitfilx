@@ -29,7 +29,10 @@ fn player_debug_log_path(app: Option<&tauri::AppHandle>) -> PathBuf {
   #[cfg(windows)]
   {
     if let Some(base) = std::env::var_os("LOCALAPPDATA") {
-      return PathBuf::from(base).join("Pitflix").join("pitflix-player-debug.log");
+      return PathBuf::from(base)
+        .join("Pitflix")
+        .join("logs")
+        .join("pitflix-player-debug.log");
     }
   }
   #[cfg(not(windows))]

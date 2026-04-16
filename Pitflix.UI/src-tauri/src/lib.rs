@@ -14,6 +14,7 @@ mod player;
 
 use player::{playback_orchestrator, PlayerHost, PlayerHostState};
 use player::tauri_commands::{
+    append_player_debug_log,
     playback_pol_cancel_next_countdown,
     playback_pol_get_snapshot,
     playback_pol_load_episode_context,
@@ -252,6 +253,8 @@ fn cleanup_broken_autostart_registry_entries() {
 #[cfg(not(windows))]
 fn cleanup_broken_autostart_registry_entries() {}
 
+const PITFLIX_BUILD_MARKER: &str = "0.3.6-detached-revert-2";
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let app = tauri::Builder::default()
@@ -359,6 +362,21 @@ pub fn run() {
                 pol.set_app_paths(app.handle());
             }
             app.manage(PlayerHostState(Mutex::new(Some(PlayerHost::new(app.handle().clone())))));
+
+            let exe_path = std::env::current_exe()
+                .map(|p| p.to_string_lossy().to_string())
+                .unwrap_or_else(|e| format!("unknown ({e})"));
+            let version = app.package_info().version.to_string();
+            append_player_debug_log(
+                Some(app.handle()),
+                &format!(
+                    "[pitflix-build] version={PITFLIX_BUILD_MARKER} app_version={version} exe={exe_path}"
+                ),
+            );
+            append_player_debug_log(
+                Some(app.handle()),
+                "[playback-mode] normal_open=DETACHED",
+            );
 
             // Frameless windows (`decorations: false`) often show a generic taskbar/Dock icon unless
             // the window icon is set explicitly. On Windows, prefer the `.ico` used for the exe.

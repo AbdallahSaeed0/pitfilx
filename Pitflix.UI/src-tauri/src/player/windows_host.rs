@@ -137,6 +137,68 @@ struct MpvSession {
   next_correlated_req_id: Arc<AtomicU64>,
 }
 
+#[derive(Default, Clone)]
+struct MpvUiProbe {
+  saw_config_check: bool,
+  uosc_loaded: bool,
+  pitflix_controls_loaded: bool,
+  pitflix_episode_nav_loaded: bool,
+  osc_setting: Option<String>,
+  startup_errors: Vec<String>,
+}
+
+fn inspect_mpv_startup_line(
+  app: &AppHandle,
+  session_id: u64,
+  source: &str,
+  line: &str,
+  probe: &Arc<Mutex<MpvUiProbe>>,
+) {
+  let lower = line.to_ascii_lowercase();
+  let mut changed = false;
+  if let Ok(mut p) = probe.lock() {
+    if line.contains("=== Pitflix Config Check ===") {
+      p.saw_config_check = true;
+      changed = true;
+    }
+    if lower.contains("uosc is loaded") {
+      p.uosc_loaded = true;
+      changed = true;
+    }
+    if lower.contains("pitflix-player-controls.lua") {
+      p.pitflix_controls_loaded = true;
+      changed = true;
+    }
+    if lower.contains("pitflix-episode-nav.lua") {
+      p.pitflix_episode_nav_loaded = true;
+      changed = true;
+    }
+    if line.contains("Setting option 'osc' = '") {
+      if let Some((_, rhs)) = line.split_once("Setting option 'osc' = '") {
+        if let Some((value, _)) = rhs.split_once('\'') {
+          p.osc_setting = Some(value.to_string());
+          changed = true;
+        }
+      }
+    }
+    let startup_error = lower.contains("error")
+      || lower.contains("failed")
+      || lower.contains("not loaded")
+      || lower.contains("can't load")
+      || lower.contains("could not");
+    if startup_error && p.startup_errors.len() < 20 {
+      p.startup_errors.push(line.to_string());
+      changed = true;
+    }
+  }
+  if changed {
+    append_player_debug_log(
+      Some(app),
+      &format!("[mpv-ui-probe-line] session_id={session_id} source={source} line={line}"),
+    );
+  }
+}
+
 fn mpv_pid_alive(pid: u32) -> Option<bool> {
   unsafe {
     let h = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, pid).ok()?;
@@ -221,11 +283,19 @@ impl WindowsPlayerHost {
       return Ok(());
     }
     self.close_with_reason("open");
+    append_player_debug_log(
+      Some(&self.app),
+      "[playback-mode] player2_open route=DETACHED function=WindowsPlayerHost::open -> open_detached_impl",
+    );
     self.open_detached_impl(payload, false)
   }
 
   pub fn open_no_config(&self, payload: PlayerOpen) -> Result<(), String> {
     self.close_with_reason("open_no_config");
+    append_player_debug_log(
+      Some(&self.app),
+      "[playback-mode] player2_open_no_config route=DETACHED function=WindowsPlayerHost::open_no_config -> open_detached_impl",
+    );
     self.open_detached_impl(payload, true)
   }
 
@@ -248,6 +318,7 @@ impl WindowsPlayerHost {
   }
 
   fn open_impl(&self, payload: PlayerOpen, no_config: bool) -> Result<(), String> {
+    log_embedded_path_entered_once(&self.app, "WindowsPlayerHost::open_impl");
 
     let Some(exe) = find_mpv_exe(&self.app) else {
       return Err("Bundled mpv not found. Run npm run bundle:prepare.".to_string());
@@ -463,6 +534,7 @@ impl WindowsPlayerHost {
   }
 
   fn open_embedded_minimal_impl(&self, payload: PlayerOpen, no_config: bool) -> Result<(), String> {
+    log_embedded_path_entered_once(&self.app, "WindowsPlayerHost::open_embedded_minimal_impl");
     let Some(exe) = find_mpv_exe(&self.app) else {
       return Err("Bundled mpv not found. Run npm run bundle:prepare.".to_string());
     };
@@ -677,6 +749,7 @@ impl WindowsPlayerHost {
   /// Dormant: embedded libmpv + GL path. Not used by `open()` or `recover` by default.
   /// Kept for diagnostic commands like `player2_open_embedded_minimal_no_config`.
   fn open_libmpv_impl(&self, payload: PlayerOpen) -> Result<(), String> {
+    log_embedded_path_entered_once(&self.app, "WindowsPlayerHost::open_libmpv_impl");
     let Some(libmpv) = find_libmpv_dll(&self.app) else {
       return Err("Embedded libmpv not available: libmpv-2.dll missing or failed to load".to_string());
     };
@@ -2853,58 +2926,33 @@ fn spawn_mpv_embedded(
 
   add_arg(&mut cmd, &mut args_for_log, "--no-terminal".to_string());
   
-  // Use custom mpv config directory for premium UI (uosc)
-  // Only skip config if explicitly requested via no_config flag
-  if !no_config {
-    let mut config_dir_opt = None;
-    // In dev/debug, prefer source-tree config so live edits are always used.
-    #[cfg(debug_assertions)]
-    {
-      let source_config_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("mpv-config");
-      if source_config_dir.exists() {
-        config_dir_opt = Some(source_config_dir);
-      }
-    }
-    // In packaged builds, prefer the Tauri resources dir where bundle.resources is extracted.
-    if config_dir_opt.is_none() {
-      if let Ok(resource_dir) = handle.path().resource_dir() {
-        let direct = resource_dir.join("mpv-config");
-        if direct.exists() {
-          config_dir_opt = Some(direct);
-        } else {
-          let nested = resource_dir.join("binaries").join("mpv-config");
-          if nested.exists() {
-            config_dir_opt = Some(nested);
-          }
-        }
-      }
-    }
-    if config_dir_opt.is_none() {
-      if let Some(exe_dir) = exe.parent() {
-        let exe_config_dir = exe_dir.join("mpv-config");
-        if exe_config_dir.exists() {
-          config_dir_opt = Some(exe_config_dir);
-        }
-      }
-    }
-    if let Some(config_dir) = config_dir_opt {
-      let config_path = config_dir.to_string_lossy().to_string();
+  // Use custom mpv config directory for premium UI (uosc).
+  let config_dir_opt = resolve_mpv_config_dir(&handle, exe, no_config)?;
+  log_mpv_runtime_chain_once(&handle, exe, config_dir_opt.as_ref());
+  if let Some(config_dir) = config_dir_opt {
+      let config_path = mpv_cli_path(&config_dir);
       // Check for low-cost diagnostic profile via environment variable
       let use_lowcost = std::env::var("PITFLIX_MPV_LOWCOST").is_ok();
       if use_lowcost {
         eprintln!("[mpv-profile] low_cost");
         eprintln!("[Pitflix] Using LOW COST mpv profile for performance testing");
         add_arg(&mut cmd, &mut args_for_log, format!("--config-dir={}", config_path));
+        add_arg(&mut cmd, &mut args_for_log, "--load-scripts=yes".to_string());
+        add_arg(&mut cmd, &mut args_for_log, "--osc=no".to_string());
         add_arg(&mut cmd, &mut args_for_log, "--config=no".to_string());
         add_arg(&mut cmd, &mut args_for_log, format!("--include={}/mpv-lowcost.conf", config_path));
       } else {
         eprintln!("[mpv-profile] normal");
         eprintln!("[Pitflix] Using mpv config directory: {}", config_path);
         add_arg(&mut cmd, &mut args_for_log, format!("--config-dir={}", config_path));
+        add_arg(&mut cmd, &mut args_for_log, "--load-scripts=yes".to_string());
+        add_arg(&mut cmd, &mut args_for_log, "--osc=no".to_string());
+        // Force-load custom UI stack in release runtime to avoid relying on script auto-discovery.
+        add_arg(&mut cmd, &mut args_for_log, format!("--script={}/scripts/uosc/main.lua", config_path));
+        add_arg(&mut cmd, &mut args_for_log, format!("--script={}/scripts/pitflix-episode-nav.lua", config_path));
+        add_arg(&mut cmd, &mut args_for_log, format!("--script={}/scripts/pitflix-player-controls.lua", config_path));
+        add_arg(&mut cmd, &mut args_for_log, format!("--script={}/scripts/pitflix-config-check.lua", config_path));
       }
-    } else {
-      eprintln!("[Pitflix] WARNING: mpv-config directory not found near source tree or executable");
-    }
   } else {
     add_arg(&mut cmd, &mut args_for_log, "--no-config".to_string());
   }
@@ -2967,6 +3015,10 @@ fn spawn_mpv_embedded(
   );
   eprintln!("{}", launch_log);
   append_player_debug_log(Some(&handle), &launch_log);
+  append_player_debug_log(
+    Some(&handle),
+    "[mpv-ui-probe-config] expected osc=no load-scripts=yes scripts=[uosc,pitflix-episode-nav,pitflix-player-controls,pitflix-config-check]",
+  );
 
   // Clone non-'static diagnostics for background threads.
   let media_path_for_diag = payload.path.clone();
@@ -2975,15 +3027,18 @@ fn spawn_mpv_embedded(
 
   let stderr_tail: Arc<Mutex<VecDeque<String>>> = Arc::new(Mutex::new(VecDeque::with_capacity(200)));
   let stdout_tail: Arc<Mutex<VecDeque<String>>> = Arc::new(Mutex::new(VecDeque::with_capacity(200)));
+  let ui_probe: Arc<Mutex<MpvUiProbe>> = Arc::new(Mutex::new(MpvUiProbe::default()));
   let app_shortcut = handle.clone();
   if let Some(stderr) = child.stderr.take() {
     let tail = Arc::clone(&stderr_tail);
     let app_shortcut = app_shortcut.clone();
+    let probe = Arc::clone(&ui_probe);
     thread::spawn(move || {
       let mut r = BufReader::new(stderr);
       let mut line = String::new();
       while r.read_line(&mut line).ok().filter(|n| *n > 0).is_some() {
         let s = line.trim_end().to_string();
+        inspect_mpv_startup_line(&app_shortcut, session_id, "stderr", &s, &probe);
         if s.contains("[PITFLIX_SHORTCUT_STAGE]") {
           if let Some((_, rest)) = s.split_once("[PITFLIX_SHORTCUT_STAGE]") {
             let stage = rest.trim();
@@ -3016,11 +3071,13 @@ fn spawn_mpv_embedded(
   if let Some(stdout) = child.stdout.take() {
     let tail = Arc::clone(&stdout_tail);
     let app_shortcut = app_shortcut.clone();
+    let probe = Arc::clone(&ui_probe);
     thread::spawn(move || {
       let mut r = BufReader::new(stdout);
       let mut line = String::new();
       while r.read_line(&mut line).ok().filter(|n| *n > 0).is_some() {
         let s = line.trim_end().to_string();
+        inspect_mpv_startup_line(&app_shortcut, session_id, "stdout", &s, &probe);
         if s.contains("[PITFLIX_SHORTCUT_STAGE]") {
           if let Some((_, rest)) = s.split_once("[PITFLIX_SHORTCUT_STAGE]") {
             let stage = rest.trim();
@@ -3047,6 +3104,36 @@ fn spawn_mpv_embedded(
           q.push_back(s);
         }
         line.clear();
+      }
+    });
+  }
+  {
+    let app_probe = handle.clone();
+    let probe = Arc::clone(&ui_probe);
+    thread::spawn(move || {
+      thread::sleep(Duration::from_millis(2200));
+      let snapshot = probe
+        .lock()
+        .ok()
+        .map(|p| p.clone())
+        .unwrap_or_default();
+      append_player_debug_log(
+        Some(&app_probe),
+        &format!(
+          "[mpv-ui-probe] session_id={session_id} saw_config_check={} uosc_loaded={} pitflix_player_controls_loaded={} pitflix_episode_nav_loaded={} built_in_osc_setting={} startup_error_count={}",
+          snapshot.saw_config_check,
+          snapshot.uosc_loaded,
+          snapshot.pitflix_controls_loaded,
+          snapshot.pitflix_episode_nav_loaded,
+          snapshot.osc_setting.as_deref().unwrap_or("unknown"),
+          snapshot.startup_errors.len()
+        ),
+      );
+      for err in snapshot.startup_errors.iter() {
+        append_player_debug_log(
+          Some(&app_probe),
+          &format!("[mpv-ui-probe-error] session_id={session_id} {err}"),
+        );
       }
     });
   }
@@ -3563,6 +3650,126 @@ fn find_libmpv_dll(handle: &AppHandle) -> Option<PathBuf> {
 
 static REGISTER_VIDEO_CLASS: Once = Once::new();
 static INPUT_WM_NCHITTEST_LOG: AtomicU64 = AtomicU64::new(0);
+static MPV_RUNTIME_CHAIN_LOGGED: AtomicBool = AtomicBool::new(false);
+static EMBEDDED_PATH_ENTERED_LOGGED: AtomicBool = AtomicBool::new(false);
+
+fn log_embedded_path_entered_once(app: &AppHandle, source: &str) {
+  if EMBEDDED_PATH_ENTERED_LOGGED.swap(true, Ordering::SeqCst) {
+    return;
+  }
+  append_player_debug_log(
+    Some(app),
+    &format!("[playback-mode] embedded_path_entered=true source={source}"),
+  );
+}
+
+fn resolve_mpv_config_dir(handle: &AppHandle, exe: &PathBuf, no_config: bool) -> Result<Option<PathBuf>, String> {
+  if no_config {
+    return Ok(None);
+  }
+
+  #[cfg(not(debug_assertions))]
+  {
+    // Deterministic release/runtime path only.
+    let resource_dir = handle
+      .path()
+      .resource_dir()
+      .map_err(|e| format!("Failed to resolve resource dir: {e}"))?;
+    let config_dir = resource_dir.join("binaries").join("mpv-config");
+    if !config_dir.is_dir() {
+      return Err(format!(
+        "Bundled mpv-config directory is missing at {}",
+        config_dir.to_string_lossy()
+      ));
+    }
+    return Ok(Some(config_dir));
+  }
+
+  #[cfg(debug_assertions)]
+  {
+    let source_config_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("mpv-config");
+    if source_config_dir.is_dir() {
+      return Ok(Some(source_config_dir));
+    }
+    if let Ok(resource_dir) = handle.path().resource_dir() {
+      let nested = resource_dir.join("binaries").join("mpv-config");
+      if nested.is_dir() {
+        return Ok(Some(nested));
+      }
+      let direct = resource_dir.join("mpv-config");
+      if direct.is_dir() {
+        return Ok(Some(direct));
+      }
+    }
+    if let Some(exe_dir) = exe.parent() {
+      let exe_config_dir = exe_dir.join("mpv-config");
+      if exe_config_dir.is_dir() {
+        return Ok(Some(exe_config_dir));
+      }
+    }
+    Ok(None)
+  }
+}
+
+fn log_mpv_runtime_chain_once(handle: &AppHandle, exe: &PathBuf, config_dir: Option<&PathBuf>) {
+  if MPV_RUNTIME_CHAIN_LOGGED.swap(true, Ordering::SeqCst) {
+    return;
+  }
+
+  append_player_debug_log(
+    Some(handle),
+    &format!(
+      "[mpv-runtime-chain] exe={} exists={}",
+      exe.to_string_lossy(),
+      exe.is_file()
+    ),
+  );
+
+  if let Some(dir) = config_dir {
+    append_player_debug_log(
+      Some(handle),
+      &format!(
+        "[mpv-runtime-chain] config_dir={} exists={}",
+        dir.to_string_lossy(),
+        dir.is_dir()
+      ),
+    );
+    let checks = [
+      "mpv.conf",
+      "input.conf",
+      "script-opts/uosc.conf",
+      "scripts/pitflix-player-controls.lua",
+      "scripts/pitflix-episode-nav.lua",
+    ];
+    for rel in checks {
+      let p = dir.join(rel);
+      append_player_debug_log(
+        Some(handle),
+        &format!(
+          "[mpv-runtime-chain] file={} exists={}",
+          p.to_string_lossy(),
+          p.is_file()
+        ),
+      );
+    }
+  } else {
+    append_player_debug_log(Some(handle), "[mpv-runtime-chain] config_dir=<none>");
+  }
+}
+
+fn mpv_cli_path(path: &Path) -> String {
+  let s = path.to_string_lossy().to_string();
+  #[cfg(windows)]
+  {
+    if let Some(rest) = s.strip_prefix(r"\\?\UNC\") {
+      return format!(r"\\{}", rest);
+    }
+    if let Some(rest) = s.strip_prefix(r"\\?\") {
+      return rest.to_string();
+    }
+  }
+  s
+}
 
 fn input_layer_log_nc_hit_test(hwnd: HWND) {
   let n = INPUT_WM_NCHITTEST_LOG.fetch_add(1, Ordering::Relaxed) + 1;

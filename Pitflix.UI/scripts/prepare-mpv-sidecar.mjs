@@ -222,6 +222,12 @@ function copyPortableMpvFolder(mpvExeSrc, destExePath) {
   const mpvConfigSrc = path.join(uiRoot, "src-tauri", "mpv-config");
   const mpvConfigDest = path.join(binDir, "mpv-config");
   if (fs.existsSync(mpvConfigSrc)) {
+    // Prevent stale files from older releases surviving in updater/install payloads.
+    try {
+      fs.rmSync(mpvConfigDest, { recursive: true, force: true });
+    } catch {
+      /* ignore */
+    }
     copyDirectoryRecursive(mpvConfigSrc, mpvConfigDest);
     console.log("prepare-mpv-sidecar: copied mpv-config (uosc + premium settings)");
   }
