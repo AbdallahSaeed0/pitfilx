@@ -8,6 +8,15 @@
     font-family: "Inter", "Segoe UI", sans-serif;
   }
 
+  /* Smooth transitions for interactive elements */
+  button,
+  a,
+  [role="button"] {
+    transition-property: background-color, border-color, color, opacity, transform;
+    transition-duration: 250ms;
+    transition-timing-function: cubic-bezier(0.4, 0, 0.2, 1);
+  }
+
   ::-webkit-scrollbar {
     width: 6px;
     height: 6px;

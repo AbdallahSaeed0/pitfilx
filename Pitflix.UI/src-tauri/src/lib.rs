@@ -10,6 +10,29 @@ use std::{
 
 use tauri::{image::Image, App, Manager, RunEvent};
 
+mod player;
+
+use player::{playback_orchestrator, PlayerHost, PlayerHostState};
+use player::tauri_commands::{
+    playback_pol_cancel_next_countdown,
+    playback_pol_get_snapshot,
+    playback_pol_load_episode_context,
+    playback_pol_persist_progress,
+    playback_pol_resume_hints_for_key,
+    playback_pol_set_extension_skip_intro,
+    playback_pol_set_extension_thumbnails,
+    playback_pol_set_next_autoplay,
+    playback_pol_show_next_countdown,
+    playback_pol_tick_next_countdown,
+    player2_close, player2_debug_log, player2_get_state, player2_list_external_subtitle_files, player2_open,
+    player2_pause, player2_resume, player2_send, player2_set_video_bounds,
+    player2_test_ipc_osd, player2_test_toggle_pause, player2_recover, player2_recover_no_config, player2_get_last_mpv_exit_report,
+    player2_open_detached_no_wid,
+    player2_set_embedded_safe_mode,
+    player2_open_detached,
+    player2_open_embedded_minimal_no_config,
+};
+
 /// Holds the spawned Pitflix.API process so we can kill it on app exit.
 pub struct ApiChild(pub Mutex<Option<Child>>);
 
@@ -33,6 +56,13 @@ impl ApiChild {
 fn prepare_update_exit(app: tauri::AppHandle) {
     log_to_sidecar_file("Pitflix: prepare_update_exit — stopping bundled API before updater install.");
     app.state::<ApiChild>().shutdown();
+    log_to_sidecar_file("Pitflix: prepare_update_exit — stopping player (if running).");
+    if let Ok(mut g) = app.state::<PlayerHostState>().0.lock() {
+        if let Some(host) = g.take() {
+            host.close();
+        }
+    }
+    playback_orchestrator::notify_session_closed(&app);
     #[cfg(windows)]
     std::thread::sleep(Duration::from_millis(450));
 }
@@ -225,7 +255,37 @@ fn cleanup_broken_autostart_registry_entries() {}
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let app = tauri::Builder::default()
-        .invoke_handler(tauri::generate_handler![prepare_update_exit])
+        .invoke_handler(tauri::generate_handler![
+            prepare_update_exit,
+            player2_open,
+            player2_send,
+            player2_pause,
+            player2_resume,
+            player2_close,
+            player2_set_video_bounds,
+            player2_debug_log,
+            player2_get_state,
+            player2_list_external_subtitle_files,
+            player2_test_ipc_osd,
+            player2_test_toggle_pause,
+            player2_recover,
+            player2_recover_no_config,
+            player2_get_last_mpv_exit_report,
+            player2_open_detached_no_wid,
+            player2_set_embedded_safe_mode,
+            player2_open_detached,
+            player2_open_embedded_minimal_no_config,
+            playback_pol_load_episode_context,
+            playback_pol_get_snapshot,
+            playback_pol_resume_hints_for_key,
+            playback_pol_set_next_autoplay,
+            playback_pol_cancel_next_countdown,
+            playback_pol_show_next_countdown,
+            playback_pol_tick_next_countdown,
+            playback_pol_persist_progress,
+            playback_pol_set_extension_thumbnails,
+            playback_pol_set_extension_skip_intro
+        ])
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
@@ -294,6 +354,11 @@ pub fn run() {
                 }
             }
             app.manage(ApiChild(Mutex::new(child)));
+            app.manage(playback_orchestrator::PlaybackOrchestratorState::default());
+            if let Ok(mut pol) = app.state::<playback_orchestrator::PlaybackOrchestratorState>().0.lock() {
+                pol.set_app_paths(app.handle());
+            }
+            app.manage(PlayerHostState(Mutex::new(Some(PlayerHost::new(app.handle().clone())))));
 
             // Frameless windows (`decorations: false`) often show a generic taskbar/Dock icon unless
             // the window icon is set explicitly. On Windows, prefer the `.ico` used for the exe.
@@ -315,6 +380,12 @@ pub fn run() {
     app.run(|app_handle, event| {
         if matches!(event, RunEvent::Exit) {
             app_handle.state::<ApiChild>().shutdown();
+            if let Ok(mut g) = app_handle.state::<PlayerHostState>().0.lock() {
+                if let Some(host) = g.take() {
+                    host.close();
+                }
+            }
+            playback_orchestrator::notify_session_closed(&app_handle);
         }
     });
 }

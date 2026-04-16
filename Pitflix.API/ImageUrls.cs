@@ -216,7 +216,10 @@ public static class ImageUrls
             FileDurationSeconds = h.FileDurationSeconds,
             IsCompleted = h.IsCompleted,
             NextUpLabel = h.NextUpLabel,
-            BackdropLocalPath = ToImageUrl(h.BackdropLocalPath)
+            BackdropLocalPath = ToImageUrl(h.BackdropLocalPath),
+            LibraryMovieId = h.LibraryMovieId,
+            LibraryShowId = h.LibraryShowId,
+            LibraryEpisodeId = h.LibraryEpisodeId
         };
 
     public static LocalSimilarRow MapLocalSimilar(LocalSimilarRow r) =>

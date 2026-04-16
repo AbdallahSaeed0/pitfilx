@@ -7,11 +7,27 @@ import type { WatchHistoryRow } from "../../types/homeSection";
 import { toPosterSrc } from "../../utils/posterSrc";
 import { usePlayback } from "../../hooks/usePlayback";
 import { cn } from "../../utils/cn";
+import type { PlayContext } from "../../hooks/usePlayback";
 
 export function continueLabel(nextUpLabel?: string | null) {
   const m = (nextUpLabel ?? "").match(/S\s*(\d+)\s*E\s*(\d+)/i);
   if (m) return `▶ Continue S${m[1]}E${m[2]}`;
   return "▶ Continue watching";
+}
+
+function continueReturnContext(item: WatchHistoryRow): PlayContext {
+  const returnTo =
+    item.libraryMovieId != null
+      ? { pathname: `/movie/${item.libraryMovieId}` }
+      : item.libraryShowId != null
+        ? { pathname: `/series/${item.libraryShowId}` }
+        : undefined;
+  return {
+    libraryMovieId: item.libraryMovieId ?? undefined,
+    libraryShowId: item.libraryShowId ?? undefined,
+    libraryEpisodeId: item.libraryEpisodeId ?? undefined,
+    returnTo,
+  };
 }
 
 export function ContinueWatchingMenuDialog({
@@ -114,6 +130,8 @@ function SideHistoryThumb({
             item.posterLocalPath ?? null,
             item.mediaType || "Movie",
             item.fileDurationSeconds ?? 0,
+            continueReturnContext(item),
+            item.estimatedSeconds ?? 0,
           )
         }
         className="flex min-w-0 flex-1 gap-2 rounded-md p-0.5 text-left transition hover:bg-black/30"
@@ -289,6 +307,8 @@ export function ContinueWatchingHero({
                   featured.posterLocalPath ?? null,
                   featured.mediaType || "Movie",
                   dur,
+                  continueReturnContext(featured),
+                  featured.estimatedSeconds ?? 0,
                 )
               }
             >

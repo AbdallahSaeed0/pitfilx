@@ -22,6 +22,8 @@ export type PitflixSettings = {
   matchedSeries?: number;
   unmatchedCount?: number;
   mediaPlayerPath?: string;
+  /** When true (default), the desktop app uses bundled mpv instead of external players. */
+  useBuiltinPlayer?: boolean;
   setupComplete?: boolean;
   setupWizardStep?: number | null;
   setupWizardState?: Partial<WizardDraft> | null;
@@ -54,6 +56,7 @@ export const saveSettings = (body: {
   openSubtitlesAppName?: string;
   libraryPaths?: string[];
   mediaPlayerPath?: string;
+  useBuiltinPlayer?: boolean;
 }) => api.post("/settings", body).then((r) => r.data);
 
 export const addLibraryPath = (path: string) =>

@@ -7,3 +7,5 @@ appsettings.local.json
 # Local verify / publish scratch output (not source)
 /artifacts/
 /_verify_build_out/
+
+third_party/libmpv/libmpv-2.dll

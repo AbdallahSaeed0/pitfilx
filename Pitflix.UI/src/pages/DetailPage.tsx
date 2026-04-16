@@ -165,6 +165,7 @@ export function MovieDetailPage() {
                       movie.selectedPosterPath || movie.posterLocalPath || null,
                       "Movie",
                       durationSeconds,
+                      { libraryMovieId: movie.id },
                     )
                   }
                 >
@@ -457,6 +458,12 @@ export function ShowDetailPage() {
                         show.selectedPosterPath || show.posterLocalPath || null,
                         "Series",
                         0,
+                        {
+                          libraryShowId: show.id,
+                          libraryEpisodeId: nextEpisode.id,
+                          season: nextEpisode.season,
+                          episodeNumber: nextEpisode.episodeNumber,
+                        },
                       )
                     }
                   >
@@ -477,6 +484,12 @@ export function ShowDetailPage() {
                       show.selectedPosterPath || show.posterLocalPath || null,
                       "Series",
                       0,
+                      {
+                        libraryShowId: show.id,
+                        libraryEpisodeId: firstEpisode.episode.id,
+                        season: firstEpisode.season,
+                        episodeNumber: firstEpisode.episode.episodeNumber,
+                      },
                     )
                   }
                 >

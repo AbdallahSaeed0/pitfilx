@@ -109,6 +109,8 @@ export function SettingsPage() {
   const [playerFieldTouched, setPlayerFieldTouched] = useState(false);
   const [playerBusy, setPlayerBusy] = useState(false);
   const [playerMessage, setPlayerMessage] = useState<string | null>(null);
+  const [useBuiltinPlayer, setUseBuiltinPlayer] = useState(true);
+  const [builtinBusy, setBuiltinBusy] = useState(false);
   const [removeOpen, setRemoveOpen] = useState(false);
   const [removeBrowseKind, setRemoveBrowseKind] = useState<null | "movies" | "series">(null);
   const [pendingRemove, setPendingRemove] = useState<RemoveTitlePick | null>(null);
@@ -140,6 +142,12 @@ export function SettingsPage() {
     if (!data || playerFieldTouched) return;
     setMediaPlayerPath(String((data as { mediaPlayerPath?: string }).mediaPlayerPath ?? ""));
   }, [data, playerFieldTouched]);
+
+  useEffect(() => {
+    if (!data) return;
+    const u = (data as { useBuiltinPlayer?: boolean }).useBuiltinPlayer;
+    setUseBuiltinPlayer(u !== false);
+  }, [data]);
 
   useEffect(() => {
     if (!removeOpen) {
@@ -731,6 +739,35 @@ export function SettingsPage() {
         </div>
 
         <div className={cn(settingsTab !== "playback" && "hidden", "space-y-3")}>
+          {isTauri() ? (
+            <section
+              id="settings-builtin-player"
+              className="rounded-xl border border-white/8 bg-pitflix-surface/35 p-4 shadow-md shadow-black/20"
+            >
+              <h2 className="text-sm font-semibold text-white">Built-in player</h2>
+              <p className="mt-1 text-[10px] text-pitflix-subtle">
+                Uses bundled mpv in the desktop app. Turn off to launch an external player (VLC, mpv, etc.) via Play.
+              </p>
+              <label className="mt-3 flex cursor-pointer items-center gap-2 text-xs text-white">
+                <input
+                  type="checkbox"
+                  checked={useBuiltinPlayer}
+                  disabled={builtinBusy}
+                  onChange={(e) => {
+                    const next = e.target.checked;
+                    setUseBuiltinPlayer(next);
+                    setBuiltinBusy(true);
+                    void saveSettings({ useBuiltinPlayer: next })
+                      .then(() => refetchSettings())
+                      .catch(() => setUseBuiltinPlayer(!next))
+                      .finally(() => setBuiltinBusy(false));
+                  }}
+                  className="h-4 w-4 rounded border-pitflix-card"
+                />
+                Use bundled Pitflix player (mpv)
+              </label>
+            </section>
+          ) : null}
           <section
             id="settings-playback"
             className="rounded-xl border border-white/8 bg-pitflix-surface/35 p-4 shadow-md shadow-black/20"

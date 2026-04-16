@@ -375,6 +375,12 @@ export function SeasonDetailPage() {
                           show.selectedPosterPath || show.posterLocalPath || null,
                           "Series",
                           0,
+                          {
+                            libraryShowId: libraryId,
+                            libraryEpisodeId: ep.id,
+                            season,
+                            episodeNumber: ep.episodeNumber,
+                          },
                         )
                       }
                       className="rounded-xl bg-pitflix-primary px-4 py-2 text-xs font-semibold text-white shadow-md transition-all hover:bg-pitflix-light"

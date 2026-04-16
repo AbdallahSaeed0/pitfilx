@@ -1270,11 +1270,18 @@ app.MapGet("/api/history", async (LibraryRepository repo, int limit = 10, Cancel
             var ep = await repo.TryGetEpisodeByFilePathAsync(h.FilePath, ct).ConfigureAwait(false);
             if (ep != null)
             {
-                var showEps = await repo.GetEpisodesForShowAsync(ep.ShowId, ct).ConfigureAwait(false);
-                var next = LibraryRepository.GetNextEpisodeForShow(showEps);
-                if (next != null)
-                    h.NextUpLabel = $"S{next.Season} E{next.EpisodeNumber} — Next up";
+                h.LibraryShowId = ep.ShowId;
+                h.LibraryEpisodeId = ep.Id;
+                // Continue Watching label must reflect the currently tracked history episode,
+                // not a show-level "next episode" guess that can drift to S1E1.
+                h.NextUpLabel = $"S{ep.Season} E{ep.EpisodeNumber}";
             }
+        }
+        else if (string.Equals(h.MediaType, "Movie", StringComparison.OrdinalIgnoreCase))
+        {
+            var movie = await repo.TryGetMovieByFilePathAsync(h.FilePath, ct).ConfigureAwait(false);
+            if (movie != null)
+                h.LibraryMovieId = movie.Id;
         }
 
         var backdropPath = await repo.TryGetBackdropPathForPlayedFileAsync(h.FilePath, h.MediaType, ct)
@@ -1374,8 +1381,134 @@ app.MapPost("/api/history/{id:int}/stopped", async (int id, StoppedBody body, Li
 
     var started = h.StartedAt ?? h.OpenedAt;
     var sessionSeconds = Math.Max(0, (int)(stopped - started).TotalSeconds);
-    await repo.UpdateWatchHistoryAfterReturnAsync(id, stopped, sessionSeconds, ct).ConfigureAwait(false);
+
+    if (body.PositionSeconds is >= 0 and var pos)
+    {
+        await repo.FinalizeWatchHistoryStoppedWithPositionAsync(id, stopped, pos, ct).ConfigureAwait(false);
+    }
+    else if (sessionSeconds > 0)
+    {
+        await repo.UpdateWatchHistoryAfterReturnAsync(id, stopped, sessionSeconds, ct).ConfigureAwait(false);
+    }
+    else
+    {
+        var hTracked = await db.WatchHistories.FirstOrDefaultAsync(x => x.Id == id, ct).ConfigureAwait(false);
+        if (hTracked == null)
+            return Results.NotFound();
+        hTracked.StoppedAt = stopped;
+        await db.SaveChangesAsync(ct).ConfigureAwait(false);
+    }
+
     return Results.Ok();
+});
+
+app.MapPost("/api/history/{id:int}/progress", async (int id, HistoryProgressBody body, LibraryRepository repo, CancellationToken ct) =>
+{
+    if (body.PositionSeconds < 0)
+        return Results.BadRequest(new { error = "Invalid position." });
+
+    await repo.UpdateWatchHistoryProgressAsync(id, body.PositionSeconds, body.DurationSeconds, body.MarkWatching ?? true,
+        ct).ConfigureAwait(false);
+    return Results.Ok();
+});
+
+app.MapGet("/api/series/{id:int}/next-episode",
+    async (int id, int? currentEpisodeId, LibraryRepository repo, CancellationToken ct) =>
+    {
+        var show = await repo.GetShowByIdAsync(id, ct).ConfigureAwait(false);
+        if (show == null)
+            return Results.NotFound();
+
+        var eps = await repo.GetEpisodesForShowAsync(show.Id, ct).ConfigureAwait(false);
+        Episode? next;
+        if (currentEpisodeId is { } cid)
+            next = LibraryRepository.GetNextEpisodeInOrder(eps, cid);
+        else
+            next = LibraryRepository.GetNextEpisodeForShow(eps);
+        if (next == null)
+            return Results.Json(new { next = (object?)null }, jsonSerializerOptions);
+
+        return Results.Json(new
+        {
+            next = new
+            {
+                id = next.Id,
+                filePath = next.FilePath,
+                season = next.Season,
+                episodeNumber = next.EpisodeNumber,
+                title = next.Title,
+            }
+        }, jsonSerializerOptions);
+    });
+
+app.MapGet("/api/series/{id:int}/previous-episode", async (int id, int currentEpisodeId, LibraryRepository repo,
+        CancellationToken ct) =>
+{
+    var show = await repo.GetShowByIdAsync(id, ct).ConfigureAwait(false);
+    if (show == null)
+        return Results.NotFound();
+
+    var eps = await repo.GetEpisodesForShowAsync(show.Id, ct).ConfigureAwait(false);
+    var prev = LibraryRepository.GetPreviousEpisodeInOrder(eps, currentEpisodeId);
+    if (prev == null)
+        return Results.Json(new { previous = (object?)null }, jsonSerializerOptions);
+
+    return Results.Json(new
+    {
+        previous = new
+        {
+            id = prev.Id,
+            filePath = prev.FilePath,
+            season = prev.Season,
+            episodeNumber = prev.EpisodeNumber,
+            title = prev.Title,
+        }
+    }, jsonSerializerOptions);
+});
+
+app.MapGet("/api/playback/resolve-by-path", async (string filePath, LibraryRepository repo, LibraryContext db, CancellationToken ct) =>
+{
+    if (string.IsNullOrWhiteSpace(filePath))
+        return Results.BadRequest(new { error = "filePath is required." });
+
+    var ep = await repo.TryGetEpisodeByFilePathAsync(filePath, ct).ConfigureAwait(false);
+    if (ep != null)
+    {
+        var show = await db.Shows.AsNoTracking()
+            .Where(s => s.Id == ep.ShowId)
+            .Select(s => new { s.Id, s.Title, PosterPath = s.SelectedPosterPath ?? s.PosterLocalPath })
+            .FirstOrDefaultAsync(ct)
+            .ConfigureAwait(false);
+        var title = !string.IsNullOrWhiteSpace(ep.Title)
+            ? ep.Title!
+            : $"{show?.Title ?? "Series"} · S{ep.Season}E{ep.EpisodeNumber}";
+        return Results.Json(new
+        {
+            mediaType = "Series",
+            filePath = ep.FilePath,
+            title,
+            posterPath = show?.PosterPath,
+            libraryShowId = ep.ShowId,
+            libraryEpisodeId = ep.Id,
+            season = ep.Season,
+            episodeNumber = ep.EpisodeNumber,
+        }, jsonSerializerOptions);
+    }
+
+    var movie = await repo.TryGetMovieByFilePathAsync(filePath, ct).ConfigureAwait(false);
+    if (movie != null)
+    {
+        return Results.Json(new
+        {
+            mediaType = "Movie",
+            filePath = movie.FilePath,
+            title = movie.Title,
+            posterPath = movie.SelectedPosterPath ?? movie.PosterLocalPath,
+            libraryMovieId = movie.Id,
+        }, jsonSerializerOptions);
+    }
+
+    return Results.NotFound(new { error = "No library media found for file path." });
 });
 
 app.MapDelete("/api/history/{id:int}", async (int id, LibraryRepository repo, CancellationToken ct) =>
@@ -1840,6 +1973,9 @@ app.MapGet("/api/settings", async (LibraryRepository repo, LibraryContext db, Ca
     var unmatchedCount = await db.ScanLogs.AsNoTracking().CountAsync(x => x.Status == "Unmatched", ct)
         .ConfigureAwait(false);
     var mediaPlayerPath = await repo.GetSettingAsync("MediaPlayerPath", ct).ConfigureAwait(false) ?? "";
+    var useBuiltinRaw = await repo.GetSettingAsync("UseBuiltinPlayer", ct).ConfigureAwait(false);
+    var useBuiltinPlayer = string.IsNullOrWhiteSpace(useBuiltinRaw) ||
+                           string.Equals(useBuiltinRaw, "true", StringComparison.OrdinalIgnoreCase);
 
     var setupRaw = await repo.GetSettingAsync("SetupComplete", ct).ConfigureAwait(false);
     var setupComplete = string.Equals(setupRaw, "true", StringComparison.OrdinalIgnoreCase);
@@ -1871,6 +2007,7 @@ app.MapGet("/api/settings", async (LibraryRepository repo, LibraryContext db, Ca
         matchedSeries,
         unmatchedCount,
         mediaPlayerPath,
+        useBuiltinPlayer,
         setupComplete,
         setupWizardStep,
         setupWizardState
@@ -1907,6 +2044,10 @@ app.MapPost("/api/settings", async (SettingsBody body, LibraryRepository repo, C
 
     if (body.MediaPlayerPath != null)
         await repo.SaveSettingAsync("MediaPlayerPath", body.MediaPlayerPath.Trim(), ct).ConfigureAwait(false);
+
+    if (body.UseBuiltinPlayer.HasValue)
+        await repo.SaveSettingAsync("UseBuiltinPlayer", body.UseBuiltinPlayer.Value ? "true" : "false", ct)
+            .ConfigureAwait(false);
 
     AppSettings.ResolveTmdbApiKeyFromSources(repo);
     AppSettings.ResolveOpenSubtitlesFromSources(repo);
@@ -3977,13 +4118,14 @@ internal sealed record UnmatchedSearchBody(string? Query, string? MediaType);
 internal sealed record ScanStartBody(string[]? Folders);
 internal sealed record HistoryAddBody(string? FilePath, string? Title, string? PosterPath, string? MediaType,
     int DurationSeconds);
-internal sealed record StoppedBody(DateTime StoppedAt);
+internal sealed record StoppedBody(DateTime StoppedAt, int? PositionSeconds);
+internal sealed record HistoryProgressBody(int PositionSeconds, int? DurationSeconds, bool? MarkWatching);
 internal sealed record HistoryDismissBody(bool? MarkCompleted);
 internal sealed record CreateListBody(string? Name);
 internal sealed record AddListItemBody(int TmdbId, string? MediaType);
 internal sealed record ImageSelectBody(int TmdbId, string? MediaType, string? PosterPath, string? BackdropPath);
 internal sealed record SettingsBody(string? TmdbApiKey, string? OpenSubtitlesApiKey, string? OpenSubtitlesAppName,
-    List<string>? LibraryPaths, string? MediaPlayerPath);
+    List<string>? LibraryPaths, string? MediaPlayerPath, bool? UseBuiltinPlayer);
 
 internal sealed record WizardProgressBody(int Step, string? StateJson);
 

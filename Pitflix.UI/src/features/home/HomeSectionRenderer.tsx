@@ -276,8 +276,8 @@ export function HomeSectionRenderer({
   if (section.layoutStyle === "grid") {
     return shell(
       <div className="grid grid-cols-2 gap-4 md:grid-cols-4">
-        {cards.map((card) => (
-          <div key={`${section.id}-${card.id}-${card.tmdbMediaType}`} className="relative">
+        {cards.map((card, i) => (
+          <div key={`${section.id}-${i}-${card.id}-${card.tmdbMediaType}`} className="relative">
             {section.metadata?.showRating !== false ? (
               <span className="absolute left-2 top-2 z-20 rounded-md bg-black/80 px-2 py-0.5 text-xs font-bold text-amber-300 ring-1 ring-amber-500/40">
                 ★ {formatRating(card.voteAverage)}
@@ -300,9 +300,9 @@ export function HomeSectionRenderer({
     return shell(
       <HorizontalScrollRow hideHeader className="mb-0" contentClassName="gap-3">
         <>
-          {cards.map((card) => (
+          {cards.map((card, i) => (
             <LandscapeHomeCard
-              key={`${section.id}-${card.id}`}
+              key={`${section.id}-${i}-${card.id}`}
               item={card}
               mediaType={mediaTypeOf(card)}
             />
@@ -318,7 +318,7 @@ export function HomeSectionRenderer({
         <>
           {cards.map((card, i) => (
             <PosterCard
-              key={`${section.id}-${card.id}`}
+              key={`${section.id}-${i}-${card.id}`}
               item={card}
               mediaType={mediaTypeOf(card)}
               rank={i + 1}
@@ -335,9 +335,9 @@ export function HomeSectionRenderer({
   return shell(
     <HorizontalScrollRow hideHeader className="mb-0" contentClassName="gap-4">
       <>
-        {cards.map((card) => (
+        {cards.map((card, i) => (
           <PosterCard
-            key={`${section.id}-${card.id}-${card.tmdbMediaType}`}
+            key={`${section.id}-${i}-${card.id}-${card.tmdbMediaType}`}
             item={card}
             mediaType={mediaTypeOf(card)}
             className={section.cardVariant === "compact" ? "!w-36" : "!w-44"}

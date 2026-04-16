@@ -482,6 +482,34 @@ public sealed class LibraryRepository
             !string.Equals(e.WatchStatus, WatchStatuses.Completed, StringComparison.OrdinalIgnoreCase));
     }
 
+    /// <summary>Episode immediately before the given episode in season/number order, or null.</summary>
+    public static Episode? GetPreviousEpisodeInOrder(IReadOnlyList<Episode> episodes, int currentEpisodeId)
+    {
+        if (episodes.Count == 0)
+            return null;
+
+        var ordered = episodes.OrderBy(e => e.Season).ThenBy(e => e.EpisodeNumber).ToList();
+        var idx = ordered.FindIndex(e => e.Id == currentEpisodeId);
+        if (idx <= 0)
+            return null;
+
+        return ordered[idx - 1];
+    }
+
+    /// <summary>Episode immediately after the given episode in season/number order, or null.</summary>
+    public static Episode? GetNextEpisodeInOrder(IReadOnlyList<Episode> episodes, int currentEpisodeId)
+    {
+        if (episodes.Count == 0)
+            return null;
+
+        var ordered = episodes.OrderBy(e => e.Season).ThenBy(e => e.EpisodeNumber).ToList();
+        var idx = ordered.FindIndex(e => e.Id == currentEpisodeId);
+        if (idx < 0 || idx >= ordered.Count - 1)
+            return null;
+
+        return ordered[idx + 1];
+    }
+
     public async Task<ScanLog> SaveScanLogAsync(ScanLog log, CancellationToken cancellationToken = default)
     {
         var existing = await _db.ScanLogs.FirstOrDefaultAsync(x => x.FilePath == log.FilePath, cancellationToken)
@@ -580,48 +608,69 @@ public sealed class LibraryRepository
             .OrderByDescending(h => h.OpenedAt)
             .Take(Math.Max(count * 5, 50))
             .ToListAsync(cancellationToken).ConfigureAwait(false);
-
-        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-        var list = new List<WatchHistory>();
-        foreach (var h in batch)
-        {
-            if (h.IsCompleted)
-                continue;
-            if (!seen.Add(h.FilePath))
-                continue;
-            list.Add(h);
-            if (list.Count >= count)
-                break;
-        }
-
-        return list;
+        return CollapseRecentHistoryRows(batch, count);
     }
 
     public async Task<IReadOnlyList<WatchHistory>> GetRecentHistoryAsync(int count = 10,
         CancellationToken cancellationToken = default)
     {
-        // In-memory dedupe: SQLite + GroupBy(...).First() translation has been flaky; this matches
-        // GetRecentHistoryDistinctByFileAsync and always returns the latest row per file path.
+        // In-memory dedupe: SQLite + GroupBy(...).First() translation has been flaky.
+        // Keep latest row per file path but carry forward max saved resume so reopening never regresses to 0
+        // when a fresh "opened" row is created before progress is persisted.
         var batch = await _db.WatchHistories.AsNoTracking()
             .OrderByDescending(h => h.OpenedAt)
             .Take(Math.Max(count * 10, 100))
             .ToListAsync(cancellationToken).ConfigureAwait(false);
+        return CollapseRecentHistoryRows(batch, count);
+    }
 
-        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-        var list = new List<WatchHistory>();
+    private static List<WatchHistory> CollapseRecentHistoryRows(IEnumerable<WatchHistory> batch, int count)
+    {
+        var perFile = new Dictionary<string, WatchHistory>(StringComparer.OrdinalIgnoreCase);
         foreach (var h in batch)
         {
             if (h.IsCompleted)
                 continue;
-            if (!seen.Add(h.FilePath))
+
+            var key = NormalizeHistoryPath(h.FilePath);
+            if (string.IsNullOrWhiteSpace(key))
+                key = $"__history_row_{h.Id}";
+
+            if (!perFile.TryGetValue(key, out var current))
+            {
+                perFile[key] = h;
                 continue;
-            list.Add(h);
-            if (list.Count >= count)
-                break;
+            }
+
+            if (h.OpenedAt > current.OpenedAt)
+            {
+                h.EstimatedSeconds = Math.Max(h.EstimatedSeconds, current.EstimatedSeconds);
+                h.FileDurationSeconds = Math.Max(h.FileDurationSeconds, current.FileDurationSeconds);
+                if (!h.StartedAt.HasValue || (current.StartedAt.HasValue && current.StartedAt > h.StartedAt))
+                    h.StartedAt = current.StartedAt;
+                if (!h.StoppedAt.HasValue || (current.StoppedAt.HasValue && current.StoppedAt > h.StoppedAt))
+                    h.StoppedAt = current.StoppedAt;
+                perFile[key] = h;
+            }
+            else
+            {
+                current.EstimatedSeconds = Math.Max(current.EstimatedSeconds, h.EstimatedSeconds);
+                current.FileDurationSeconds = Math.Max(current.FileDurationSeconds, h.FileDurationSeconds);
+                if (!current.StartedAt.HasValue || (h.StartedAt.HasValue && h.StartedAt > current.StartedAt))
+                    current.StartedAt = h.StartedAt;
+                if (!current.StoppedAt.HasValue || (h.StoppedAt.HasValue && h.StoppedAt > current.StoppedAt))
+                    current.StoppedAt = h.StoppedAt;
+            }
         }
 
-        return list;
+        return perFile.Values
+            .OrderByDescending(h => h.OpenedAt)
+            .Take(Math.Max(1, count))
+            .ToList();
     }
+
+    private static string NormalizeHistoryPath(string? path) =>
+        (path ?? "").Trim().Replace('\\', '/').ToLowerInvariant();
 
     /// <summary>
     /// All in-progress series: at least one episode started, not fully completed, next episode exists in library.
@@ -877,6 +926,109 @@ public sealed class LibraryRepository
             h.IsCompleted = true;
 
         await _db.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
+
+        if (h.IsCompleted)
+            await ApplyCompletedFromHistoryAsync(h, cancellationToken).ConfigureAwait(false);
+    }
+
+    /// <summary>Built-in player: authoritative position/duration; updates library watch state.</summary>
+    public async Task UpdateWatchHistoryProgressAsync(int historyId, int positionSeconds, int? durationSeconds,
+        bool markWatching, CancellationToken cancellationToken = default)
+    {
+        if (positionSeconds < 0)
+            return;
+
+        var h = await _db.WatchHistories.FirstOrDefaultAsync(x => x.Id == historyId, cancellationToken)
+            .ConfigureAwait(false);
+        if (h == null)
+            return;
+
+        if (durationSeconds is int ds && ds > 0)
+            h.FileDurationSeconds = Math.Max(h.FileDurationSeconds, ds);
+
+        h.EstimatedSeconds = Math.Max(h.EstimatedSeconds, positionSeconds);
+
+        var dur = h.FileDurationSeconds;
+        var nearEnd = dur > 0 && h.EstimatedSeconds >= (int)(dur * 0.9);
+        if (nearEnd)
+            h.IsCompleted = true;
+
+        if (markWatching && positionSeconds > 60 && !nearEnd)
+            await ApplyWatchingFromHistoryAsync(h, cancellationToken).ConfigureAwait(false);
+
+        await _db.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
+
+        if (nearEnd)
+            await ApplyCompletedFromHistoryAsync(h, cancellationToken).ConfigureAwait(false);
+    }
+
+    private async Task ApplyWatchingFromHistoryAsync(WatchHistory h,
+        CancellationToken cancellationToken = default)
+    {
+        if (string.Equals(h.MediaType, "Movie", StringComparison.OrdinalIgnoreCase))
+        {
+            var lite = await TryGetMovieByFilePathAsync(h.FilePath, cancellationToken).ConfigureAwait(false);
+            if (lite == null)
+                return;
+            var m = await _db.Movies.FirstOrDefaultAsync(x => x.Id == lite.Id, cancellationToken)
+                .ConfigureAwait(false);
+            if (m == null)
+                return;
+            if (m.WatchStatus == WatchStatuses.Unwatched)
+            {
+                m.WatchStatus = WatchStatuses.Watching;
+                m.CompletedAt = null;
+                await _db.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
+            }
+        }
+        else if (string.Equals(h.MediaType, "Series", StringComparison.OrdinalIgnoreCase))
+        {
+            var lite = await TryGetEpisodeByFilePathAsync(h.FilePath, cancellationToken).ConfigureAwait(false);
+            if (lite == null)
+                return;
+            if (lite.WatchStatus == WatchStatuses.Unwatched)
+                await UpdateEpisodeWatchStatusAsync(lite.Id, WatchStatuses.Watching, cancellationToken)
+                    .ConfigureAwait(false);
+        }
+    }
+
+    /// <summary>End of built-in session: record stop time and final playback position (seconds).</summary>
+    public async Task FinalizeWatchHistoryStoppedWithPositionAsync(int historyId, DateTime stoppedAtUtc,
+        int positionSeconds, CancellationToken cancellationToken = default)
+    {
+        var h = await _db.WatchHistories.FirstOrDefaultAsync(x => x.Id == historyId, cancellationToken)
+            .ConfigureAwait(false);
+        if (h == null)
+            return;
+
+        h.StoppedAt = stoppedAtUtc;
+        h.EstimatedSeconds = Math.Max(h.EstimatedSeconds, positionSeconds);
+        if (h.FileDurationSeconds > 0 && h.EstimatedSeconds >= h.FileDurationSeconds * 0.9)
+            h.IsCompleted = true;
+
+        await _db.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
+
+        if (h.IsCompleted)
+            await ApplyCompletedFromHistoryAsync(h, cancellationToken).ConfigureAwait(false);
+    }
+
+    public async Task ApplyCompletedFromHistoryAsync(WatchHistory h,
+        CancellationToken cancellationToken = default)
+    {
+        if (string.Equals(h.MediaType, "Movie", StringComparison.OrdinalIgnoreCase))
+        {
+            var lite = await TryGetMovieByFilePathAsync(h.FilePath, cancellationToken).ConfigureAwait(false);
+            if (lite != null)
+                await UpdateMovieWatchStatusAsync(lite.Id, WatchStatuses.Completed, cancellationToken)
+                    .ConfigureAwait(false);
+        }
+        else if (string.Equals(h.MediaType, "Series", StringComparison.OrdinalIgnoreCase))
+        {
+            var lite = await TryGetEpisodeByFilePathAsync(h.FilePath, cancellationToken).ConfigureAwait(false);
+            if (lite != null)
+                await UpdateEpisodeWatchStatusAsync(lite.Id, WatchStatuses.Completed, cancellationToken)
+                    .ConfigureAwait(false);
+        }
     }
 
     /// <summary>SQLite ALTER for existing DBs created before resume columns existed.</summary>

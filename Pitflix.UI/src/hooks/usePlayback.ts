@@ -1,7 +1,12 @@
+import { isTauri } from "@tauri-apps/api/core";
 import { useQueryClient } from "@tanstack/react-query";
 import { useCallback, useEffect } from "react";
+import { useLocation, useNavigate } from "react-router-dom";
 import api from "../api/client";
 import { addHistory, getHistory, historyStopped } from "../api/history";
+import { getSettings } from "../api/settings";
+import type { PlaybackLaunchState } from "../types/playback";
+import type { PlayerReturnTo } from "../types/playback";
 
 let currentHistoryId: number | null = null;
 let focusListener: (() => void) | null = null;
@@ -28,8 +33,19 @@ function findResumeSeconds(historyRows: { filePath: string; estimatedSeconds?: n
   return best;
 }
 
+export type PlayContext = {
+  libraryMovieId?: number;
+  libraryShowId?: number;
+  libraryEpisodeId?: number;
+  season?: number;
+  episodeNumber?: number;
+  returnTo?: PlayerReturnTo;
+};
+
 export function usePlayback() {
   const qc = useQueryClient();
+  const navigate = useNavigate();
+  const location = useLocation();
 
   useEffect(() => () => clearPlaybackFocusListener(), []);
 
@@ -40,12 +56,16 @@ export function usePlayback() {
       posterPath: string | null | undefined,
       mediaType: string,
       durationSeconds: number,
+      context: PlayContext = {},
+      preferredResumeSeconds?: number,
     ) => {
       clearPlaybackFocusListener();
       currentHistoryId = null;
 
       const historyRows = (await getHistory(200)) as { filePath: string; estimatedSeconds?: number }[];
-      const resume = findResumeSeconds(historyRows, filePath);
+      const inferredResume = findResumeSeconds(historyRows, filePath);
+      const preferred = Number.isFinite(preferredResumeSeconds ?? NaN) ? Math.max(0, preferredResumeSeconds ?? 0) : 0;
+      const resume = Math.max(preferred, inferredResume);
       const startSeconds = resume > 60 ? resume : undefined;
 
       const { id } = (await addHistory({
@@ -57,6 +77,38 @@ export function usePlayback() {
       })) as { id: number };
 
       currentHistoryId = id;
+
+      const settings = await getSettings();
+      const useBuiltin = isTauri() && settings.useBuiltinPlayer !== false;
+
+      if (useBuiltin) {
+        const state: PlaybackLaunchState = {
+          historyId: id,
+          filePath,
+          title,
+          posterPath: posterPath ?? null,
+          mediaType,
+          durationSeconds,
+          resumeSeconds: startSeconds,
+          libraryMovieId: context.libraryMovieId,
+          libraryShowId: context.libraryShowId,
+          libraryEpisodeId: context.libraryEpisodeId,
+          season: context.season,
+          episodeNumber: context.episodeNumber,
+          returnTo: context.returnTo ?? {
+            pathname: location.pathname,
+            search: location.search || undefined,
+            hash: location.hash || undefined,
+            scrollY: typeof window !== "undefined" ? window.scrollY : undefined,
+          },
+        };
+        navigate("/player", { state });
+        void qc.invalidateQueries({ queryKey: ["home-history"] });
+        void qc.invalidateQueries({ queryKey: ["home-featured-fallback"] });
+        void qc.invalidateQueries({ predicate: (q) => q.queryKey[0] === "home-section" });
+        void qc.invalidateQueries({ queryKey: ["history"] });
+        return;
+      }
 
       await api.post("/play", {
         filePath,
@@ -90,7 +142,7 @@ export function usePlayback() {
       void qc.invalidateQueries({ predicate: (q) => q.queryKey[0] === "home-section" });
       void qc.invalidateQueries({ queryKey: ["history"] });
     },
-    [qc],
+    [qc, navigate, location.pathname, location.search, location.hash],
   );
 
   return { play };

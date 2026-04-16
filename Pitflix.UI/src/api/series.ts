@@ -29,3 +29,45 @@ export type ShowDetailResponse = {
 
 export const getShowSeason = (libraryShowId: number, seasonNumber: number) =>
   api.get(`/series/${libraryShowId}/season/${seasonNumber}`).then((r) => r.data);
+
+export type NextLibraryEpisode = {
+  id: number;
+  filePath: string;
+  season: number;
+  episodeNumber: number;
+  title: string | null;
+};
+
+/** When `currentEpisodeId` is set, returns the next episode in airing order after that episode (player prev/next). */
+export const getNextLibraryEpisode = (libraryShowId: number, currentEpisodeId?: number | null) =>
+  api
+    .get<{ next: NextLibraryEpisode | null }>(`/series/${libraryShowId}/next-episode`, {
+      params: currentEpisodeId != null ? { currentEpisodeId } : {},
+    })
+    .then((r) => r.data);
+
+export const getPreviousLibraryEpisode = (libraryShowId: number, currentEpisodeId: number) =>
+  api
+    .get<{ previous: NextLibraryEpisode | null }>(`/series/${libraryShowId}/previous-episode`, {
+      params: { currentEpisodeId },
+    })
+    .then((r) => r.data);
+
+export type ResolvedPlaybackByPath = {
+  mediaType: "Series" | "Movie";
+  filePath: string;
+  title: string;
+  posterPath?: string | null;
+  libraryMovieId?: number;
+  libraryShowId?: number;
+  libraryEpisodeId?: number;
+  season?: number;
+  episodeNumber?: number;
+};
+
+export const resolvePlaybackByPath = (filePath: string) =>
+  api
+    .get<ResolvedPlaybackByPath>("/playback/resolve-by-path", {
+      params: { filePath },
+    })
+    .then((r) => r.data);

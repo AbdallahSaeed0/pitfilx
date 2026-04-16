@@ -1,11 +1,11 @@
 {
   "name": "pitflixui",
   "private": true,
-  "version": "0.3.3",
+  "version": "0.3.4",
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "bundle:prepare": "node scripts/prepare-api-sidecar.mjs",
+    "bundle:prepare": "node scripts/prepare-api-sidecar.mjs && node scripts/prepare-mpv-sidecar.mjs",
     "build": "tsc && vite build",
     "preview": "vite preview",
     "icons:prepare": "node scripts/prepare-tauri-icons.mjs",
@@ -41,6 +41,7 @@
     "@types/react": "^19.1.8",
     "@types/react-dom": "^19.1.6",
     "@vitejs/plugin-react": "^4.6.0",
+    "7zip-bin": "^5.2.0",
     "autoprefixer": "^10.4.27",
     "postcss": "^8.5.8",
     "sharp": "^0.34.5",

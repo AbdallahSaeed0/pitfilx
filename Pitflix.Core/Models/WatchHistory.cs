@@ -35,4 +35,16 @@ public class WatchHistory
     /// <summary>API-only: local backdrop path for hero UI (not stored).</summary>
     [NotMapped]
     public string? BackdropLocalPath { get; set; }
+
+    /// <summary>API-only: resolved library movie id for this history file (not stored).</summary>
+    [NotMapped]
+    public int? LibraryMovieId { get; set; }
+
+    /// <summary>API-only: resolved library show id for this history file (not stored).</summary>
+    [NotMapped]
+    public int? LibraryShowId { get; set; }
+
+    /// <summary>API-only: resolved library episode id for this history file (not stored).</summary>
+    [NotMapped]
+    public int? LibraryEpisodeId { get; set; }
 }

@@ -14,8 +14,6 @@ f:\PitFilx-app\Pitflix.API\bin\BuildCheck\Pitflix.Core.deps.json
 f:\PitFilx-app\Pitflix.API\bin\BuildCheck\Pitflix.Core.runtimeconfig.json
 f:\PitFilx-app\Pitflix.API\bin\BuildCheck\Pitflix.Core.dll
 f:\PitFilx-app\Pitflix.API\bin\BuildCheck\Pitflix.Core.pdb
-f:\PitFilx-app\Pitflix.Core\obj\Release\net8.0\Pitflix.Core.sourcelink.json
-f:\PitFilx-app\Pitflix.Core\obj\Release\net8.0\Pitflix.Core.pdb
 f:\PitFilx-app\Pitflix.API\bin\BuildCheck2\Pitflix.Core.deps.json
 f:\PitFilx-app\Pitflix.API\bin\BuildCheck2\Pitflix.Core.runtimeconfig.json
 f:\PitFilx-app\Pitflix.API\bin\BuildCheck2\Pitflix.Core.dll

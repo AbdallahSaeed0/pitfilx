@@ -96,6 +96,9 @@ export type WatchHistoryRow = {
   estimatedSeconds?: number;
   fileDurationSeconds?: number;
   nextUpLabel?: string | null;
+  libraryMovieId?: number | null;
+  libraryShowId?: number | null;
+  libraryEpisodeId?: number | null;
 };
 
 export type FeaturedFallbackResponse = { card: MediaCard | null };

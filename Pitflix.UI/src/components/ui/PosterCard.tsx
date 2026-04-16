@@ -275,6 +275,9 @@ export function PosterCard({
                         item.selectedPosterPath || item.posterLocalPath || null,
                         mediaType,
                         0,
+                        mediaType === "Movie"
+                          ? { libraryMovieId: item.id }
+                          : { libraryShowId: item.id },
                       );
                     }}
                     className="flex flex-1 items-center justify-center gap-1.5 rounded-lg bg-pitflix-primary py-2 text-xs font-medium text-white transition-colors hover:bg-pitflix-light"

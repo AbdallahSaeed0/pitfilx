@@ -1,5 +1,7 @@
+import { useEffect } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { BrowserRouter, Navigate, Route, Routes, useParams } from "react-router-dom";
+import { startPlaybackPolEventListener } from "./playback/playbackPolListener";
 import { getSettings } from "./api/settings";
 import { MainLayout } from "./components/layout/MainLayout";
 import { SetupWizard } from "./components/setup/SetupWizard";
@@ -21,6 +23,12 @@ import { AwardEditionPage } from "./pages/AwardEditionPage";
 import { SeasonDetailPage } from "./pages/SeasonDetailPage";
 import { TrailersPage } from "./pages/TrailersPage";
 import { NextEpisodesPage } from "./pages/NextEpisodesPage";
+import { PlayerPage } from "./pages/PlayerPage";
+
+function PlaybackPolListenerHost() {
+  useEffect(() => startPlaybackPolEventListener(), []);
+  return null;
+}
 
 function LegacyShowRedirect() {
   const { id } = useParams();
@@ -57,7 +65,9 @@ function App() {
 
   return (
     <BrowserRouter>
+      <PlaybackPolListenerHost />
       <Routes>
+        <Route path="/player" element={<PlayerPage />} />
         <Route element={<MainLayout />}>
           <Route index element={<HomePage />} />
           <Route path="movies" element={<MoviesPage />} />

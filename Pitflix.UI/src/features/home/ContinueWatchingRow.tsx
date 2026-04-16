@@ -5,6 +5,22 @@ import type { WatchHistoryRow } from "../../types/homeSection";
 import { toPosterSrc } from "../../utils/posterSrc";
 import { usePlayback } from "../../hooks/usePlayback";
 import { cn } from "../../utils/cn";
+import type { PlayContext } from "../../hooks/usePlayback";
+
+function continueReturnContext(item: WatchHistoryRow): PlayContext {
+  const returnTo =
+    item.libraryMovieId != null
+      ? { pathname: `/movie/${item.libraryMovieId}` }
+      : item.libraryShowId != null
+        ? { pathname: `/series/${item.libraryShowId}` }
+        : undefined;
+  return {
+    libraryMovieId: item.libraryMovieId ?? undefined,
+    libraryShowId: item.libraryShowId ?? undefined,
+    libraryEpisodeId: item.libraryEpisodeId ?? undefined,
+    returnTo,
+  };
+}
 
 function ContinueThumb({
   item,
@@ -28,6 +44,8 @@ function ContinueThumb({
             item.posterLocalPath ?? null,
             item.mediaType || "Movie",
             item.fileDurationSeconds ?? 0,
+            continueReturnContext(item),
+            item.estimatedSeconds ?? 0,
           )
         }
         className="flex min-w-0 flex-1 gap-2 rounded-lg p-1 text-left transition hover:bg-white/5"

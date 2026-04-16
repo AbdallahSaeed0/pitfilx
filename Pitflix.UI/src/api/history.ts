@@ -13,8 +13,13 @@ export const addHistory = (body: {
   durationSeconds: number;
 }) => api.post("/history", body).then((r) => r.data);
 
-export const historyStopped = (id: number, body: { stoppedAt: string }) =>
+export const historyStopped = (id: number, body: { stoppedAt: string; positionSeconds?: number }) =>
   api.post(`/history/${id}/stopped`, body).then((r) => r.data);
+
+export const postHistoryProgress = (
+  id: number,
+  body: { positionSeconds: number; durationSeconds?: number; markWatching?: boolean },
+) => api.post(`/history/${id}/progress`, body).then((r) => r.data);
 
 /** Removes this title from Continue watching (deletes all history rows for that media file). */
 export const removeHistoryEntry = (id: number) =>
