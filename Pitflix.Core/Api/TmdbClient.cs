@@ -1,3 +1,4 @@
+using System.Text.RegularExpressions;
 using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
 using Pitflix.Core.Models;
@@ -908,40 +909,96 @@ public sealed class TmdbClient
         return list;
     }
 
+    private const int MaxTopBilledCast = 10;
+
     public async Task<TmdbDetails> GetDetailsAsync(int tmdbId, string mediaType,
         CancellationToken cancellationToken = default)
     {
         var isMovie = mediaType.Equals("Movie", StringComparison.OrdinalIgnoreCase);
         var path = isMovie ? $"movie/{tmdbId}" : $"tv/{tmdbId}";
-        var url = AbsoluteApiUrl(
-            $"{path}?api_key={Uri.EscapeDataString(_apiKey)}&language=en-US&append_to_response=credits");
-
-        var json = await _http.GetStringAsync(url, cancellationToken).ConfigureAwait(false);
+        var detailsUrl = AbsoluteApiUrl($"{path}?api_key={Uri.EscapeDataString(_apiKey)}&language=en-US");
+        var json = await _http.GetStringAsync(detailsUrl, cancellationToken).ConfigureAwait(false);
         var details = ParseDetails(json);
         details.Similar.Clear();
 
-        for (var i = 0; i < details.Cast.Count; i++)
+        var creditsJson = await TryFetchCreditsJsonAsync(tmdbId, mediaType, cancellationToken).ConfigureAwait(false);
+        if (creditsJson != null)
         {
-            cancellationToken.ThrowIfCancellationRequested();
-            if (i >= 12)
-                break;
-            var c = details.Cast[i];
-            if (string.IsNullOrWhiteSpace(c.ProfilePath))
-                continue;
-            c.ProfileLocalPath = await ImageCacheService
-                .GetOrDownloadAsync(_http, c.ProfilePath, "Cast", "w185", cancellationToken).ConfigureAwait(false);
+            var (cast, crew) = ParseFullCreditsResponse(creditsJson);
+            details.Cast = cast;
+            details.Crew = crew;
+            await DownloadCastAndCrewPortraitCachesAsync(details.Cast, details.Crew, cancellationToken)
+                .ConfigureAwait(false);
         }
-
-        foreach (var c in details.Crew)
+        else
         {
-            cancellationToken.ThrowIfCancellationRequested();
-            if (string.IsNullOrWhiteSpace(c.ProfilePath))
-                continue;
-            c.ProfileLocalPath = await ImageCacheService
-                .GetOrDownloadAsync(_http, c.ProfilePath, "Crew", "w185", cancellationToken).ConfigureAwait(false);
+            details.Cast = new List<TmdbCastMember>();
+            details.Crew = new List<TmdbCrewMember>();
         }
 
         return details;
+    }
+
+    /// <summary>TMDB <c>/credits</c> only: top-billed cast + portrait cache downloads (no movie/tv details request).</summary>
+    public async Task<List<TmdbCastMember>?> TryFetchTopCastWithPortraitCachesAsync(int tmdbId, string mediaType,
+        CancellationToken cancellationToken = default)
+    {
+        if (tmdbId <= 0)
+            return null;
+        var json = await TryFetchCreditsJsonAsync(tmdbId, mediaType, cancellationToken).ConfigureAwait(false);
+        if (json == null)
+            return null;
+        var (cast, _) = ParseFullCreditsResponse(json);
+        await DownloadCastPortraitCachesAsync(cast, cancellationToken).ConfigureAwait(false);
+        return cast;
+    }
+
+    private async Task<string?> TryFetchCreditsJsonAsync(int tmdbId, string mediaType,
+        CancellationToken cancellationToken)
+    {
+        var isMovie = mediaType.Equals("Movie", StringComparison.OrdinalIgnoreCase);
+        var path = isMovie ? $"movie/{tmdbId}" : $"tv/{tmdbId}";
+        var creditsUrl = AbsoluteApiUrl($"{path}/credits?api_key={Uri.EscapeDataString(_apiKey)}&language=en-US");
+        try
+        {
+            return await _http.GetStringAsync(creditsUrl, cancellationToken).ConfigureAwait(false);
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    private async Task DownloadCastPortraitCachesAsync(IList<TmdbCastMember> cast,
+        CancellationToken cancellationToken)
+    {
+        for (var i = 0; i < cast.Count; i++)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            if (i >= MaxTopBilledCast)
+                break;
+            var c = cast[i];
+            if (string.IsNullOrWhiteSpace(c.ProfilePath))
+                continue;
+            c.ProfileLocalPath = await ImageCacheService
+                .GetOrDownloadAsync(_http, c.ProfilePath, "Cast", TmdbImageUrls.PersonProfileAvatarSize,
+                    cancellationToken).ConfigureAwait(false);
+        }
+    }
+
+    private async Task DownloadCastAndCrewPortraitCachesAsync(IList<TmdbCastMember> cast, IList<TmdbCrewMember> crew,
+        CancellationToken cancellationToken)
+    {
+        await DownloadCastPortraitCachesAsync(cast, cancellationToken).ConfigureAwait(false);
+        foreach (var c in crew)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            if (string.IsNullOrWhiteSpace(c.ProfilePath))
+                continue;
+            c.ProfileLocalPath = await ImageCacheService
+                .GetOrDownloadAsync(_http, c.ProfilePath, "Crew", TmdbImageUrls.PersonProfileAvatarSize,
+                    cancellationToken).ConfigureAwait(false);
+        }
     }
 
     /// <summary>Poster and backdrop paths only — no credits (avoids N× cast image downloads for bulk refresh).</summary>
@@ -1216,28 +1273,56 @@ public sealed class TmdbClient
         }
 
         details.Cast = new List<TmdbCastMember>();
-        var castArr = root["credits"]?["cast"] as JArray;
+        details.Crew = new List<TmdbCrewMember>();
+
+        details.Similar = new List<TmdbSearchResult>();
+        return details;
+    }
+
+    /// <summary>Parses TMDB <c>/movie/{{id}}/credits</c> or <c>/tv/{{id}}/credits</c> JSON (full cast list + crew).</summary>
+    private static (List<TmdbCastMember> Cast, List<TmdbCrewMember> Crew) ParseFullCreditsResponse(string creditsJson)
+    {
+        var root = JObject.Parse(creditsJson);
+        var castOut = new List<TmdbCastMember>();
+        var castArr = root["cast"] as JArray;
         if (castArr != null)
         {
-            // Persist enough cast for DB / "person → library" links; UI still shows top 12 only.
-            foreach (var c in castArr.Take(200))
+            foreach (var c in castArr)
             {
-                details.Cast.Add(new TmdbCastMember
+                var id = (int?)c?["id"] ?? 0;
+                if (id <= 0)
+                    continue;
+                var order = (int?)c?["order"];
+                var sortKey = order is >= 0 and < 10_000 ? order.Value : 9999;
+                var profilePath = (string?)c?["profile_path"] ?? "";
+                castOut.Add(new TmdbCastMember
                 {
-                    Id = (int?)c?["id"] ?? 0,
-                    Name = (string?)c?["name"] ?? "",
-                    Character = (string?)c?["character"] ?? "",
-                    ProfilePath = (string?)c?["profile_path"] ?? ""
+                    Id = id,
+                    Name = NormalizeCastPersonName((string?)c?["name"]),
+                    Character = NormalizeCastCharacter((string?)c?["character"]),
+                    ProfilePath = profilePath,
+                    BillingOrder = sortKey
                 });
             }
         }
 
-        details.Crew = new List<TmdbCrewMember>();
+        castOut = castOut
+            .OrderBy(x => x.BillingOrder)
+            .ThenBy(x => x.Name, StringComparer.OrdinalIgnoreCase)
+            .GroupBy(x => x.Id)
+            .Select(g => g.First())
+            .Take(MaxTopBilledCast)
+            .ToList();
+
+        for (var i = 0; i < castOut.Count; i++)
+            castOut[i].BillingOrder = i;
+
+        var crew = new List<TmdbCrewMember>();
         var crewJobs = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
         {
             "Director", "Producer", "Executive Producer", "Co-Producer", "Writer", "Screenplay", "Creator"
         };
-        var crewArr = root["credits"]?["crew"] as JArray;
+        var crewArr = root["crew"] as JArray;
         if (crewArr != null)
         {
             var seenPerson = new HashSet<int>();
@@ -1249,20 +1334,34 @@ public sealed class TmdbClient
                 var pid = (int?)t?["id"] ?? 0;
                 if (pid <= 0 || !seenPerson.Add(pid))
                     continue;
-                details.Crew.Add(new TmdbCrewMember
+                var nm = NormalizeCastPersonName((string?)t?["name"]);
+                crew.Add(new TmdbCrewMember
                 {
                     Id = pid,
-                    Name = (string?)t?["name"] ?? "",
-                    Job = job,
+                    Name = nm,
+                    Job = string.IsNullOrWhiteSpace(job) ? "—" : job.Trim(),
                     ProfilePath = (string?)t?["profile_path"] ?? ""
                 });
-                if (details.Crew.Count >= 18)
+                if (crew.Count >= 18)
                     break;
             }
         }
 
-        details.Similar = new List<TmdbSearchResult>();
-        return details;
+        return (castOut, crew);
+    }
+
+    private static string NormalizeCastPersonName(string? raw)
+    {
+        var s = (raw ?? "").Trim();
+        s = Regex.Replace(s, @"\s+", " ");
+        return string.IsNullOrEmpty(s) ? "Unknown" : s;
+    }
+
+    private static string NormalizeCastCharacter(string? raw)
+    {
+        var s = (raw ?? "").Trim();
+        s = Regex.Replace(s, @"\s+", " ");
+        return string.IsNullOrEmpty(s) ? "—" : s;
     }
 
     public async Task<TmdbPersonDetails?> GetPersonDetailsAsync(int personId,

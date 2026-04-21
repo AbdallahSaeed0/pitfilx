@@ -64,7 +64,7 @@ export function ComingSoonTrailersSection({ embedded = false }: Props) {
           <h2 className="text-lg font-bold text-white">Coming soon with trailer</h2>
           <span className="text-xs text-pitflix-subtle">Future release date · official clip</span>
           <Link
-            to="/trailers?mode=all-upcoming"
+            to="/trailers?mode=upcoming"
             className="ml-auto inline-flex items-center gap-1 text-xs font-semibold text-emerald-300 hover:underline"
           >
             Browse all

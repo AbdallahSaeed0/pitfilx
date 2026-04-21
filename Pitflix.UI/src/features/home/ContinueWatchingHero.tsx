@@ -7,6 +7,7 @@ import type { WatchHistoryRow } from "../../types/homeSection";
 import { toPosterSrc } from "../../utils/posterSrc";
 import { usePlayback } from "../../hooks/usePlayback";
 import { cn } from "../../utils/cn";
+import { trustedResumeHeadFromRow } from "../../utils/trustedResume";
 import type { PlayContext } from "../../hooks/usePlayback";
 
 export function continueLabel(nextUpLabel?: string | null) {
@@ -131,7 +132,7 @@ function SideHistoryThumb({
             item.mediaType || "Movie",
             item.fileDurationSeconds ?? 0,
             continueReturnContext(item),
-            item.estimatedSeconds ?? 0,
+            trustedResumeHeadFromRow(item),
           )
         }
         className="flex min-w-0 flex-1 gap-2 rounded-md p-0.5 text-left transition hover:bg-black/30"
@@ -250,9 +251,9 @@ export function ContinueWatchingHero({
       : undefined;
   const backdropOnly = toPosterSrc(featured.backdropLocalPath ?? undefined);
   const dur = featured.fileDurationSeconds ?? 0;
-  const est = featured.estimatedSeconds ?? 0;
-  const pct = dur > 0 ? Math.min(100, (est / dur) * 100) : 0;
-  const showProgress = est > 30 && dur > 0;
+  const head = trustedResumeHeadFromRow(featured);
+  const pct = dur > 0 ? Math.min(100, (head / dur) * 100) : 0;
+  const showProgress = head > 30 && dur > 0;
 
   return (
     <section className="relative mb-10 min-h-[240px] w-full overflow-hidden rounded-2xl ring-1 ring-white/10">
@@ -308,7 +309,7 @@ export function ContinueWatchingHero({
                   featured.mediaType || "Movie",
                   dur,
                   continueReturnContext(featured),
-                  featured.estimatedSeconds ?? 0,
+                  head,
                 )
               }
             >

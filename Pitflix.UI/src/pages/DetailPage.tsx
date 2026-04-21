@@ -23,6 +23,7 @@ type CrewMember = {
   job: string;
   profilePath?: string;
   profileLocalPath?: string | null;
+  profileRemoteUrl?: string | null;
 };
 
 function isFeaturedCrewJob(job: string) {
@@ -45,8 +46,19 @@ function filterFeaturedCrew(crew: CrewMember[]) {
 function crewAvatarSrc(c: CrewMember) {
   const local = toPosterSrc(c.profileLocalPath ?? undefined);
   if (local) return local;
+  const remote = c.profileRemoteUrl?.trim();
+  if (remote) return remote;
   if (c.profilePath) return `https://image.tmdb.org/t/p/w185${c.profilePath}`;
   return undefined;
+}
+
+function castImageSources(c: { profileLocalPath?: string | null; profileRemoteUrl?: string | null }) {
+  const local = toPosterSrc(c.profileLocalPath ?? undefined);
+  const remote = c.profileRemoteUrl?.trim() || undefined;
+  return {
+    primary: local || remote,
+    fallback: local && remote ? remote : undefined,
+  };
 }
 
 /** Hero poster: compact 2:3, same for movie and series detail. */
@@ -95,6 +107,7 @@ export function MovieDetailPage() {
     character?: string;
     personTmdbId: number;
     profileLocalPath?: string | null;
+    profileRemoteUrl?: string | null;
   }[];
   const crewFeatured = filterFeaturedCrew((data.crew ?? []) as CrewMember[]);
   const similar = (data.similar ?? []) as MediaCard[];
@@ -251,7 +264,9 @@ export function MovieDetailPage() {
       <section className="mt-10">
         <h2 className="mb-4 text-xl font-bold">Cast</h2>
         <HorizontalDragScroll>
-          {cast?.slice(0, 24).map((c) => (
+          {cast?.slice(0, 10).map((c) => {
+            const { primary, fallback } = castImageSources(c);
+            return (
             <button
               key={`${c.personTmdbId}-${c.name}`}
               type="button"
@@ -261,15 +276,17 @@ export function MovieDetailPage() {
               className="w-24 shrink-0 text-center"
             >
               <MediaImage
-                src={toPosterSrc(c.profileLocalPath)}
+                src={primary}
+                fallbackSrc={fallback}
                 alt={c.name}
-                className="mx-auto h-20 w-20 rounded-full bg-pitflix-card"
-                fallbackText={c.name.slice(0, 2)}
+                className="mx-auto h-20 w-20 rounded-full bg-pitflix-surface/80 ring-1 ring-inset ring-white/10"
+                fallbackText={c.name.trim().slice(0, 2) || "?"}
               />
-              <p className="mt-2 text-xs font-medium text-white">{c.name}</p>
-              <p className="text-[10px] text-pitflix-subtle">{c.character}</p>
+              <p className="mt-2 text-xs font-medium text-white">{c.name || "Unknown"}</p>
+              <p className="text-[10px] text-pitflix-subtle">{c.character ?? "—"}</p>
             </button>
-          ))}
+            );
+          })}
         </HorizontalDragScroll>
       </section>
 
@@ -287,7 +304,7 @@ export function MovieDetailPage() {
                 <MediaImage
                   src={crewAvatarSrc(c)}
                   alt={c.name}
-                  className="mx-auto h-20 w-20 rounded-full bg-pitflix-card"
+                  className="mx-auto h-20 w-20 rounded-full bg-pitflix-surface/80 ring-1 ring-inset ring-white/10"
                   fallbackText={c.name.slice(0, 2)}
                 />
                 <p className="mt-2 text-xs font-medium text-white">{c.name}</p>
@@ -388,6 +405,7 @@ export function ShowDetailPage() {
     character?: string;
     personTmdbId: number;
     profileLocalPath?: string | null;
+    profileRemoteUrl?: string | null;
   }[];
   const crewFeatured = filterFeaturedCrew((data.crew ?? []) as CrewMember[]);
   const similar = (data.similar ?? []) as MediaCard[];
@@ -597,7 +615,9 @@ export function ShowDetailPage() {
       <section className="mt-10">
         <h2 className="mb-4 text-xl font-bold">Cast</h2>
         <HorizontalDragScroll>
-          {cast?.slice(0, 24).map((c) => (
+          {cast?.slice(0, 10).map((c) => {
+            const { primary, fallback } = castImageSources(c);
+            return (
             <button
               key={`${c.personTmdbId}-${c.name}`}
               type="button"
@@ -607,15 +627,17 @@ export function ShowDetailPage() {
               className="w-24 shrink-0 text-center"
             >
               <MediaImage
-                src={toPosterSrc(c.profileLocalPath)}
+                src={primary}
+                fallbackSrc={fallback}
                 alt={c.name}
-                className="mx-auto h-20 w-20 rounded-full bg-pitflix-card"
-                fallbackText={c.name.slice(0, 2)}
+                className="mx-auto h-20 w-20 rounded-full bg-pitflix-surface/80 ring-1 ring-inset ring-white/10"
+                fallbackText={c.name.trim().slice(0, 2) || "?"}
               />
-              <p className="mt-2 text-xs font-medium text-white">{c.name}</p>
-              <p className="text-[10px] text-pitflix-subtle">{c.character}</p>
+              <p className="mt-2 text-xs font-medium text-white">{c.name || "Unknown"}</p>
+              <p className="text-[10px] text-pitflix-subtle">{c.character ?? "—"}</p>
             </button>
-          ))}
+            );
+          })}
         </HorizontalDragScroll>
       </section>
 
@@ -633,7 +655,7 @@ export function ShowDetailPage() {
                 <MediaImage
                   src={crewAvatarSrc(c)}
                   alt={c.name}
-                  className="mx-auto h-20 w-20 rounded-full bg-pitflix-card"
+                  className="mx-auto h-20 w-20 rounded-full bg-pitflix-surface/80 ring-1 ring-inset ring-white/10"
                   fallbackText={c.name.slice(0, 2)}
                 />
                 <p className="mt-2 text-xs font-medium text-white">{c.name}</p>

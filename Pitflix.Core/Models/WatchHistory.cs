@@ -28,6 +28,22 @@ public class WatchHistory
     public int FileDurationSeconds { get; set; }
     public bool IsCompleted { get; set; }
 
+    /// <summary>High-water playback position (seconds) from any source (heartbeats, explicit saves).</summary>
+    public int MaxKnownPositionSeconds { get; set; }
+
+    /// <summary>Last client-reported playback position (seconds); distinct from inferred session time.</summary>
+    public int LastExplicitPositionSeconds { get; set; }
+
+    /// <summary>UTC of last progress/heartbeat write for this row.</summary>
+    public DateTime? LastHeartbeatAtUtc { get; set; }
+
+    /// <summary>True once an end-of-session path ran (explicit stop / return) so resume can trust the row.</summary>
+    public bool IsStopFinalized { get; set; }
+
+    /// <summary>API-only: merged best resume head (seconds) from MaxKnown / LastExplicit / Estimated, capped by duration.</summary>
+    [NotMapped]
+    public int TrustedResumeSeconds { get; set; }
+
     /// <summary>API-only: e.g. "S2 E4 — Next up" for Continue Watching (not stored in DB).</summary>
     [NotMapped]
     public string? NextUpLabel { get; set; }

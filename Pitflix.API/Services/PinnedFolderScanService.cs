@@ -10,11 +10,13 @@ public sealed class PinnedFolderScanService : BackgroundService
 {
     private readonly IServiceScopeFactory _scopes;
     private readonly ScanRuntime _scanRuntime;
+    private readonly RatingsRefreshQueue _ratingsRefreshQueue;
 
-    public PinnedFolderScanService(IServiceScopeFactory scopes, ScanRuntime scanRuntime)
+    public PinnedFolderScanService(IServiceScopeFactory scopes, ScanRuntime scanRuntime, RatingsRefreshQueue ratingsRefreshQueue)
     {
         _scopes = scopes;
         _scanRuntime = scanRuntime;
+        _ratingsRefreshQueue = ratingsRefreshQueue;
     }
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
@@ -87,5 +89,6 @@ public sealed class PinnedFolderScanService : BackgroundService
         var pipeline = new ScanPipeline(new FileScanner(), tmdb, repo);
         await pipeline.RunScanOnFilesAsync(distinct, new Progress<ScanProgress>(_ => { }), cancellationToken)
             .ConfigureAwait(false);
+        _ratingsRefreshQueue.TryEnqueueStaleSweep();
     }
 }

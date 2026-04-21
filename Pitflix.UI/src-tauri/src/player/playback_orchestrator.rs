@@ -201,11 +201,17 @@ struct ResumeDiskV1 {
   positions: HashMap<String, PersistedResume>,
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 struct PersistedResume {
   seconds: f64,
   #[serde(default)]
   updated_unix_ms: u128,
+  /// Last known file duration from the player (seconds), for resume hints after crash.
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  duration_seconds: Option<f64>,
+  /// Correlates with Pitflix server `WatchHistories.Id` when the webview sends it.
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  history_id: Option<i32>,
 }
 
 pub struct PlaybackOrchestrator {
@@ -294,7 +300,7 @@ impl PlaybackOrchestrator {
         reason: "no_saved_position".into(),
       };
     };
-    self.classify_resume(entry.seconds, None)
+    self.classify_resume(entry.seconds, entry.duration_seconds)
   }
 
   fn classify_resume(&self, seconds: f64, duration_hint: Option<f64>) -> ResumeHints {
@@ -333,13 +339,10 @@ impl PlaybackOrchestrator {
     self.near_end_emitted = false;
     self.last_engine_time_pos = 0.0;
     let hints = {
-      let disk_sec = self
-        .resume_disk
-        .positions
-        .get(&current.key)
-        .map(|p| p.seconds)
-        .unwrap_or(0.0);
-      self.classify_resume(disk_sec, None)
+      let ent = self.resume_disk.positions.get(&current.key);
+      let disk_sec = ent.map(|p| p.seconds).unwrap_or(0.0);
+      let disk_dur = ent.and_then(|p| p.duration_seconds);
+      self.classify_resume(disk_sec, disk_dur)
     };
     self.session = Some(LoadedSession {
       current,
@@ -392,7 +395,7 @@ impl PlaybackOrchestrator {
     Some(next)
   }
 
-  pub fn persist_position_for_current(&mut self, time_pos: f64, duration: f64) {
+  pub fn persist_position_for_current(&mut self, time_pos: f64, duration: f64, history_id: Option<i32>) {
     let Some(sess) = &self.session else {
       return;
     };
@@ -401,15 +404,23 @@ impl PlaybackOrchestrator {
       .duration_since(std::time::UNIX_EPOCH)
       .map(|d| d.as_millis())
       .unwrap_or(0);
+    let dur_opt = duration
+      .is_finite()
+      .then_some(duration.max(0.0))
+      .filter(|d| *d > 0.5);
+    let prev = self.resume_disk.positions.get(&key).cloned();
+    let duration_seconds = dur_opt.or_else(|| prev.as_ref().and_then(|p| p.duration_seconds));
+    let history_id = history_id.or_else(|| prev.as_ref().and_then(|p| p.history_id));
     self.resume_disk.positions.insert(
       key,
       PersistedResume {
         seconds: time_pos.max(0.0),
         updated_unix_ms: now_ms,
+        duration_seconds,
+        history_id,
       },
     );
     let _ = self.save_resume_disk();
-    let _ = duration;
   }
 
   pub fn snapshot_from_last_engine(&self) -> PlaybackStoreSnapshot {

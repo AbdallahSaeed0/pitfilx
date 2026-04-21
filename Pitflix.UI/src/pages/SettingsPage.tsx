@@ -30,6 +30,7 @@ import {
   verifyOpenSubtitlesKey,
   verifyTmdbKey,
 } from "../api/settings";
+import { queueRatingsLibraryBackfill, queueRatingsStaleSweep } from "../api/ratings";
 import { startScan } from "../api/scan";
 import { getStats } from "../api/stats";
 import { Spinner } from "../components/ui/Spinner";
@@ -103,6 +104,10 @@ export function SettingsPage() {
   const [prefetchLog, setPrefetchLog] = useState<string[]>([]);
   const prefetchAbortRef = useRef<AbortController | null>(null);
   const [maintMessage, setMaintMessage] = useState<string | null>(null);
+  const [ratingsMaintKey, setRatingsMaintKey] = useState("");
+  const [ratingsBackfillBusy, setRatingsBackfillBusy] = useState(false);
+  const [ratingsStaleBusy, setRatingsStaleBusy] = useState(false);
+  const [ratingsMaintMsg, setRatingsMaintMsg] = useState<string | null>(null);
   const [toast, setToast] = useState<string | null>(null);
   const [removeBrowseRefresh, setRemoveBrowseRefresh] = useState(0);
   const [mediaPlayerPath, setMediaPlayerPath] = useState("");
@@ -1167,6 +1172,85 @@ export function SettingsPage() {
               >
                 🎨 Refresh Artwork
               </button>
+              <div className="col-span-2 rounded-lg border border-violet-500/20 bg-violet-950/15 px-3 py-2.5">
+                <p className="mb-1.5 text-[10px] font-semibold uppercase tracking-wide text-pitflix-muted">
+                  Ratings (persisted)
+                </p>
+                <input
+                  type="password"
+                  autoComplete="off"
+                  placeholder="Server maintenance key (only if configured in appsettings)"
+                  value={ratingsMaintKey}
+                  onChange={(e) => setRatingsMaintKey(e.target.value)}
+                  className="mb-2 w-full rounded-md border border-white/10 bg-black/30 px-2 py-1.5 text-[11px] text-white placeholder:text-pitflix-muted"
+                />
+                <div className="grid grid-cols-2 gap-2">
+                  <button
+                    type="button"
+                    disabled={ratingsBackfillBusy}
+                    className="h-10 rounded-lg border border-violet-400/35 bg-pitflix-bg text-xs font-medium text-violet-100 hover:bg-violet-500/15 disabled:opacity-50"
+                    onClick={() => {
+                      setRatingsMaintMsg(null);
+                      setRatingsBackfillBusy(true);
+                      void queueRatingsLibraryBackfill({
+                        limit: 500,
+                        maintenanceKey: ratingsMaintKey.trim() || undefined,
+                      })
+                        .then((r) => {
+                          setRatingsMaintMsg(
+                            `Queued ${r.accepted} jobs (${r.movies} movies + ${r.shows} series, cap ${r.cap}). Processing runs in the background.`,
+                          );
+                          void qc.invalidateQueries({
+                            predicate: (q) => q.queryKey[0] === "ratings-display",
+                          });
+                        })
+                        .catch((err) => {
+                          if (axios.isAxiosError(err) && err.response?.status === 401) {
+                            setRatingsMaintMsg("Unauthorized — add the server ratings maintenance key if one is set.");
+                          } else {
+                            setRatingsMaintMsg(formatScanOrApiError(err));
+                          }
+                        })
+                        .finally(() => setRatingsBackfillBusy(false));
+                    }}
+                  >
+                    {ratingsBackfillBusy ? "Queuing…" : "📊 Queue library ratings"}
+                  </button>
+                  <button
+                    type="button"
+                    disabled={ratingsStaleBusy}
+                    className="h-10 rounded-lg border border-violet-400/25 bg-pitflix-bg text-xs font-medium text-violet-100/95 hover:bg-violet-500/12 disabled:opacity-50"
+                    onClick={() => {
+                      setRatingsMaintMsg(null);
+                      setRatingsStaleBusy(true);
+                      void queueRatingsStaleSweep(ratingsMaintKey.trim() || undefined)
+                        .then((r) => {
+                          setRatingsMaintMsg(
+                            r.queued === "stale_sweep"
+                              ? "Stale ratings refresh queued (background)."
+                              : "Request sent.",
+                          );
+                          void qc.invalidateQueries({
+                            predicate: (q) => q.queryKey[0] === "ratings-display",
+                          });
+                        })
+                        .catch((err) => {
+                          if (axios.isAxiosError(err) && err.response?.status === 401) {
+                            setRatingsMaintMsg("Unauthorized — add the server ratings maintenance key if one is set.");
+                          } else {
+                            setRatingsMaintMsg(formatScanOrApiError(err));
+                          }
+                        })
+                        .finally(() => setRatingsStaleBusy(false));
+                    }}
+                  >
+                    {ratingsStaleBusy ? "Queuing…" : "♻️ Queue stale refresh"}
+                  </button>
+                </div>
+                {ratingsMaintMsg ? (
+                  <p className="mt-2 text-[11px] leading-snug text-pitflix-subtle">{ratingsMaintMsg}</p>
+                ) : null}
+              </div>
               <button
                 type="button"
                 disabled={cleanupBusy}

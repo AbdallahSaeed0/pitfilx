@@ -1,0 +1,294 @@
+{
+  "channels": [
+    {
+      "name": "Netflix",
+      "channelId": "UCWOA1ZGywLbqmigxE4Qlvuw",
+      "priority": 100,
+      "trustTier": 1,
+      "enabled": true,
+      "mediaFocus": "both",
+      "pollingPriority": 100,
+      "aliases": ["Netflix US", "Netflix Film"]
+    },
+    {
+      "name": "Prime Video",
+      "channelId": "UCQJWtTnAHhEG5w4uN0udnUQ",
+      "priority": 100,
+      "trustTier": 1,
+      "enabled": true,
+      "mediaFocus": "both",
+      "pollingPriority": 100,
+      "aliases": ["Amazon Prime Video", "PrimeVideo"]
+    },
+    {
+      "name": "Amazon MGM Studios",
+      "channelId": "UCf5CjDJvsFvtVIhkfmKAwAA",
+      "priority": 98,
+      "trustTier": 1,
+      "enabled": true,
+      "mediaFocus": "movie",
+      "pollingPriority": 98,
+      "aliases": ["MGM Studios", "Amazon MGM"]
+    },
+    {
+      "name": "Apple TV",
+      "channelId": "UC1Myj674wRVXB9I4c6Hm5zA",
+      "priority": 100,
+      "trustTier": 1,
+      "enabled": true,
+      "mediaFocus": "both",
+      "pollingPriority": 100,
+      "aliases": ["Apple TV Plus", "Apple TV+"]
+    },
+    {
+      "name": "Disney+",
+      "channelId": "UCIrgJInjLS2BhlHOMDW7v0g",
+      "priority": 98,
+      "trustTier": 1,
+      "enabled": true,
+      "mediaFocus": "both",
+      "pollingPriority": 98,
+      "aliases": ["Disney Plus", "DisneyPlus"]
+    },
+    {
+      "name": "Hulu",
+      "channelId": "UCE5mQnNl8Q4H2qcv4ikaXeA",
+      "priority": 96,
+      "trustTier": 1,
+      "enabled": true,
+      "mediaFocus": "both",
+      "pollingPriority": 96,
+      "aliases": []
+    },
+    {
+      "name": "Max",
+      "channelId": "UCx-KWLTKlB83hDI6UKECtJQ",
+      "priority": 96,
+      "trustTier": 1,
+      "enabled": true,
+      "mediaFocus": "both",
+      "pollingPriority": 96,
+      "aliases": ["HBO Max", "Max Streaming"]
+    },
+    {
+      "name": "HBO",
+      "channelId": "UCVTQuK2CaWaTgSsoNkn5AiQ",
+      "priority": 94,
+      "trustTier": 1,
+      "enabled": true,
+      "mediaFocus": "both",
+      "pollingPriority": 94,
+      "aliases": ["Home Box Office"]
+    },
+    {
+      "name": "Paramount+",
+      "channelId": "UCrRttZIypNTA1Mrfwo745Sg",
+      "priority": 96,
+      "trustTier": 1,
+      "enabled": true,
+      "mediaFocus": "both",
+      "pollingPriority": 96,
+      "aliases": ["Paramount Plus", "ParamountPlus"]
+    },
+    {
+      "name": "Peacock",
+      "channelId": "UCPgMAS8woHJ_o_OZdTR7kcQ",
+      "priority": 95,
+      "trustTier": 1,
+      "enabled": true,
+      "mediaFocus": "both",
+      "pollingPriority": 95,
+      "aliases": ["Peacock TV", "PeacockTV"]
+    },
+    {
+      "name": "AMC+",
+      "channelId": "UCmxURUIJXKnoC7_i1fPhs7Q",
+      "priority": 90,
+      "trustTier": 2,
+      "enabled": true,
+      "mediaFocus": "both",
+      "pollingPriority": 90,
+      "aliases": ["AMC Plus"]
+    },
+    {
+      "name": "Warner Bros. Pictures",
+      "channelId": "UCixV5gwLhNu3K9B5N8n7G9Q",
+      "priority": 100,
+      "trustTier": 1,
+      "enabled": true,
+      "mediaFocus": "movie",
+      "pollingPriority": 100,
+      "aliases": ["Warner Bros", "WB Pictures"]
+    },
+    {
+      "name": "Universal Pictures",
+      "channelId": "UCq0OueAsdxH6b8nyAspwViw",
+      "priority": 100,
+      "trustTier": 1,
+      "enabled": true,
+      "mediaFocus": "movie",
+      "pollingPriority": 100,
+      "aliases": ["Universal Studios", "Universal"]
+    },
+    {
+      "name": "Paramount Pictures",
+      "channelId": "UCF9imwPMSGz4Vq1NiTWCC7g",
+      "priority": 100,
+      "trustTier": 1,
+      "enabled": true,
+      "mediaFocus": "movie",
+      "pollingPriority": 100,
+      "aliases": ["Paramount"]
+    },
+    {
+      "name": "Sony Pictures Entertainment",
+      "channelId": "UCz97F7dMxBNOfGYu3rx8aCw",
+      "priority": 100,
+      "trustTier": 1,
+      "enabled": true,
+      "mediaFocus": "movie",
+      "pollingPriority": 100,
+      "aliases": ["Sony Pictures", "SPE"]
+    },
+    {
+      "name": "Sony Pictures Classics",
+      "channelId": "UCruD_lL-5fmllpKMSL-yCyQ",
+      "priority": 92,
+      "trustTier": 2,
+      "enabled": true,
+      "mediaFocus": "movie",
+      "pollingPriority": 92,
+      "aliases": ["Sony Classics", "SPC"]
+    },
+    {
+      "name": "Disney",
+      "channelId": "UC_5niPa-d35gg88HaS7RrIw",
+      "priority": 100,
+      "trustTier": 1,
+      "enabled": true,
+      "mediaFocus": "both",
+      "pollingPriority": 100,
+      "aliases": ["Walt Disney Studios"]
+    },
+    {
+      "name": "Disney Movie Trailers",
+      "channelId": "UCuaYrWs6SRKXCaSGCh6EXjA",
+      "priority": 96,
+      "trustTier": 1,
+      "enabled": true,
+      "mediaFocus": "movie",
+      "pollingPriority": 96,
+      "aliases": []
+    },
+    {
+      "name": "Pixar",
+      "channelId": "UC_IRYSp4auLink7tN3jqkRg",
+      "priority": 96,
+      "trustTier": 1,
+      "enabled": true,
+      "mediaFocus": "movie",
+      "pollingPriority": 96,
+      "aliases": ["Pixar Animation"]
+    },
+    {
+      "name": "Star Wars",
+      "channelId": "UCKJ230tF7nAqPiFAqvtySHQ",
+      "priority": 95,
+      "trustTier": 1,
+      "enabled": true,
+      "mediaFocus": "both",
+      "pollingPriority": 95,
+      "aliases": ["StarWars"]
+    },
+    {
+      "name": "Lucasfilm",
+      "channelId": "UCnwY6fAhE3ePu0F2nMP-DLg",
+      "priority": 93,
+      "trustTier": 1,
+      "enabled": true,
+      "mediaFocus": "both",
+      "pollingPriority": 93,
+      "aliases": ["Lucasfilm Ltd"]
+    },
+    {
+      "name": "Marvel Entertainment",
+      "channelId": "UCvC4D8onUfXzvjTOM-dBfEA",
+      "priority": 96,
+      "trustTier": 1,
+      "enabled": true,
+      "mediaFocus": "both",
+      "pollingPriority": 96,
+      "aliases": ["Marvel"]
+    },
+    {
+      "name": "20th Century Studios",
+      "channelId": "UC2-BeLxzUBSs0uSrmzWhJuQ",
+      "priority": 95,
+      "trustTier": 1,
+      "enabled": true,
+      "mediaFocus": "movie",
+      "pollingPriority": 95,
+      "aliases": ["20th Century Fox", "20th Century"]
+    },
+    {
+      "name": "Searchlight Pictures",
+      "channelId": "UCor9rW6PgxSQ9vUPWQdnaYQ",
+      "priority": 94,
+      "trustTier": 1,
+      "enabled": true,
+      "mediaFocus": "movie",
+      "pollingPriority": 94,
+      "aliases": ["Fox Searchlight", "Searchlight"]
+    },
+    {
+      "name": "Focus Features",
+      "channelId": "UCU4SM3j_9TNWaSu8KdGV50g",
+      "priority": 92,
+      "trustTier": 2,
+      "enabled": true,
+      "mediaFocus": "movie",
+      "pollingPriority": 92,
+      "aliases": ["FocusFeatures"]
+    },
+    {
+      "name": "Lionsgate Movies",
+      "channelId": "UClSXxEJ9x6hM68pZ5J7f6Ow",
+      "priority": 93,
+      "trustTier": 2,
+      "enabled": true,
+      "mediaFocus": "movie",
+      "pollingPriority": 93,
+      "aliases": ["Lionsgate", "Lions Gate"]
+    },
+    {
+      "name": "NEON",
+      "channelId": "UCpy5dRhZd-JbZP4NsrnLt1w",
+      "priority": 88,
+      "trustTier": 2,
+      "enabled": true,
+      "mediaFocus": "movie",
+      "pollingPriority": 88,
+      "aliases": ["NEON Rated", "neonrated"]
+    },
+    {
+      "name": "IFC",
+      "channelId": "UCOn923UnbV8H9zo_lO6ZCRw",
+      "priority": 86,
+      "trustTier": 2,
+      "enabled": true,
+      "mediaFocus": "movie",
+      "pollingPriority": 86,
+      "aliases": ["Independent Film Company", "IFC Films", "IFC Midnight"]
+    },
+    {
+      "name": "A24",
+      "channelId": "UCuPivVjnfNo4mb3Oog_frZg",
+      "priority": 92,
+      "trustTier": 2,
+      "enabled": true,
+      "mediaFocus": "movie",
+      "pollingPriority": 92,
+      "aliases": []
+    }
+  ]
+}

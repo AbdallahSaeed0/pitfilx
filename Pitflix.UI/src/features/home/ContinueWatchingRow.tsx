@@ -5,6 +5,7 @@ import type { WatchHistoryRow } from "../../types/homeSection";
 import { toPosterSrc } from "../../utils/posterSrc";
 import { usePlayback } from "../../hooks/usePlayback";
 import { cn } from "../../utils/cn";
+import { trustedResumeHeadFromRow } from "../../utils/trustedResume";
 import type { PlayContext } from "../../hooks/usePlayback";
 
 function continueReturnContext(item: WatchHistoryRow): PlayContext {
@@ -45,7 +46,7 @@ function ContinueThumb({
             item.mediaType || "Movie",
             item.fileDurationSeconds ?? 0,
             continueReturnContext(item),
-            item.estimatedSeconds ?? 0,
+            trustedResumeHeadFromRow(item),
           )
         }
         className="flex min-w-0 flex-1 gap-2 rounded-lg p-1 text-left transition hover:bg-white/5"

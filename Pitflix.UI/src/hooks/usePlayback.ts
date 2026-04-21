@@ -5,8 +5,10 @@ import { useLocation, useNavigate } from "react-router-dom";
 import api from "../api/client";
 import { addHistory, getHistory, historyStopped } from "../api/history";
 import { getSettings } from "../api/settings";
+import { playbackResumeHintsForKey } from "../playback/playbackApi";
 import type { PlaybackLaunchState } from "../types/playback";
 import type { PlayerReturnTo } from "../types/playback";
+import { trustedResumeHeadFromRow, type HistoryResumeFields } from "../utils/trustedResume";
 
 let currentHistoryId: number | null = null;
 let focusListener: (() => void) | null = null;
@@ -22,13 +24,13 @@ function normalizePath(p: string) {
   return p.trim().replace(/\\/g, "/").toLowerCase();
 }
 
-function findResumeSeconds(historyRows: { filePath: string; estimatedSeconds?: number }[], filePath: string) {
+function findResumeSeconds(historyRows: HistoryResumeFields[], filePath: string) {
   const target = normalizePath(filePath);
   let best = 0;
   for (const row of historyRows) {
-    if (normalizePath(row.filePath) !== target) continue;
-    const est = row.estimatedSeconds ?? 0;
-    if (est > best) best = est;
+    if (normalizePath(row.filePath ?? "") !== target) continue;
+    const head = trustedResumeHeadFromRow(row);
+    if (head > best) best = head;
   }
   return best;
 }
@@ -62,10 +64,36 @@ export function usePlayback() {
       clearPlaybackFocusListener();
       currentHistoryId = null;
 
-      const historyRows = (await getHistory(200)) as { filePath: string; estimatedSeconds?: number }[];
+      const historyRows = (await getHistory(200)) as HistoryResumeFields[];
       const inferredResume = findResumeSeconds(historyRows, filePath);
       const preferred = Number.isFinite(preferredResumeSeconds ?? NaN) ? Math.max(0, preferredResumeSeconds ?? 0) : 0;
-      const resume = Math.max(preferred, inferredResume);
+
+      let localCheckpoint = 0;
+      if (isTauri()) {
+        const key =
+          context.libraryEpisodeId != null && context.libraryEpisodeId > 0
+            ? `ep:${context.libraryEpisodeId}`
+            : `file:${normalizePath(filePath)}`;
+        try {
+          const hints = await playbackResumeHintsForKey(key);
+          if (hints.shouldOfferResume && Number.isFinite(hints.resumeSeconds)) {
+            localCheckpoint = Math.floor(Math.max(0, hints.resumeSeconds));
+          }
+        } catch {
+          /* POL / disk optional */
+        }
+      }
+
+      const resume = Math.max(preferred, inferredResume, localCheckpoint);
+      if (import.meta.env.DEV) {
+        console.debug("[playback-resume]", {
+          filePath: normalizePath(filePath),
+          preferred,
+          inferredResume,
+          localCheckpoint,
+          chosen: resume,
+        });
+      }
       const startSeconds = resume > 60 ? resume : undefined;
 
       const { id } = (await addHistory({

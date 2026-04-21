@@ -12,7 +12,7 @@ type LatestTrailersProps = { embedded?: boolean };
 export function LatestTrailersSection({ embedded = false }: LatestTrailersProps) {
   const [active, setActive] = useState<TrailerCard | null>(null);
   const q = useQuery({
-    queryKey: ["home-trailers"],
+    queryKey: ["home-trailers", "persisted-v1"],
     queryFn: getLatestTrailers,
     staleTime: 180_000,
   });
@@ -50,7 +50,7 @@ export function LatestTrailersSection({ embedded = false }: LatestTrailersProps)
             : "rounded-2xl border border-dashed border-pitflix-card/50 bg-pitflix-bg/40 p-6 text-sm text-pitflix-subtle"
         }
       >
-        No trailers with a recent publish date on TMDB right now — check back after TMDB updates.
+        No ingested trailers in the library yet — run trailer ingestion on the API, then refresh.
       </div>
     );
   }
@@ -65,7 +65,7 @@ export function LatestTrailersSection({ embedded = false }: LatestTrailersProps)
         <div className="mb-4 flex flex-wrap items-center gap-2">
           <Play className="h-5 w-5 shrink-0 text-pitflix-primary" />
           <h2 className="text-lg font-bold text-white">Latest trailers</h2>
-          <span className="text-xs text-pitflix-subtle">Ordered by trailer publish date on TMDB</span>
+          <span className="text-xs text-pitflix-subtle">Official-channel ingest, newest YouTube publish first</span>
           <Link
             to="/trailers?mode=latest"
             className="ml-auto inline-flex items-center gap-1 text-xs font-semibold text-pitflix-primary hover:underline"

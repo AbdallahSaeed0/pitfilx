@@ -7,6 +7,8 @@ public class TmdbCastMember
     public string Name { get; set; } = "";
     public string Character { get; set; } = "";
     public string ProfilePath { get; set; } = "";
+    /// <summary>TMDB billing <c>order</c> (lower = higher billing).</summary>
+    public int BillingOrder { get; set; }
     /// <summary>Local file path after download to AppData\...\Images\Cast\</summary>
     public string? ProfileLocalPath { get; set; }
 }

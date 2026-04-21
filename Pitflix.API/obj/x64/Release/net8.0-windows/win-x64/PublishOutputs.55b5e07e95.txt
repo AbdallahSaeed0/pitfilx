@@ -286,5 +286,6 @@ F:\PitFilx-app\Pitflix.UI\src-tauri\binaries\publish-stage\Data\Awards\_review_f
 F:\PitFilx-app\Pitflix.UI\src-tauri\binaries\publish-stage\Data\Awards\_review_for_chatgpt\golden-globes.json
 F:\PitFilx-app\Pitflix.UI\src-tauri\binaries\publish-stage\Data\Awards\_review_for_chatgpt\manifest.json
 F:\PitFilx-app\Pitflix.UI\src-tauri\binaries\publish-stage\Data\Awards\_review_for_chatgpt\primetime-emmys.json
+F:\PitFilx-app\Pitflix.UI\src-tauri\binaries\publish-stage\Data\Trailers\official-channels.json
 F:\PitFilx-app\Pitflix.UI\src-tauri\binaries\publish-stage\Data\Trailers\priority.json
 F:\PitFilx-app\Pitflix.UI\src-tauri\binaries\publish-stage\Pitflix.API.exe

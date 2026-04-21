@@ -17,9 +17,12 @@ public class LibraryContext : DbContext
     public DbSet<ScanLog> ScanLogs => Set<ScanLog>();
     public DbSet<Setting> Settings => Set<Setting>();
     public DbSet<WatchHistory> WatchHistories => Set<WatchHistory>();
+    public DbSet<TrailerItem> TrailerItems => Set<TrailerItem>();
+    public DbSet<TrailerChannelSyncState> TrailerChannelSyncStates => Set<TrailerChannelSyncState>();
     public DbSet<UserList> UserLists => Set<UserList>();
     public DbSet<ListItem> ListItems => Set<ListItem>();
     public DbSet<LibraryFolder> LibraryFolders => Set<LibraryFolder>();
+    public DbSet<RatingsSnapshot> RatingsSnapshots => Set<RatingsSnapshot>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -62,7 +65,23 @@ public class LibraryContext : DbContext
 
         modelBuilder.Entity<Setting>(e => { e.HasKey(x => x.Key); });
 
-        modelBuilder.Entity<WatchHistory>(e => { e.HasIndex(x => x.OpenedAt); });
+        modelBuilder.Entity<WatchHistory>(e =>
+        {
+            e.HasIndex(x => x.OpenedAt);
+            e.HasIndex(x => new { x.FilePath, x.OpenedAt });
+            e.HasIndex(x => new { x.IsStopFinalized, x.LastHeartbeatAtUtc });
+        });
+
+        modelBuilder.Entity<TrailerItem>(e =>
+        {
+            e.HasIndex(x => x.VideoId).IsUnique();
+            e.HasIndex(x => x.PublishedAtUtc);
+            e.HasIndex(x => new { x.TmdbId, x.MediaType, x.PublishedAtUtc });
+            e.HasIndex(x => new { x.IsActive, x.PublishedAtUtc });
+            e.HasIndex(x => x.MediaType);
+        });
+
+        modelBuilder.Entity<TrailerChannelSyncState>(e => { e.HasKey(x => x.ChannelId); });
 
         modelBuilder.Entity<UserList>(e =>
         {
@@ -82,6 +101,13 @@ public class LibraryContext : DbContext
         modelBuilder.Entity<LibraryFolder>(e =>
         {
             e.HasIndex(x => x.Path).IsUnique();
+        });
+
+        modelBuilder.Entity<RatingsSnapshot>(e =>
+        {
+            e.HasIndex(x => new { x.TmdbId, x.MediaType }).IsUnique();
+            e.HasIndex(x => x.NextRefreshAtUtc);
+            e.HasIndex(x => x.RatingsLastUpdatedAtUtc);
         });
     }
 

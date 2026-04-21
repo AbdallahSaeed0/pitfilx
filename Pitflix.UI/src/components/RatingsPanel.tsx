@@ -1,9 +1,9 @@
 import type { ReactNode } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { getRatingsAggregate, type RatingsAggregate } from "../api/ratings";
+import { loadRatingsPanelData, type RatingsPanelData } from "../api/ratings";
 import { cn } from "../utils/cn";
 
-function hasAnyData(r: RatingsAggregate) {
+function hasAnyData(r: RatingsPanelData) {
   return (
     r.tmdbVoteAverage != null ||
     (r.imdbRatingDisplay && r.imdbRatingDisplay.trim() !== "") ||
@@ -50,9 +50,9 @@ export function RatingsPanel({
   className?: string;
 }) {
   const q = useQuery({
-    queryKey: ["ratings-aggregate", tmdbId, mediaType],
-    queryFn: () => getRatingsAggregate(tmdbId, mediaType),
-    staleTime: 60 * 60_000,
+    queryKey: ["ratings-display", tmdbId, mediaType],
+    queryFn: () => loadRatingsPanelData(tmdbId, mediaType),
+    staleTime: 10 * 60_000,
     retry: 1,
   });
 
@@ -152,9 +152,21 @@ export function RatingsPanel({
       )}
     >
       <div className="flex flex-wrap items-end justify-between gap-2 border-b border-white/5 pb-2.5">
-        <div>
+        <div className="min-w-0">
           <p className="text-[11px] font-semibold uppercase tracking-wider text-pitflix-muted">Ratings</p>
           <p className="text-[10px] text-pitflix-subtle">Aggregated from multiple providers</p>
+          {(r.isStale || r.seeded) && (
+            <p className="mt-1 flex flex-wrap gap-x-2 gap-y-0.5 text-[10px] leading-snug">
+              {r.isStale ? (
+                <span className="rounded bg-amber-500/15 px-1.5 py-0.5 text-amber-100/95">
+                  Cached · refresh queued
+                </span>
+              ) : null}
+              {r.seeded ? (
+                <span className="rounded bg-emerald-500/12 px-1.5 py-0.5 text-emerald-100/90">First index</span>
+              ) : null}
+            </p>
+          )}
         </div>
         <p className="shrink-0 text-[10px] tabular-nums text-pitflix-subtle">
           Updated {new Date(r.fetchedAtUtc).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" })}

@@ -62,10 +62,9 @@ export type TrailerCard = {
   trailerPublishedAtUtc?: string | null;
 };
 
+/** Home “Latest trailers” — persisted Phase-1 ingestion + TMDB title/poster enrich (compact JSON). */
 export const getLatestTrailers = () =>
-  api
-    .get<TrailerCard[]>("/home/trailers/latest", { timeout: 120_000 })
-    .then((r) => r.data);
+  api.get<TrailerCard[]>("/home/trailers/latest", { timeout: 60_000 }).then((r) => r.data);
 
 export const getUpcomingTrailers = () =>
   api.get<TrailerCard[]>("/home/trailers/upcoming").then((r) => r.data);
@@ -107,7 +106,8 @@ export type TvScheduleResponse =
 export const discoverTvSchedule = (tmdbId: number) =>
   api.get<TvScheduleResponse>("/discover/tv-schedule", { params: { tmdbId } }).then((r) => r.data);
 
-export type TrailerBrowseMode = "latest" | "trending" | "upcoming-movies" | "upcoming-tv" | "all-upcoming";
+/** TMDB-backed browse only; use `getLatestTrailers` for persisted Latest feed. */
+export type TrailerBrowseMode = "trending" | "upcoming";
 export type TrailerBrowseFilter = "movie" | "tv" | "all";
 
 export const browseTrailers = (

@@ -38,23 +38,59 @@ Write-Host "If build still fails with 'link: extra operand', Git's usr\bin is ah
 Write-Host "Temporarily rename C:\Program Files\Git\usr\bin\link.exe or use 'x64 Native Tools for VS' prompt."
 Write-Host ""
 
-# npm runs this script in a fresh PowerShell, so signing env vars must be set inside cmd for `npx tauri build`.
-# Tauri's bundler reads `TAURI_SIGNING_PRIVATE_KEY` (inline secret), not only *_PATH.
+# npm runs this script in a fresh PowerShell, so signing must reach the Node/tauri-cli process.
+# tauri-cli reads only TAURI_SIGNING_PRIVATE_KEY. If that value is a path to an existing file, it loads the key from disk.
+# (TAURI_SIGNING_PRIVATE_KEY_PATH is not read by the bundler — do not rely on it.)
 $localKey = Join-Path $uiRoot "src-tauri\.tauri-updater.key"
+if (
+  [string]::IsNullOrWhiteSpace($env:TAURI_SIGNING_PRIVATE_KEY) -and
+  -not [string]::IsNullOrWhiteSpace($env:TAURI_SIGNING_PRIVATE_KEY_PATH) -and
+  (Test-Path -LiteralPath $env:TAURI_SIGNING_PRIVATE_KEY_PATH)
+) {
+  $env:TAURI_SIGNING_PRIVATE_KEY = $env:TAURI_SIGNING_PRIVATE_KEY_PATH
+}
 $signPrefix = ""
-if (Test-Path $localKey) {
-  $keyContent = (Get-Content -Raw $localKey).Trim()
-  $signPrefix = "set `"TAURI_SIGNING_PRIVATE_KEY=$keyContent`" && "
-  Write-Host "Using updater signing key from: $localKey"
+$hasSigning =
+  (Test-Path -LiteralPath $localKey) -or
+  (-not [string]::IsNullOrWhiteSpace($env:TAURI_SIGNING_PRIVATE_KEY))
+
+if (Test-Path -LiteralPath $localKey) {
+  $env:TAURI_SIGNING_PRIVATE_KEY = $localKey
+  $signPrefix = 'set "TAURI_SIGNING_PRIVATE_KEY=' + $localKey + '"'
+  Write-Host "Using updater signing key from: $localKey (TAURI_SIGNING_PRIVATE_KEY set to this path)"
+  Write-Host ""
+}
+elseif ($hasSigning) {
+  Write-Host "Using TAURI_SIGNING_PRIVATE_KEY from environment."
   Write-Host ""
 }
 
-$batch = "call `"$vcvars`" && set `"CARGO_TARGET_DIR=$targetDir`" && $signPrefix cd /d `"$uiRoot`" && npx tauri build"
+$noSigMerge = Join-Path $uiRoot "src-tauri\tauri.bundle.nosig.json"
+$configMerge = ""
+if (-not $hasSigning) {
+  if (Test-Path $noSigMerge) {
+    $configMerge = '--config "' + $noSigMerge + '"'
+    Write-Host 'No updater signing key found - merging tauri.bundle.nosig.json (no .sig / updater artifacts).'
+    Write-Host 'For signed updates: add src-tauri\.tauri-updater.key or set TAURI_SIGNING_PRIVATE_KEY. See UPDATER_SETUP.md'
+    Write-Host ""
+  }
+}
+
+$batchParts = @(
+  ('call "' + $vcvars + '"'),
+  ('set "CARGO_TARGET_DIR=' + $targetDir + '"')
+)
+if ($signPrefix) {
+  $batchParts += $signPrefix
+}
+$batchParts += ('cd /d "' + $uiRoot + '"')
+$batchParts += ('npx tauri build ' + $configMerge.Trim())
+$batch = ($batchParts | Where-Object { $_.Length -gt 0 }) -join ' && '
 $p = Start-Process -FilePath "cmd.exe" -ArgumentList "/c", $batch -NoNewWindow -Wait -PassThru
 
 Write-Host ""
 Write-Host "Updater signing (optional for local dev, required for release updates):"
-Write-Host "  Set TAURI_SIGNING_PRIVATE_KEY or TAURI_SIGNING_PRIVATE_KEY_PATH before release builds."
+Write-Host "  Set TAURI_SIGNING_PRIVATE_KEY (inline key or path to key file) before release builds."
 Write-Host "  See Pitflix.UI/UPDATER_SETUP.md"
 
 exit $p.ExitCode

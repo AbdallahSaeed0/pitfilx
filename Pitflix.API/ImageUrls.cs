@@ -1,3 +1,4 @@
+using Pitflix.Core.Api;
 using Pitflix.Core.Models;
 using Pitflix.Core.Services;
 
@@ -178,17 +179,25 @@ public static class ImageUrls
             PosterRemoteUrl = s.PosterRemoteUrl
         };
 
-    public static CastMember MapCastMember(CastMember c) =>
-        new()
+    public static CastMember MapCastMember(CastMember c)
+    {
+        var name = string.IsNullOrWhiteSpace(c.Name) ? "Unknown" : c.Name.Trim();
+        var character = string.IsNullOrWhiteSpace(c.Character) ? "—" : c.Character.Trim();
+        var remote = TmdbImageUrls.ProfileUrl(c.ProfilePath);
+        return new CastMember
         {
             Id = c.Id,
             PersonTmdbId = c.PersonTmdbId,
             MediaId = c.MediaId,
             MediaType = c.MediaType,
-            Name = c.Name,
-            Character = c.Character,
-            ProfileLocalPath = ToImageUrl(c.ProfileLocalPath)
+            Name = name,
+            Character = character,
+            ProfilePath = c.ProfilePath,
+            BillingOrder = c.BillingOrder,
+            ProfileLocalPath = ToImageUrl(c.ProfileLocalPath),
+            ProfileRemoteUrl = remote
         };
+    }
 
     public static TmdbCrewMember MapCrewMember(TmdbCrewMember c) =>
         new()
@@ -197,7 +206,8 @@ public static class ImageUrls
             Name = c.Name,
             Job = c.Job,
             ProfilePath = c.ProfilePath,
-            ProfileLocalPath = ToImageUrl(c.ProfileLocalPath)
+            ProfileLocalPath = ToImageUrl(c.ProfileLocalPath),
+            ProfileRemoteUrl = TmdbImageUrls.ProfileUrl(c.ProfilePath)
         };
 
     public static WatchHistory MapWatchHistory(WatchHistory h) =>
@@ -213,6 +223,10 @@ public static class ImageUrls
             StartedAt = h.StartedAt,
             StoppedAt = h.StoppedAt,
             EstimatedSeconds = h.EstimatedSeconds,
+            MaxKnownPositionSeconds = h.MaxKnownPositionSeconds,
+            LastExplicitPositionSeconds = h.LastExplicitPositionSeconds,
+            TrustedResumeSeconds = h.TrustedResumeSeconds,
+            IsStopFinalized = h.IsStopFinalized,
             FileDurationSeconds = h.FileDurationSeconds,
             IsCompleted = h.IsCompleted,
             NextUpLabel = h.NextUpLabel,

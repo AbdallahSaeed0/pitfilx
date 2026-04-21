@@ -4,32 +4,23 @@ import { useEffect, useMemo, useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 import {
   browseTrailers,
+  getLatestTrailers,
   type TrailerBrowseFilter,
-  type TrailerBrowseMode,
   type TrailerCard,
 } from "../api/homeDiscover";
 import { TrailerModal } from "../components/trailers/TrailerModal";
 import { MediaImage } from "../components/ui/MediaImage";
-import { Spinner } from "../components/ui/Spinner";
 import { useDebounce } from "../hooks/useDebounce";
 import { cn } from "../utils/cn";
 
-const defaultMode: TrailerBrowseMode = "all-upcoming";
+type PageMode = "latest" | "trending" | "upcoming";
 
-const modes: { id: TrailerBrowseMode; label: string; hint: string }[] = [
-  { id: "all-upcoming", label: "All upcoming", hint: "Movies and TV that have not aired or released yet — use Type to narrow." },
-  { id: "upcoming-movies", label: "Movies", hint: "Theatrical releases with a future date." },
-  { id: "upcoming-tv", label: "Series", hint: "First air dates in the future (or today)." },
-  {
-    id: "latest",
-    label: "Latest",
-    hint: "New and upcoming trailers first (unreleased titles prioritized), one best clip per show — same logic as Home.",
-  },
-  {
-    id: "trending",
-    label: "Trending",
-    hint: "This week’s TMDB trending movies & series — trailer clips only, popularity-filtered.",
-  },
+const defaultMode: PageMode = "latest";
+
+const modes: { id: PageMode; label: string }[] = [
+  { id: "latest", label: "Latest" },
+  { id: "trending", label: "Trending" },
+  { id: "upcoming", label: "Upcoming" },
 ];
 
 const filters: { id: TrailerBrowseFilter; label: string }[] = [
@@ -38,10 +29,50 @@ const filters: { id: TrailerBrowseFilter; label: string }[] = [
   { id: "tv", label: "Series" },
 ];
 
-function modeFromParams(modeParam: string | null): TrailerBrowseMode {
-  if (!modeParam) return defaultMode;
-  const m = modeParam.trim().toLowerCase();
-  return modes.some((x) => x.id === m) ? (m as TrailerBrowseMode) : defaultMode;
+function modeFromParams(modeParam: string | null): PageMode {
+  const m = (modeParam ?? "").trim().toLowerCase();
+  if (m === "trending") return "trending";
+  if (m === "upcoming" || m === "all-upcoming" || m === "upcoming-movies" || m === "upcoming-tv") return "upcoming";
+  if (m === "latest") return "latest";
+  return defaultMode;
+}
+
+function filterTrailersLocal(
+  cards: TrailerCard[],
+  media: TrailerBrowseFilter,
+  search: string,
+): TrailerCard[] {
+  const q = search.trim().toLowerCase();
+  return cards.filter((t) => {
+    const mt = (t.mediaType || "").toLowerCase();
+    if (media === "movie" && mt !== "movie") return false;
+    if (media === "tv" && mt !== "tv") return false;
+    if (q.length >= 2) {
+      const title = (t.title || "").toLowerCase();
+      const clip = (t.trailerTitle || "").toLowerCase();
+      if (!title.includes(q) && !clip.includes(q)) return false;
+    }
+    return true;
+  });
+}
+
+function TrailerGridSkeleton({ count = 10 }: { count?: number }) {
+  return (
+    <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5">
+      {Array.from({ length: count }).map((_, i) => (
+        <div
+          key={i}
+          className="overflow-hidden rounded-xl border border-pitflix-card/40 bg-pitflix-surface/30 animate-pulse"
+        >
+          <div className="aspect-video w-full bg-pitflix-card/60" />
+          <div className="space-y-2 p-2">
+            <div className="h-3.5 rounded bg-pitflix-card/50" />
+            <div className="h-2.5 w-2/3 rounded bg-pitflix-card/40" />
+          </div>
+        </div>
+      ))}
+    </div>
+  );
 }
 
 export function TrailersPage() {
@@ -54,54 +85,103 @@ export function TrailersPage() {
     p.set("mode", defaultMode);
     setSearchParams(p, { replace: true });
   }, [searchParams, setSearchParams]);
+
+  useEffect(() => {
+    const raw = searchParams.get("mode")?.trim().toLowerCase() ?? "";
+    if (raw === "all-upcoming" || raw === "upcoming-movies" || raw === "upcoming-tv") {
+      const p = new URLSearchParams(searchParams);
+      p.set("mode", "upcoming");
+      setSearchParams(p, { replace: true });
+      if (raw === "upcoming-movies") setFilter("movie");
+      else if (raw === "upcoming-tv") setFilter("tv");
+    }
+  }, [searchParams, setSearchParams]);
+
   const [filter, setFilter] = useState<TrailerBrowseFilter>("all");
   const [active, setActive] = useState<TrailerCard | null>(null);
   const [searchDraft, setSearchDraft] = useState("");
-  const debouncedSearch = useDebounce(searchDraft, 320);
+  const debouncedSearch = useDebounce(searchDraft, 420);
 
-  const setMode = (next: TrailerBrowseMode) => {
+  const setMode = (next: PageMode) => {
     const p = new URLSearchParams(searchParams);
     p.set("mode", next);
     setSearchParams(p, { replace: true });
   };
 
-  useEffect(() => {
-    if (mode === "upcoming-movies") setFilter("movie");
-    else if (mode === "upcoming-tv") setFilter("tv");
-  }, [mode]);
-
-  const showTypeFilter = mode === "latest" || mode === "trending" || mode === "all-upcoming";
-
-  const searchActive = debouncedSearch.trim().length >= 2;
-  const q = useQuery({
-    queryKey: ["trailers-browse", mode, filter, debouncedSearch.trim()],
-    queryFn: () =>
-      browseTrailers(mode, filter, searchActive ? debouncedSearch.trim() : undefined),
-    staleTime: 120_000,
+  const latestQ = useQuery({
+    queryKey: ["trailers", "latest-persisted"],
+    queryFn: getLatestTrailers,
+    staleTime: 5 * 60_000,
+    gcTime: 30 * 60_000,
+    enabled: mode === "latest",
   });
 
-  const list = q.data ?? [];
-  const modeMeta = useMemo(() => modes.find((m) => m.id === mode), [mode]);
+  const searchActive = debouncedSearch.trim().length >= 2;
+  const browseQ = useQuery({
+    queryKey: ["trailers", "browse", mode, filter, debouncedSearch.trim()],
+    queryFn: () => {
+      if (mode !== "trending" && mode !== "upcoming") throw new Error("browse query enabled only for TMDB modes");
+      return browseTrailers(mode, filter, searchActive ? debouncedSearch.trim() : undefined);
+    },
+    staleTime: mode === "trending" ? 3 * 60_000 : 2 * 60_000,
+    enabled: mode === "trending" || mode === "upcoming",
+  });
+
+  const list = useMemo(() => {
+    if (mode === "latest") {
+      const raw = latestQ.data ?? [];
+      return filterTrailersLocal(raw, filter, debouncedSearch);
+    }
+    return browseQ.data ?? [];
+  }, [mode, latestQ.data, browseQ.data, filter, debouncedSearch]);
+
+  const loading = mode === "latest" ? latestQ.isLoading : browseQ.isLoading;
+  const error = mode === "latest" ? latestQ.isError : browseQ.isError;
 
   return (
-    <div className="mx-auto max-w-6xl space-y-8 pb-12">
-      <div className="flex flex-wrap items-start justify-between gap-4">
-        <div>
-          <h1 className="flex items-center gap-2 text-2xl font-bold text-white">
-            <CirclePlay className="h-8 w-8 text-pitflix-primary" />
-            Trailers
-          </h1>
-          <p className="mt-2 max-w-2xl text-sm text-pitflix-subtle">
-            <span className="font-medium text-white/90">Latest</span> matches Home: upcoming trailers first, then recent
-            drops (one clip per title).
-            <span className="font-medium text-white/90"> Trending</span> uses this week’s TMDB charts.{" "}
-            <span className="font-medium text-white/90">Upcoming</span> tabs require a future release date and a trailer
-            clip. Search queries TMDB directly anytime (at least 2 characters).
-          </p>
-        </div>
+    <div className="mx-auto max-w-6xl space-y-5 pb-12">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <h1 className="flex items-center gap-2 text-xl font-bold text-white md:text-2xl">
+          <CirclePlay className="h-7 w-7 shrink-0 text-pitflix-primary md:h-8 md:w-8" />
+          Trailers
+        </h1>
         <Link to="/" className="text-sm text-pitflix-primary hover:underline">
           ← Home
         </Link>
+      </div>
+
+      <div className="flex flex-wrap gap-2 rounded-xl border border-pitflix-card/50 bg-pitflix-surface/40 p-3">
+        {modes.map((m) => (
+          <button
+            key={m.id}
+            type="button"
+            onClick={() => setMode(m.id)}
+            className={cn(
+              "rounded-full px-4 py-1.5 text-xs font-semibold transition-colors",
+              mode === m.id ? "bg-pitflix-primary text-white" : "bg-pitflix-card text-pitflix-muted hover:text-white",
+            )}
+          >
+            {m.label}
+          </button>
+        ))}
+        <div className="ml-auto flex flex-wrap items-center gap-1.5">
+          <span className="text-[10px] font-medium uppercase tracking-wide text-pitflix-muted">Type</span>
+          {filters.map((f) => (
+            <button
+              key={f.id}
+              type="button"
+              onClick={() => setFilter(f.id)}
+              className={cn(
+                "rounded-full px-2.5 py-1 text-[11px] font-semibold",
+                filter === f.id
+                  ? "bg-pitflix-primary/30 text-white ring-1 ring-pitflix-primary/40"
+                  : "bg-pitflix-bg text-pitflix-muted hover:text-white",
+              )}
+            >
+              {f.label}
+            </button>
+          ))}
+        </div>
       </div>
 
       <div className="relative">
@@ -110,86 +190,31 @@ export function TrailersPage() {
           type="search"
           value={searchDraft}
           onChange={(e) => setSearchDraft(e.target.value)}
-          placeholder="Search trailers by title (e.g. Dune)…"
+          placeholder={
+            mode === "latest"
+              ? "Search this feed by title…"
+              : "Search TMDB (trending / upcoming) — min 2 characters…"
+          }
           className="w-full rounded-xl border border-pitflix-card bg-pitflix-surface/50 py-2.5 pl-10 pr-3 text-sm text-white placeholder:text-pitflix-muted focus:border-pitflix-primary focus:outline-none focus:ring-1 focus:ring-pitflix-primary/40"
         />
-        {searchDraft.trim().length > 0 && searchDraft.trim().length < 2 ? (
+        {mode !== "latest" && searchDraft.trim().length > 0 && searchDraft.trim().length < 2 ? (
           <p className="mt-1 text-[11px] text-pitflix-muted">Type at least 2 characters to search TMDB.</p>
         ) : null}
       </div>
 
-      <div className="space-y-3 rounded-2xl border border-pitflix-card/50 bg-pitflix-surface/40 p-5">
-        <p className="text-xs font-semibold uppercase tracking-wide text-pitflix-muted">Browse</p>
-        <div className="flex flex-wrap gap-2">
-          {modes.map((m) => (
-            <button
-              key={m.id}
-              type="button"
-              title={m.hint}
-              onClick={() => setMode(m.id)}
-              disabled={searchActive}
-              className={cn(
-                "rounded-full px-4 py-1.5 text-xs font-semibold transition-colors",
-                searchActive && "opacity-40",
-                mode === m.id
-                  ? "bg-pitflix-primary text-white"
-                  : "bg-pitflix-card text-pitflix-muted hover:text-white",
-              )}
-            >
-              {m.label}
-            </button>
-          ))}
-        </div>
-        <p className="text-[11px] text-pitflix-subtle">
-          {searchActive
-            ? "Search is active — browse tabs are disabled until you clear the search box."
-            : modeMeta?.hint}
-        </p>
+      {loading ? <TrailerGridSkeleton /> : null}
 
-        {showTypeFilter && !searchActive ? (
-          <div className="flex flex-wrap items-center gap-2 border-t border-pitflix-card/40 pt-4">
-            <span className="text-xs font-medium text-pitflix-muted">Type:</span>
-            {filters.map((f) => (
-              <button
-                key={f.id}
-                type="button"
-                onClick={() => setFilter(f.id)}
-                className={cn(
-                  "rounded-full px-3 py-1 text-xs font-semibold",
-                  filter === f.id
-                    ? "bg-pitflix-primary/30 text-white ring-1 ring-pitflix-primary/40"
-                    : "bg-pitflix-bg text-pitflix-muted hover:text-white",
-                )}
-              >
-                {f.label}
-              </button>
-            ))}
-          </div>
-        ) : !searchActive ? (
-          <p className="border-t border-pitflix-card/40 pt-4 text-[11px] text-pitflix-muted">
-            Media type is fixed by the tab above (no extra filter needed).
-          </p>
-        ) : null}
-      </div>
-
-      {q.isLoading ? (
-        <div className="flex justify-center py-16">
-          <Spinner />
-        </div>
-      ) : null}
-
-      {q.isError ? (
+      {error ? (
         <p className="text-sm text-rose-200/90">Could not load trailers. Is the API running?</p>
       ) : null}
 
-      {!q.isLoading && !q.isError && list.length === 0 ? (
+      {!loading && !error && list.length === 0 ? (
         <p className="text-sm text-pitflix-subtle">No trailers matched this filter right now.</p>
       ) : null}
 
-      {!q.isLoading && list.length > 0 ? (
+      {!loading && list.length > 0 ? (
         <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5">
           {list.map((t) => {
-            // Trailer cards should look like trailers: prefer the YouTube thumbnail over generic backdrops.
             const youtubeThumb = `https://img.youtube.com/vi/${t.youtubeKey}/hqdefault.jpg`;
             const thumb = youtubeThumb || t.posterUrl || t.backdropUrl;
             return (

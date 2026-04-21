@@ -75,16 +75,19 @@ If you lose the **private** key, you cannot ship signed updates that existing us
 
 ### Windows: `npm run tauri:build:win`
 
-If `src-tauri/.tauri-updater.key` exists locally, `scripts/tauri-build-windows.ps1` injects its contents into `TAURI_SIGNING_PRIVATE_KEY` for the `npx tauri build` step (so MSVC + updater signing work without you exporting variables by hand). **CI** should still supply the key via secrets (`TAURI_SIGNING_PRIVATE_KEY` or a protected file), not rely on a committed file.
+If `src-tauri/.tauri-updater.key` exists locally, `scripts/tauri-build-windows.ps1` sets `TAURI_SIGNING_PRIVATE_KEY` to that **file path** (and the same inside the MSVC `cmd` chain) so `tauri-cli` can load the key — the CLI only reads `TAURI_SIGNING_PRIVATE_KEY`, and if that string is a path to an existing file, it reads the file. **CI** should set `TAURI_SIGNING_PRIVATE_KEY` to either the key material or the path of a protected key file.
+
+If **no** key file and **no** `TAURI_SIGNING_PRIVATE_KEY` are set, the same script merges `src-tauri/tauri.bundle.nosig.json` (`createUpdaterArtifacts: false`) so the build finishes without `.sig` files. For release builds that need signatures, always provide the private key. A plain `npx tauri build` without a key still fails at signing unless you pass `--config src-tauri/tauri.bundle.nosig.json` yourself.
 
 `.env` is **not** loaded for signing. Otherwise use environment variables in the shell or CI:
 
 **Windows (PowerShell):**
 
 ```powershell
+# Inline key material (base64 minisign secret string):
 $env:TAURI_SIGNING_PRIVATE_KEY = Get-Content -Raw "$HOME\.tauri\pitflix.key"
-# Or point to a file:
-$env:TAURI_SIGNING_PRIVATE_KEY_PATH = "C:\secure\pitflix-updater.key"
+# Or set the var to the path of the key file (tauri-cli loads it if the path exists):
+$env:TAURI_SIGNING_PRIVATE_KEY = "C:\secure\pitflix-updater.key"
 # If the key has a password:
 $env:TAURI_SIGNING_PRIVATE_KEY_PASSWORD = "..."
 ```
@@ -93,8 +96,8 @@ $env:TAURI_SIGNING_PRIVATE_KEY_PASSWORD = "..."
 
 ```bash
 export TAURI_SIGNING_PRIVATE_KEY="$(cat ~/.tauri/pitflix.key)"
-# or
-export TAURI_SIGNING_PRIVATE_KEY_PATH="$HOME/.tauri/pitflix.key"
+# or path to key file:
+export TAURI_SIGNING_PRIVATE_KEY="$HOME/.tauri/pitflix.key"
 ```
 
 Then run your normal Tauri release build, e.g.:

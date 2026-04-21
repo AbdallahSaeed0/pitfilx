@@ -5,7 +5,7 @@
   },
   "projects": {
     "F:\\PitFilx-app\\Pitflix.API\\Pitflix.API.csproj": {
-      "version": "1.0.0",
+      "version": "0.3.8",
       "restore": {
         "projectUniqueName": "F:\\PitFilx-app\\Pitflix.API\\Pitflix.API.csproj",
         "projectName": "Pitflix.API",
@@ -133,7 +133,7 @@
       }
     },
     "F:\\PitFilx-app\\Pitflix.Core\\Pitflix.Core.csproj": {
-      "version": "1.0.0",
+      "version": "0.3.8",
       "restore": {
         "projectUniqueName": "F:\\PitFilx-app\\Pitflix.Core\\Pitflix.Core.csproj",
         "projectName": "Pitflix.Core",

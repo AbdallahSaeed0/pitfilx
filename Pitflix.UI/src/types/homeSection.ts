@@ -94,6 +94,10 @@ export type WatchHistoryRow = {
   backdropLocalPath?: string | null;
   mediaType: string;
   estimatedSeconds?: number;
+  maxKnownPositionSeconds?: number;
+  lastExplicitPositionSeconds?: number;
+  trustedResumeSeconds?: number;
+  isStopFinalized?: boolean;
   fileDurationSeconds?: number;
   nextUpLabel?: string | null;
   libraryMovieId?: number | null;

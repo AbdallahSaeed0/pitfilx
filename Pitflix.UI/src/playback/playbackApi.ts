@@ -66,8 +66,15 @@ export async function playbackTickNextCountdown(): Promise<number | null> {
   return invoke<number | null>("playback_pol_tick_next_countdown");
 }
 
-export async function playbackPersistProgress(): Promise<void> {
-  await invoke("playback_pol_persist_progress");
+export type PlaybackPersistProgressOpts = {
+  /** Pitflix server watch row id — stored in local checkpoint for correlation / crash recovery. */
+  historyId?: number;
+};
+
+export async function playbackPersistProgress(opts?: PlaybackPersistProgressOpts): Promise<void> {
+  await invoke("playback_pol_persist_progress", {
+    req: opts?.historyId != null ? { historyId: opts.historyId } : {},
+  });
 }
 
 export async function playbackSetExtensionThumbnails(descriptor: unknown | null): Promise<void> {

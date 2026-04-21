@@ -39,6 +39,20 @@ export function MediaImage({
   const displaySrc = phase === "primary" ? primary : backup;
   const dead = phase === "dead" || !displaySrc;
 
+  /** No URL to attempt: show initials placeholder immediately (avoids empty img / flash). */
+  if (!primary && !backup && (fallbackText?.trim() || alt.trim())) {
+    return (
+      <div
+        className={cn(
+          "flex items-center justify-center bg-pitflix-surface/80 font-semibold uppercase tracking-wide text-pitflix-subtle ring-1 ring-inset ring-white/15",
+          className,
+        )}
+      >
+        <span className="px-2 text-center text-xs">{fallbackText?.trim() || alt.slice(0, 2) || "?"}</span>
+      </div>
+    );
+  }
+
   /** Cached / decoded images often skip <code>onLoad</code>; avoid a permanent loading pulse. */
   useLayoutEffect(() => {
     if (dead) return;
@@ -64,11 +78,11 @@ export function MediaImage({
     return (
       <div
         className={cn(
-          "flex items-center justify-center bg-pitflix-card text-pitflix-subtle",
+          "flex items-center justify-center bg-pitflix-surface/80 text-pitflix-subtle ring-1 ring-inset ring-white/15",
           className,
         )}
       >
-        <span className="px-2 text-center text-xs">{fallbackText || alt || "No image"}</span>
+        <span className="px-2 text-center text-xs">{fallbackText || alt || "?"}</span>
       </div>
     );
   }

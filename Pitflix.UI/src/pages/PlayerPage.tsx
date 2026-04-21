@@ -161,6 +161,11 @@ function parseSubtitlePrefs(raw: string | null): PlayerSubtitlePrefs {
 const FS_HIDE_IDLE_MS = 1750;
 const FS_HIDE_PAUSED_MS = 2500;
 
+/** Watch-history API heartbeat (playback tracking). */
+const HISTORY_PROGRESS_HEARTBEAT_MS = 5000;
+/** Coalesce rapid seeks / scrub drags before POST /history/…/progress. */
+const SEEK_PROGRESS_FLUSH_DEBOUNCE_MS = 400;
+
 /** Appends a line to `%LOCALAPPDATA%\\Pitflix\\pitflix-player-debug.log` (or the OS app log dir). */
 function playerDebugLog(line: string) {
   if (!isTauri()) return;
@@ -241,6 +246,18 @@ export function PlayerPage() {
   useEffect(() => {
     launchStateRef.current = state;
   }, [state]);
+
+  useEffect(() => {
+    historyIdRef.current = state?.historyId ?? null;
+  }, [state?.historyId]);
+
+  useEffect(() => {
+    sessionDeadRef.current = sessionDead;
+  }, [sessionDead]);
+
+  useEffect(() => {
+    endedRef.current = ended;
+  }, [ended]);
   // Companion-page keyboard scope (webview focused). This is NOT the source of truth for mpv controls.
   // Keep only companion behaviors here; mpv-native controls are defined under src-tauri/mpv-config.
   useEffect(() => {
@@ -263,7 +280,13 @@ export function PlayerPage() {
 
   /** Set after `historyStopped` was sent for the current row (episode switch / ended flush / explicit). */
   const historyStopHandledRef = useRef(false);
+  /** After server row is stop-finalized — blocks late `/progress` and redundant checkpoints. */
+  const historyServerFinalizedRef = useRef(false);
+  const historyIdRef = useRef<number | null>(null);
   const lastProgressRef = useRef(0);
+  const seekProgressFlushTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const sessionDeadRef = useRef(false);
+  const endedRef = useRef(false);
   const timePosRef = useRef(0);
   const durationRef = useRef(0);
   const pausedRef = useRef(false);
@@ -359,16 +382,6 @@ export function PlayerPage() {
     }).catch(() => {});
   }, [externalReady, state, resumeChoice, nextEp]);
 
-  useEffect(() => {
-    for (const e of polPlayback.lastEvents) {
-      if (e.type === "onNearEnd") {
-      }
-      if (e.type === "onEnded") {
-        setEpisodeFinished(true);
-      }
-    }
-  }, [polPlayback.seq, polPlayback.lastEvents]);
-
   // Focus window when either mode is ready
   useEffect(() => {
     if (!embedReady && !externalReady) return;
@@ -398,10 +411,66 @@ export function PlayerPage() {
     volumeRef.current = volume;
   }, [volume]);
 
+  const flushHistoryProgressNow = useCallback(() => {
+    const hid = historyIdRef.current;
+    if (hid == null) return;
+    if (historyServerFinalizedRef.current) return;
+    if (sessionDeadRef.current || endedRef.current) return;
+    const pos = Math.floor(timePosRef.current);
+    const dur = durationRef.current;
+    if (pos < 0) return;
+    lastProgressRef.current = pos;
+    trackProgressSave();
+    void postHistoryProgress(hid, {
+      positionSeconds: pos,
+      durationSeconds: dur > 0 ? Math.floor(dur) : undefined,
+      markWatching: true,
+    });
+    void playbackPersistProgress({ historyId: hid }).catch(() => {});
+    trackQueryInvalidation();
+    void qc.invalidateQueries({ queryKey: ["history"] });
+  }, [qc]);
+
+  const scheduleSeekProgressFlush = useCallback(() => {
+    if (seekProgressFlushTimerRef.current) {
+      clearTimeout(seekProgressFlushTimerRef.current);
+    }
+    seekProgressFlushTimerRef.current = window.setTimeout(() => {
+      seekProgressFlushTimerRef.current = null;
+      flushHistoryProgressNow();
+    }, SEEK_PROGRESS_FLUSH_DEBOUNCE_MS);
+  }, [flushHistoryProgressNow]);
+
+  useEffect(() => {
+    return () => {
+      if (seekProgressFlushTimerRef.current) {
+        clearTimeout(seekProgressFlushTimerRef.current);
+        seekProgressFlushTimerRef.current = null;
+      }
+    };
+  }, []);
+
+  useEffect(() => {
+    for (const e of polPlayback.lastEvents) {
+      if (e.type === "onNearEnd") {
+      }
+      if (e.type === "onSeek") {
+        scheduleSeekProgressFlush();
+      }
+      if (e.type === "onEnded") {
+        setEpisodeFinished(true);
+      }
+    }
+  }, [polPlayback.seq, polPlayback.lastEvents, scheduleSeekProgressFlush]);
+
   useEffect(() => {
     const endDrag = () => {
+      const wasSeekDrag = seekDraggingRef.current;
       volumeDraggingRef.current = false;
       seekDraggingRef.current = false;
+      if (wasSeekDrag) {
+        scheduleSeekProgressFlush();
+      }
     };
     window.addEventListener("pointerup", endDrag);
     window.addEventListener("pointercancel", endDrag);
@@ -411,7 +480,7 @@ export function PlayerPage() {
       window.removeEventListener("pointercancel", endDrag);
       window.removeEventListener("blur", endDrag);
     };
-  }, []);
+  }, [scheduleSeekProgressFlush]);
 
   const syncVideoBounds = useCallback(() => {
     // This callback is ONLY called from embedded mode effects now
@@ -902,7 +971,7 @@ export function PlayerPage() {
               .catch((e) => console.error("[player] dismiss completed episode", e));
           } else if (launch?.historyId) {
             void flushProgressAndStopRef.current(launch.historyId, t, dur).catch(() => {});
-            void playbackPersistProgress().catch(() => {});
+            void playbackPersistProgress({ historyId: launch.historyId }).catch(() => {});
           }
           return;
         }
@@ -973,6 +1042,10 @@ export function PlayerPage() {
   }, [state, resumeChoice, onFullscreenPointerActivity, navigate, qc]);
 
   const flushProgressAndStop = useCallback(async (historyId: number, tPos: number, dur: number) => {
+    if (historyServerFinalizedRef.current) {
+      historyStopHandledRef.current = true;
+      return;
+    }
     const launch = launchStateRef.current;
     const key = launch ? playbackEpisodeKey(launch) : "none";
     playerDebugLog(`persist_target start key=${key} historyId=${historyId} t=${Math.floor(tPos)} d=${Math.floor(dur)}`);
@@ -1002,6 +1075,7 @@ export function PlayerPage() {
       });
       const stoppedEnd = performance.now();
       console.log("[close-lag] historyStopped completed in", (stoppedEnd - stoppedStart).toFixed(2), "ms");
+      historyServerFinalizedRef.current = true;
     } catch (e) {
       console.error("[close-lag] historyStopped failed:", e);
     }
@@ -1019,6 +1093,7 @@ export function PlayerPage() {
 
   useEffect(() => {
     historyStopHandledRef.current = false;
+    historyServerFinalizedRef.current = false;
     userInitiatedExitRef.current = false;
     externalClosedHandledRef.current = false;
     episodeSwitchInProgressRef.current = false;
@@ -1055,7 +1130,7 @@ export function PlayerPage() {
     if (launch?.historyId) {
       await flushProgressAndStop(launch.historyId, timePosRef.current, durationRef.current).catch(() => {});
     }
-    void playbackPersistProgress().catch(() => {});
+    void playbackPersistProgress({ historyId: launch?.historyId ?? undefined }).catch(() => {});
     void playbackCancelNextCountdown().catch(() => {});
     navigateFromPlayer(navigate, launch?.returnTo, true);
     void invoke("player2_close").catch((e) => logPlayer2InvokeFailure("player2_close", e));
@@ -1069,24 +1144,24 @@ export function PlayerPage() {
 
   useEffect(() => {
     if (!state || resumeChoice === "pending") return;
-    // Reduced polling frequency for external player mode (every 10 seconds instead of 4)
-    // External player handles its own state, we just need occasional progress sync
     const interval = window.setInterval(() => {
+      if (historyServerFinalizedRef.current) return;
       const pos = Math.floor(timePosRef.current);
       const dur = durationRef.current;
       if (pos <= 0 || pos === lastProgressRef.current) return;
       lastProgressRef.current = pos;
-      
+
       trackProgressSave();
       void postHistoryProgress(state.historyId, {
         positionSeconds: pos,
         durationSeconds: dur > 0 ? Math.floor(dur) : undefined,
         markWatching: true,
       });
-      
+      void playbackPersistProgress({ historyId: state.historyId }).catch(() => {});
+
       trackQueryInvalidation();
       void qc.invalidateQueries({ queryKey: ["history"] });
-    }, 10000);
+    }, HISTORY_PROGRESS_HEARTBEAT_MS);
     return () => window.clearInterval(interval);
   }, [state, qc, resumeChoice]);
 
@@ -1260,8 +1335,9 @@ export function PlayerPage() {
     (sec: number) => {
       if (ended || sessionDead) return;
       void send({ type: "SeekRelative", payload: sec });
+      scheduleSeekProgressFlush();
     },
-    [send, ended, sessionDead],
+    [send, ended, sessionDead, scheduleSeekProgressFlush],
   );
   const toggleMute = useCallback(() => {
     if (ended || sessionDead) return;

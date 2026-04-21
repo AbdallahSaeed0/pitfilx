@@ -161,7 +161,9 @@ public sealed class RatingsAggregationService
             RottenTomatoesCritics: rtCritics,
             RottenTomatoesAudience: rtAudience,
             OmdbResolvedVia: omdbVia,
-            OmdbMatchKind: matchKind.ToString());
+            OmdbMatchKind: matchKind.ToString(),
+            FromSnapshot: false,
+            IsStale: false);
 
         var cacheMins = omdbVia == "none" && _omdb.IsConfigured ? 45 : 8 * 60;
         _cache.Set(key, dto,
@@ -240,10 +242,14 @@ public sealed record RatingsAggregateDto(
     string? RottenTomatoesCritics,
     string? RottenTomatoesAudience,
     string? OmdbResolvedVia,
-    string? OmdbMatchKind)
+    string? OmdbMatchKind,
+    bool FromSnapshot = false,
+    bool IsStale = false)
 {
     public static RatingsAggregateDto Empty { get; } = new(
-        DateTime.UtcNow, null, null, null, null, null, null, null, null, null, null);
+        DateTime.UtcNow, null, null, null, null, null, null, null, null, null, null,
+        FromSnapshot: false,
+        IsStale: false);
 }
 
 public sealed record EpisodeRatingDto(double VoteAverage, string Source);

@@ -1,0 +1,60 @@
+{
+  "exportedAt": "2026-04-07T17:40:22.166Z",
+  "purpose": "Full awards dataset for human/LLM QA. Cross-check nominees and winners against AMPAS, Television Academy, BAFTA, Golden Globes. Note: tmdbId may be null in files; API can resolve at runtime.",
+  "files": [
+    {
+      "path": "catalog.json",
+      "bytes": 649
+    },
+    {
+      "path": "academy-awards.json",
+      "bytes": 850811
+    },
+    {
+      "path": "bafta.json",
+      "bytes": 737256
+    },
+    {
+      "path": "golden-globes.json",
+      "bytes": 199401
+    },
+    {
+      "path": "primetime-emmys.json",
+      "bytes": 548963
+    },
+    {
+      "path": "all-awards.json",
+      "bytes": 2497334
+    }
+  ],
+  "awards": [
+    {
+      "awardId": "academy-awards",
+      "displayName": "Academy Awards",
+      "editions": 98,
+      "yearMin": 1929,
+      "yearMax": 2026
+    },
+    {
+      "awardId": "bafta",
+      "displayName": "BAFTA Film Awards",
+      "editions": 66,
+      "yearMin": 1949,
+      "yearMax": 2026
+    },
+    {
+      "awardId": "golden-globes",
+      "displayName": "Golden Globe Awards",
+      "editions": 55,
+      "yearMin": 1954,
+      "yearMax": 2026
+    },
+    {
+      "awardId": "primetime-emmys",
+      "displayName": "Primetime Emmy Awards",
+      "editions": 56,
+      "yearMin": 1970,
+      "yearMax": 2025
+    }
+  ]
+}

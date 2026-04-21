@@ -1,0 +1,162 @@
+{
+  "awardId": "academy-awards",
+  "year": 2024,
+  "label": "96th Academy Awards",
+  "categories": [
+    {
+      "id": "best-picture",
+      "name": "Best Picture",
+      "nominees": [
+        {
+          "title": "Oppenheimer",
+          "mediaType": "movie",
+          "tmdbId": 872585,
+          "winner": true
+        },
+        {
+          "title": "American Fiction",
+          "mediaType": "movie",
+          "tmdbId": 1050035,
+          "winner": false
+        },
+        {
+          "title": "Anatomy of a Fall",
+          "mediaType": "movie",
+          "tmdbId": 915935,
+          "winner": false
+        },
+        {
+          "title": "Barbie",
+          "mediaType": "movie",
+          "tmdbId": 346698,
+          "winner": false
+        },
+        {
+          "title": "The Holdovers",
+          "mediaType": "movie",
+          "tmdbId": 840430,
+          "winner": false
+        },
+        {
+          "title": "Killers of the Flower Moon",
+          "mediaType": "movie",
+          "tmdbId": 466420,
+          "winner": false
+        },
+        {
+          "title": "Maestro",
+          "mediaType": "movie",
+          "tmdbId": 523607,
+          "winner": false
+        },
+        {
+          "title": "Past Lives",
+          "mediaType": "movie",
+          "tmdbId": 666277,
+          "winner": false
+        },
+        {
+          "title": "Poor Things",
+          "mediaType": "movie",
+          "tmdbId": 792307,
+          "winner": false
+        },
+        {
+          "title": "The Zone of Interest",
+          "mediaType": "movie",
+          "tmdbId": 467244,
+          "winner": false
+        }
+      ]
+    },
+    {
+      "id": "best-director",
+      "name": "Best Director",
+      "nominees": [
+        {
+          "title": "Christopher Nolan — Oppenheimer",
+          "mediaType": "movie",
+          "tmdbId": 872585,
+          "winner": true
+        },
+        {
+          "title": "Yorgos Lanthimos — Poor Things",
+          "mediaType": "movie",
+          "tmdbId": 792307,
+          "winner": false
+        },
+        {
+          "title": "Justine Triet — Anatomy of a Fall",
+          "mediaType": "movie",
+          "tmdbId": 915935,
+          "winner": false
+        },
+        {
+          "title": "Martin Scorsese — Killers of the Flower Moon",
+          "mediaType": "movie",
+          "tmdbId": 466420,
+          "winner": false
+        },
+        {
+          "title": "Jonathan Glazer — The Zone of Interest",
+          "mediaType": "movie",
+          "tmdbId": 467244,
+          "winner": false
+        }
+      ]
+    },
+    {
+      "id": "best-international",
+      "name": "Best International Feature Film",
+      "nominees": [
+        {
+          "title": "The Zone of Interest (United Kingdom)",
+          "mediaType": "movie",
+          "tmdbId": 467244,
+          "winner": true
+        },
+        {
+          "title": "Perfect Days (Japan)",
+          "mediaType": "movie",
+          "tmdbId": 976893,
+          "winner": false
+        },
+        {
+          "title": "Society of the Snow (Spain)",
+          "mediaType": "movie",
+          "tmdbId": 906126,
+          "winner": false
+        },
+        {
+          "title": "The Teachers' Lounge (Germany)",
+          "mediaType": "movie",
+          "tmdbId": 998022,
+          "winner": false
+        },
+        {
+          "title": "Io Capitano (Italy)",
+          "mediaType": "movie",
+          "tmdbId": 937746,
+          "winner": false
+        }
+      ]
+    }
+  ],
+  "dataSource": "AMPAS / press summaries (curated seed)",
+  "notes": "March 2024 ceremony (films of 2023). Extend categories or add more years as new JSON files under editions/academy-awards/.",
+  "qa": {
+    "version": 1,
+    "lastAuditAt": "2026-04-07T17:54:39.541Z",
+    "isSeedEdition": false,
+    "needsNomineeBackfill": false,
+    "needsTmdbEnrichment": false,
+    "warnings": [],
+    "stats": {
+      "categoryCount": 3,
+      "nomineeCount": 20,
+      "winnerCount": 3,
+      "tmdbNull": 0,
+      "tmdbSet": 20
+    }
+  }
+}

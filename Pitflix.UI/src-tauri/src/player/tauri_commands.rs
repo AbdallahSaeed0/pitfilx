@@ -328,11 +328,21 @@ pub fn playback_pol_tick_next_countdown(app: tauri::AppHandle, pol: State<'_, Pl
   Ok(rem)
 }
 
+#[derive(Debug, Clone, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct PlaybackPersistProgressRequest {
+  #[serde(default)]
+  pub history_id: Option<i32>,
+}
+
 #[tauri::command]
-pub fn playback_pol_persist_progress(pol: State<'_, PlaybackOrchestratorState>) -> Result<(), String> {
+pub fn playback_pol_persist_progress(
+  pol: State<'_, PlaybackOrchestratorState>,
+  req: PlaybackPersistProgressRequest,
+) -> Result<(), String> {
   let mut g = pol.0.lock().map_err(|e| e.to_string())?;
   let (t, d) = g.engine_time_and_duration();
-  g.persist_position_for_current(t, d);
+  g.persist_position_for_current(t, d, req.history_id);
   Ok(())
 }
 

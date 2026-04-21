@@ -7,11 +7,11 @@
   "targets": {
     ".NETCoreApp,Version=v8.0": {},
     ".NETCoreApp,Version=v8.0/win-x64": {
-      "Pitflix.API/1.0.0": {
+      "Pitflix.API/0.3.8": {
         "dependencies": {
           "Microsoft.EntityFrameworkCore.Sqlite": "8.0.11",
           "Newtonsoft.Json": "13.0.4",
-          "Pitflix.Core": "1.0.0",
+          "Pitflix.Core": "0.3.8",
           "runtimepack.Microsoft.NETCore.App.Runtime.win-x64": "8.0.24",
           "runtimepack.Microsoft.WindowsDesktop.App.Runtime.win-x64": "8.0.24",
           "runtimepack.Microsoft.AspNetCore.App.Runtime.win-x64": "8.0.24"
@@ -1588,22 +1588,22 @@
           }
         }
       },
-      "Pitflix.Core/1.0.0": {
+      "Pitflix.Core/0.3.8": {
         "dependencies": {
           "Microsoft.EntityFrameworkCore.Sqlite": "8.0.11",
           "Newtonsoft.Json": "13.0.4"
         },
         "runtime": {
           "Pitflix.Core.dll": {
-            "assemblyVersion": "1.0.0.0",
-            "fileVersion": "1.0.0.0"
+            "assemblyVersion": "0.3.8.0",
+            "fileVersion": "0.3.8.0"
           }
         }
       }
     }
   },
   "libraries": {
-    "Pitflix.API/1.0.0": {
+    "Pitflix.API/0.3.8": {
       "type": "project",
       "serviceable": false,
       "sha512": ""
@@ -1707,7 +1707,7 @@
       "path": "sqlitepclraw.provider.e_sqlite3/2.1.6",
       "hashPath": "sqlitepclraw.provider.e_sqlite3.2.1.6.nupkg.sha512"
     },
-    "Pitflix.Core/1.0.0": {
+    "Pitflix.Core/0.3.8": {
       "type": "project",
       "serviceable": false,
       "sha512": ""

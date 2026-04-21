@@ -67,19 +67,29 @@ builder.Services.AddDbContext<LibraryContext>(options =>
     options.UseSqlite(LibraryPaths.DatabaseConnectionString);
 });
 builder.Services.AddScoped<LibraryRepository>();
+builder.Services.AddScoped<TrailersRepository>();
+builder.Services.AddScoped<RatingsSnapshotRepository>();
 builder.Services.AddSingleton<ScanRuntime>();
 builder.Services.AddSingleton<SmartMatchRuntime>();
 builder.Services.AddHostedService<LibraryAutoScanService>();
 builder.Services.AddHostedService<PinnedFolderScanService>();
+builder.Services.AddHostedService<TrailerIngestionHostedService>();
 builder.Services.AddMemoryCache();
 builder.Services.AddHttpClient();
 builder.Services.AddHttpClient(nameof(OmdbRatingClient));
 builder.Services.AddTransient<OmdbRatingClient>();
 builder.Services.AddSingleton<PhpImdbGrabberClient>();
 builder.Services.AddSingleton<RatingsAggregationService>();
+builder.Services.AddScoped<RatingsEnrichmentService>();
+builder.Services.AddScoped<RatingsPersistedReadService>();
+builder.Services.AddSingleton<RatingsRefreshQueue>();
+builder.Services.AddHostedService<RatingsRefreshHostedService>();
 builder.Services.AddSingleton<IAwardsDataProvider, FileAwardsDataProvider>();
 builder.Services.AddSingleton<AwardsService>();
 builder.Services.AddSingleton<TrailersCuratedPriorityProvider>();
+builder.Services.AddSingleton<OfficialTrailersChannelProvider>();
+builder.Services.AddSingleton<TrailerMonitorRuntime>();
+builder.Services.AddScoped<TrailerIngestionService>();
 
 var app = builder.Build();
 
@@ -95,7 +105,13 @@ await using (var scope = app.Services.CreateAsyncScope())
     await repo.EnsureWatchStatusColumnsAsync();
     await repo.EnsureUserListTablesAndSeedAsync();
     await repo.EnsureCastMemberPersonTmdbIdColumnAsync();
+    await repo.EnsureCastMemberProfilePathAndBillingOrderColumnsAsync();
     await repo.EnsureCrewCacheJsonColumnsAsync();
+    var trailersRepo = scope.ServiceProvider.GetRequiredService<TrailersRepository>();
+    await trailersRepo.EnsureTrailersTableAsync();
+    await trailersRepo.EnsureTrailerChannelSyncStatesTableAsync();
+    var ratingsSnapshotRepo = scope.ServiceProvider.GetRequiredService<RatingsSnapshotRepository>();
+    await ratingsSnapshotRepo.EnsureRatingsSnapshotsTableAsync();
     AppSettings.ResolveTmdbApiKeyFromSources(repo);
     AppSettings.ResolveOpenSubtitlesFromSources(repo);
 
@@ -543,6 +559,57 @@ app.MapPost("/api/library/series/{id:int}/refresh-metadata", async (int id, Libr
         : Results.Json(new { success = false, error = err }, jsonSerializerOptions);
 });
 
+app.MapPost("/api/library/movies/{id:int}/refresh-cast", async (int id, LibraryRepository repo, CancellationToken ct) =>
+{
+    var tmdb = TmdbClientFactory.Create();
+    if (tmdb == null)
+        return Results.Json(new { success = false, error = "TMDB API key not configured." }, jsonSerializerOptions);
+    var (ok, err) = await repo.RefreshMovieCastFromTmdbAsync(id, tmdb, ct).ConfigureAwait(false);
+    return ok
+        ? Results.Json(new { success = true }, jsonSerializerOptions)
+        : Results.Json(new { success = false, error = err }, jsonSerializerOptions);
+});
+
+app.MapPost("/api/library/series/{id:int}/refresh-cast", async (int id, LibraryRepository repo, CancellationToken ct) =>
+{
+    var tmdb = TmdbClientFactory.Create();
+    if (tmdb == null)
+        return Results.Json(new { success = false, error = "TMDB API key not configured." }, jsonSerializerOptions);
+    var (ok, err) = await repo.RefreshShowCastFromTmdbAsync(id, tmdb, ct).ConfigureAwait(false);
+    return ok
+        ? Results.Json(new { success = true }, jsonSerializerOptions)
+        : Results.Json(new { success = false, error = err }, jsonSerializerOptions);
+});
+
+app.MapPost("/api/cast/refresh", async (HttpRequest http, LibraryRepository repo, ILoggerFactory logFactory,
+        CancellationToken ct) =>
+{
+    var tmdb = TmdbClientFactory.Create();
+    if (tmdb == null)
+        return Results.Json(new { success = false, error = "TMDB API key not configured." }, jsonSerializerOptions);
+    var lim = int.TryParse(http.Query["limit"], out var l) ? Math.Clamp(l, 1, 100) : 25;
+    var afterM = int.TryParse(http.Query["afterMovieId"], out var am) ? am : 0;
+    var afterS = int.TryParse(http.Query["afterShowId"], out var ash) ? ash : 0;
+    var r = await repo.BackfillCastMetadataBatchAsync(tmdb, lim, afterM, afterS, ct).ConfigureAwait(false);
+    var log = logFactory.CreateLogger("CastBackfill");
+    log.LogInformation(
+        "Cast backfill batch: movies={Movies} shows={Shows} castRows={Rows} missingProfile={Missing} failed={Failed} nextMovie={NextM} nextShow={NextS} hasMore={More}",
+        r.MoviesProcessed, r.ShowsProcessed, r.CastRowsWritten, r.CastCreditsMissingProfileImage, r.FailedTitles,
+        r.NextAfterMovieLibraryIdExclusive, r.NextAfterShowLibraryIdExclusive, r.HasMore);
+    return Results.Json(new
+    {
+        success = true,
+        r.MoviesProcessed,
+        r.ShowsProcessed,
+        r.CastRowsWritten,
+        r.CastCreditsMissingProfileImage,
+        r.FailedTitles,
+        nextAfterMovieId = r.NextAfterMovieLibraryIdExclusive,
+        nextAfterShowId = r.NextAfterShowLibraryIdExclusive,
+        r.HasMore
+    }, jsonSerializerOptions);
+});
+
 app.MapPost("/api/library/movies/{id:int}/rematch-from-file", async (int id, LibraryRepository repo, CancellationToken ct) =>
 {
     var tmdb = TmdbClientFactory.Create();
@@ -556,7 +623,8 @@ app.MapPost("/api/library/movies/{id:int}/rematch-from-file", async (int id, Lib
 });
 
 /// <summary>Remove library row and attach file to a specific TMDB movie id (manual fix).</summary>
-app.MapPost("/api/library/movies/{id:int}/match-tmdb", async (int id, MatchTmdbBody body, LibraryRepository repo, CancellationToken ct) =>
+app.MapPost("/api/library/movies/{id:int}/match-tmdb", async (int id, MatchTmdbBody body, LibraryRepository repo,
+        RatingsRefreshQueue ratingsRefreshQueue, CancellationToken ct) =>
 {
     if (body.TmdbId <= 0)
         return Results.Json(new { success = false, error = "Invalid TMDB id." }, jsonSerializerOptions);
@@ -578,6 +646,7 @@ app.MapPost("/api/library/movies/{id:int}/match-tmdb", async (int id, MatchTmdbB
         return Results.Json(new { success = false, error = "Could not apply that TMDB title to this file." }, jsonSerializerOptions);
 
     var newId = await repo.GetLibraryMovieIdByFilePathAsync(path, ct).ConfigureAwait(false);
+    ratingsRefreshQueue.TryEnqueueSingle(body.TmdbId, "Movie");
     return Results.Json(new { success = true, libraryId = newId }, jsonSerializerOptions);
 });
 
@@ -593,7 +662,8 @@ app.MapPost("/api/library/series/{id:int}/rematch-from-folder", async (int id, L
     return Results.Json(new { success = true, libraryId = newId }, jsonSerializerOptions);
 });
 
-app.MapPost("/api/library/series/{id:int}/match-tmdb", async (int id, MatchTmdbBody body, LibraryRepository repo, CancellationToken ct) =>
+app.MapPost("/api/library/series/{id:int}/match-tmdb", async (int id, MatchTmdbBody body, LibraryRepository repo,
+        RatingsRefreshQueue ratingsRefreshQueue, CancellationToken ct) =>
 {
     if (body.TmdbId <= 0)
         return Results.Json(new { success = false, error = "Invalid TMDB id." }, jsonSerializerOptions);
@@ -608,6 +678,7 @@ app.MapPost("/api/library/series/{id:int}/match-tmdb", async (int id, MatchTmdbB
         return Results.Json(new { success = false, error = err ?? "Could not apply that series to this folder." },
             jsonSerializerOptions);
 
+    ratingsRefreshQueue.TryEnqueueSingle(body.TmdbId, "Series");
     return Results.Json(new { success = true, libraryId = newId }, jsonSerializerOptions);
 });
 
@@ -625,7 +696,8 @@ app.MapPost("/api/library/episodes/{id:int}/rematch-from-file", async (int id, L
     return Results.Json(new { success = true, showId, episodeId }, jsonSerializerOptions);
 });
 
-app.MapPost("/api/library/episodes/{id:int}/match-tmdb", async (int id, MatchTmdbBody body, LibraryRepository repo, CancellationToken ct) =>
+app.MapPost("/api/library/episodes/{id:int}/match-tmdb", async (int id, MatchTmdbBody body, LibraryRepository repo,
+        RatingsRefreshQueue ratingsRefreshQueue, CancellationToken ct) =>
 {
     if (body.TmdbId <= 0)
         return Results.Json(new { success = false, error = "Invalid TMDB id." }, jsonSerializerOptions);
@@ -640,6 +712,7 @@ app.MapPost("/api/library/episodes/{id:int}/match-tmdb", async (int id, MatchTmd
     if (!ok)
         return Results.Json(new { success = false, error = err ?? "Re-link failed." }, jsonSerializerOptions);
 
+    ratingsRefreshQueue.TryEnqueueSingle(body.TmdbId, "Series");
     return Results.Json(new { success = true, showId, episodeId }, jsonSerializerOptions);
 });
 
@@ -754,6 +827,7 @@ app.MapPost("/api/unmatched/{id:int}/match", async (
     MatchBody body,
     LibraryRepository repo,
     LibraryContext db,
+    RatingsRefreshQueue ratingsRefreshQueue,
     CancellationToken ct) =>
 {
     var logs = await repo.GetAllScanLogsAsync(ct).ConfigureAwait(false);
@@ -802,6 +876,7 @@ app.MapPost("/api/unmatched/{id:int}/match", async (
 
     Console.WriteLine($"Match complete (scanLogId={id}). Siblings found: {siblingIds.Count}, parentFolder={parentFolder}");
 
+    ratingsRefreshQueue.TryEnqueueSingle(body.TmdbId, mediaTypeResolved);
     // Use Json + options so properties are camelCase (Results.Ok uses different defaults and breaks the SPA).
     return Results.Json(new
     {
@@ -1062,7 +1137,8 @@ app.MapPost("/api/unmatched/search", async (UnmatchedSearchBody body, Cancellati
 });
 
 // —— Scan ——
-app.MapPost("/api/scan/start", async (ScanStartBody body, LibraryRepository repo, ScanRuntime scan, IServiceScopeFactory scopes, CancellationToken _startupCt) =>
+app.MapPost("/api/scan/start", async (ScanStartBody body, LibraryRepository repo, ScanRuntime scan, IServiceScopeFactory scopes,
+        RatingsRefreshQueue ratingsRefreshQueue, CancellationToken _startupCt) =>
 {
     var tmdb = TmdbClientFactory.Create();
     if (tmdb == null)
@@ -1147,6 +1223,7 @@ app.MapPost("/api/scan/start", async (ScanStartBody body, LibraryRepository repo
                 result.Unmatched,
                 skipped = result.SkippedAlreadyMatched
             }, CancellationToken.None).ConfigureAwait(false);
+            ratingsRefreshQueue.TryEnqueueStaleSweep();
         }
         catch (OperationCanceledException)
         {
@@ -1395,7 +1472,11 @@ app.MapPost("/api/history/{id:int}/stopped", async (int id, StoppedBody body, Li
         var hTracked = await db.WatchHistories.FirstOrDefaultAsync(x => x.Id == id, ct).ConfigureAwait(false);
         if (hTracked == null)
             return Results.NotFound();
+        if (hTracked.IsStopFinalized)
+            return Results.Ok();
         hTracked.StoppedAt = stopped;
+        hTracked.IsStopFinalized = true;
+        hTracked.LastHeartbeatAtUtc = stopped;
         await db.SaveChangesAsync(ct).ConfigureAwait(false);
     }
 
@@ -2957,8 +3038,54 @@ app.MapPost("/api/library/bulk-delete-from-device", async (BulkLibraryIdsBody bo
     return Results.Json(new { success = true, filesDeleted, errors }, jsonSerializerOptions);
 });
 
+app.MapGet("/api/ratings/{tmdbId:int}", async (
+    int tmdbId,
+    string? mediaType,
+    RatingsPersistedReadService read,
+    CancellationToken ct) =>
+{
+    if (tmdbId <= 0)
+        return Results.BadRequest();
+    var mt = string.IsNullOrWhiteSpace(mediaType) ? "movie" : mediaType.Trim();
+    var normalized = mt.Equals("tv", StringComparison.OrdinalIgnoreCase) ? "Series" : "Movie";
+    var r = await read.GetPersistedReadAsync(tmdbId, normalized, ct).ConfigureAwait(false);
+    if (!r.Ok)
+    {
+        var status = r.FailureReason switch
+        {
+            "invalid_input" => StatusCodes.Status400BadRequest,
+            "anchor_not_found" => StatusCodes.Status404NotFound,
+            _ => StatusCodes.Status503ServiceUnavailable
+        };
+        return Results.Json(new { ok = false, reason = r.FailureReason }, jsonSerializerOptions, statusCode: status);
+    }
+
+    var s = r.Row!.Snapshot;
+    return Results.Json(new
+    {
+        ok = true,
+        seeded = r.Row.WasSeeded,
+        isStale = r.Row.IsStale,
+        tmdbId = s.TmdbId,
+        mediaType = normalized == "Series" ? "tv" : "movie",
+        tmdbRating = s.TmdbRating,
+        tmdbVoteCount = s.TmdbVoteCount,
+        imdbId = s.ImdbId,
+        imdbRating = s.ImdbRating,
+        imdbVotes = s.ImdbVotes,
+        rtCritics = s.RottenTomatoesCritics,
+        rtAudience = s.RottenTomatoesAudience,
+        confidence = s.RatingsConfidence,
+        sourceMask = s.SourceMask,
+        refreshTier = s.RefreshTier,
+        updated = s.RatingsLastUpdatedAtUtc,
+        nextRefresh = s.NextRefreshAtUtc
+    }, jsonSerializerOptions);
+});
+
 app.MapGet("/api/ratings/aggregate", async (
     RatingsAggregationService svc,
+    RatingsPersistedReadService persisted,
     int tmdbId,
     string mediaType,
     CancellationToken ct) =>
@@ -2966,8 +3093,15 @@ app.MapGet("/api/ratings/aggregate", async (
     if (tmdbId <= 0)
         return Results.BadRequest();
     var normalized = mediaType.Equals("tv", StringComparison.OrdinalIgnoreCase) ? "Series" : "Movie";
-    var dto = await svc.GetAggregateAsync(tmdbId, normalized, ct).ConfigureAwait(false);
-    return Results.Json(dto, jsonSerializerOptions);
+    var pr = await persisted.GetPersistedReadAsync(tmdbId, normalized, ct).ConfigureAwait(false);
+    if (pr.Ok && pr.Row != null)
+    {
+        var dto = RatingsPersistedReadService.ToAggregateDto(pr.Row.Snapshot, pr.Row.WasSeeded, pr.Row.IsStale);
+        return Results.Json(dto, jsonSerializerOptions);
+    }
+
+    var live = await svc.GetAggregateAsync(tmdbId, normalized, ct).ConfigureAwait(false);
+    return Results.Json(live, jsonSerializerOptions);
 });
 
 app.MapGet("/api/ratings/episode", async (
@@ -2979,6 +3113,67 @@ app.MapGet("/api/ratings/episode", async (
 {
     var r = await svc.TryEpisodeRatingAsync(tvTmdbId, season, episodeNumber, ct).ConfigureAwait(false);
     return Results.Json(r, jsonSerializerOptions);
+});
+
+app.MapPost("/api/ratings/re-enrich", async (HttpRequest req, RatingsRefreshQueue queue, IConfiguration cfg,
+        CancellationToken ct) =>
+{
+    var expected = cfg["Pitflix:Ratings:ManualReEnrichKey"]?.Trim();
+    if (!string.IsNullOrEmpty(expected))
+    {
+        if (!req.Headers.TryGetValue("X-Pitflix-Ratings-ReEnrich-Key", out var key) ||
+            !string.Equals(key.ToString(), expected, StringComparison.Ordinal))
+            return Results.Unauthorized();
+    }
+
+    var body = await req.ReadFromJsonAsync<RatingsReEnrichBody>(cancellationToken: ct).ConfigureAwait(false);
+    if (body?.TmdbId is int tid and > 0)
+    {
+        queue.TryEnqueueSingle(tid, body.MediaType);
+        return Results.Json(new { ok = true, queued = "single" }, jsonSerializerOptions);
+    }
+
+    queue.TryEnqueueStaleSweep();
+    return Results.Json(new { ok = true, queued = "stale_sweep" }, jsonSerializerOptions);
+});
+
+app.MapPost("/api/ratings/queue-library", async (HttpRequest req, LibraryRepository lib, RatingsRefreshQueue queue,
+        IConfiguration cfg, int? limit, CancellationToken ct) =>
+{
+    var expected = cfg["Pitflix:Ratings:ManualReEnrichKey"]?.Trim();
+    if (!string.IsNullOrEmpty(expected))
+    {
+        if (!req.Headers.TryGetValue("X-Pitflix-Ratings-ReEnrich-Key", out var key) ||
+            !string.Equals(key.ToString(), expected, StringComparison.Ordinal))
+            return Results.Unauthorized();
+    }
+
+    var cap = Math.Clamp(limit ?? 500, 1, 5000);
+    var movieCap = cap / 2;
+    var showCap = cap - movieCap;
+    var (movieIds, showIds) = await lib.GetDistinctMatchedTmdbIdsForRatingsAsync(movieCap, showCap, ct)
+        .ConfigureAwait(false);
+    var accepted = 0;
+    foreach (var id in movieIds)
+    {
+        if (queue.TryEnqueueSingle(id, "movie"))
+            accepted++;
+    }
+
+    foreach (var id in showIds)
+    {
+        if (queue.TryEnqueueSingle(id, "tv"))
+            accepted++;
+    }
+
+    return Results.Json(new
+    {
+        ok = true,
+        accepted,
+        movies = movieIds.Count,
+        shows = showIds.Count,
+        cap
+    }, jsonSerializerOptions);
 });
 
 app.MapPost("/api/recommendations/from", async (RecommendationFromBody? body, CancellationToken ct) =>
@@ -3460,15 +3655,14 @@ app.MapGet("/api/discover/tv-schedule", async (int tmdbId, CancellationToken ct)
     }, jsonSerializerOptions);
 });
 
-async Task<IResult> HomeTrailersLatestCore(TrailersCuratedPriorityProvider curated, TmdbClient tmdb,
-    IHttpClientFactory httpFactory, IConfiguration configuration, ILogger<Program> logger, CancellationToken ct)
+async Task<IResult> HomeTrailersLatestCore(TrailersRepository trailersRepo, TmdbClient tmdb, ILogger<Program> logger,
+    CancellationToken ct)
 {
-    var cards = await TrailersFeedHelpers.BuildHomeLatestTrailerCardsAsync(
-            httpFactory, configuration, logger, curated, tmdb,
-            maxTrailers: 16, recentDays: 35, wantMovie: true, wantTv: true, ct,
-            maxApiPasses: 36)
+    var rows = await PersistedTrailerUiFeed.BuildAsync(trailersRepo, tmdb, limit: 16, mediaType: null, ct)
         .ConfigureAwait(false);
-    return Results.Json(cards.Select(c => new
+    if (rows.Count == 0)
+        logger.LogInformation("Home trailers latest: persisted feed empty (run ingestion or widen channels).");
+    return Results.Json(rows.Select(c => new
     {
         tmdbId = c.TmdbId,
         mediaType = c.MediaType,
@@ -3520,22 +3714,20 @@ async Task<IResult> HomeTrailersUpcomingCore(TrailersCuratedPriorityProvider cur
 }
 
 /// <summary>Backward compatible — same as <c>/api/home/trailers/latest</c>.</summary>
-app.MapGet("/api/home/trailers", async (TrailersCuratedPriorityProvider curated, IHttpClientFactory httpFactory,
-        IConfiguration configuration, ILogger<Program> logger, CancellationToken ct) =>
+app.MapGet("/api/home/trailers", async (TrailersRepository trailersRepo, ILogger<Program> logger, CancellationToken ct) =>
 {
     var tmdb = TmdbClientFactory.Create();
     if (tmdb == null)
         return Results.Json(Array.Empty<object>(), jsonSerializerOptions);
-    return await HomeTrailersLatestCore(curated, tmdb, httpFactory, configuration, logger, ct).ConfigureAwait(false);
+    return await HomeTrailersLatestCore(trailersRepo, tmdb, logger, ct).ConfigureAwait(false);
 });
 
-app.MapGet("/api/home/trailers/latest", async (TrailersCuratedPriorityProvider curated, IHttpClientFactory httpFactory,
-        IConfiguration configuration, ILogger<Program> logger, CancellationToken ct) =>
+app.MapGet("/api/home/trailers/latest", async (TrailersRepository trailersRepo, ILogger<Program> logger, CancellationToken ct) =>
 {
     var tmdb = TmdbClientFactory.Create();
     if (tmdb == null)
         return Results.Json(Array.Empty<object>(), jsonSerializerOptions);
-    return await HomeTrailersLatestCore(curated, tmdb, httpFactory, configuration, logger, ct).ConfigureAwait(false);
+    return await HomeTrailersLatestCore(trailersRepo, tmdb, logger, ct).ConfigureAwait(false);
 });
 
 /// <summary>One-shot RSS fetch + TMDB resolve stats (does not return full Home latest cards).</summary>
@@ -3580,10 +3772,118 @@ app.MapGet("/api/home/trailers/upcoming", async (TrailersCuratedPriorityProvider
     return await HomeTrailersUpcomingCore(curated, tmdb, ct).ConfigureAwait(false);
 });
 
-/// <param name="mode">latest | upcoming-movies | upcoming-tv | all-upcoming</param>
+object TrailerApiModel(TrailerItem x) => new
+{
+    videoId = x.VideoId,
+    title = x.Title,
+    channelName = x.ChannelName,
+    channelId = x.ChannelId,
+    ingestionSource = x.IngestionSource,
+    matchConfidence = x.MatchConfidence,
+    trustTier = x.TrustTier,
+    tmdbId = x.TmdbId,
+    mediaType = x.MediaType,
+    publishedAt = x.PublishedAtUtc,
+    qualityScore = x.QualityScore,
+    isActive = x.IsActive,
+    youtubeUrl = x.YoutubeUrl
+};
+
+app.MapGet("/api/trailers/latest", async (TrailersRepository repo, int? limit, string? mediaType, bool? activeOnly,
+        DateTime? publishedAfter, bool? distinctCatalog, CancellationToken ct) =>
+{
+    var rows = await repo
+        .GetLatestTrailersAsync(limit ?? 20, mediaType, activeOnly ?? true, publishedAfter, distinctCatalog ?? true, ct)
+        .ConfigureAwait(false);
+    return Results.Json(rows.Select(TrailerApiModel).ToList(), jsonSerializerOptions);
+});
+
+app.MapGet("/api/trailers/{tmdbId:int}", async (int tmdbId, TrailersRepository repo, string? mediaType, bool? activeOnly,
+        DateTime? publishedAfter, int? limit, CancellationToken ct) =>
+{
+    var rows = await repo
+        .GetTrailersByTmdbIdAsync(tmdbId, mediaType, activeOnly, publishedAfter, limit, ct)
+        .ConfigureAwait(false);
+    var primary = rows.FirstOrDefault(r => r.IsActive) ?? rows.FirstOrDefault();
+    var alternates = primary == null ? rows : rows.Where(r => r.VideoId != primary.VideoId).ToList();
+    return Results.Json(new
+    {
+        primary = primary == null ? null : TrailerApiModel(primary),
+        alternates = alternates.Select(TrailerApiModel).ToList()
+    }, jsonSerializerOptions);
+});
+
+app.MapPost("/api/trailers/ingest", async (HttpRequest req, TrailerIngestionService ingest, IConfiguration cfg,
+        CancellationToken ct) =>
+{
+    var expected = cfg["Pitflix:Trailers:ManualIngestKey"]?.Trim();
+    if (!string.IsNullOrEmpty(expected))
+    {
+        if (!req.Headers.TryGetValue("X-Pitflix-Trailers-Ingest-Key", out var key) ||
+            !string.Equals(key.ToString(), expected, StringComparison.Ordinal))
+            return Results.Unauthorized();
+    }
+
+    var r = await ingest.IngestAsync(ct).ConfigureAwait(false);
+    return Results.Json(new
+    {
+        ok = string.IsNullOrEmpty(r.Error),
+        r.FetchedCount,
+        r.FilteredCount,
+        r.FilteredOutCount,
+        r.MatchedCount,
+        r.InsertedOrUpdatedCount,
+        r.SkippedDedupCount,
+        r.PurgedCount,
+        r.QuotaStopped,
+        r.UnmatchedCount,
+        r.UploadsFetchedCount,
+        r.SearchFetchedCount,
+        r.ChannelsPolled,
+        r.FallbackSearchUsed,
+        r.NewUploadsSeenCount,
+        error = r.Error
+    }, jsonSerializerOptions);
+});
+
+app.MapPost("/api/trailers/monitor/run", async (HttpRequest req, TrailerIngestionService ingest, IConfiguration cfg,
+        TrailerMonitorRuntime monitor, CancellationToken ct) =>
+{
+    var expected = cfg["Pitflix:Trailers:ManualIngestKey"]?.Trim();
+    if (!string.IsNullOrEmpty(expected))
+    {
+        if (!req.Headers.TryGetValue("X-Pitflix-Trailers-Ingest-Key", out var key) ||
+            !string.Equals(key.ToString(), expected, StringComparison.Ordinal))
+            return Results.Unauthorized();
+    }
+
+    var r = await ingest.IngestAsync(ct).ConfigureAwait(false);
+    return Results.Json(new
+    {
+        ok = string.IsNullOrEmpty(r.Error),
+        result = r,
+        status = monitor.Snapshot()
+    }, jsonSerializerOptions);
+});
+
+app.MapGet("/api/trailers/monitor/status", (HttpRequest req, IConfiguration cfg, TrailerMonitorRuntime monitor) =>
+{
+    var expected = cfg["Pitflix:Trailers:ManualIngestKey"]?.Trim();
+    if (!string.IsNullOrEmpty(expected))
+    {
+        if (!req.Headers.TryGetValue("X-Pitflix-Trailers-Ingest-Key", out var key) ||
+            !string.Equals(key.ToString(), expected, StringComparison.Ordinal))
+            return Results.Unauthorized();
+    }
+
+    return Results.Json(monitor.Snapshot(), jsonSerializerOptions);
+});
+
+/// <param name="mode">latest | trending | upcoming | upcoming-movies | upcoming-tv | all-upcoming</param>
 /// <param name="filter">movie | tv | all</param>
 /// <param name="search">When at least 2 characters, TMDB search replaces the usual discover pool (still respects filter).</param>
-app.MapGet("/api/trailers/browse", async (TrailersCuratedPriorityProvider curated, IHttpClientFactory httpFactory,
+app.MapGet("/api/trailers/browse", async (TrailersRepository trailersRepo, TrailersCuratedPriorityProvider curated,
+        IHttpClientFactory httpFactory,
         IConfiguration configuration, ILogger<Program> logger, string? mode, string? filter, string? search,
         CancellationToken ct) =>
 {
@@ -3591,10 +3891,13 @@ app.MapGet("/api/trailers/browse", async (TrailersCuratedPriorityProvider curate
     if (tmdb == null)
         return Results.Json(Array.Empty<object>(), jsonSerializerOptions);
 
-    var modeRaw = (mode ?? "all-upcoming").Trim();
-    var modeNorm = (string.IsNullOrEmpty(modeRaw) ? "all-upcoming" : modeRaw).ToLowerInvariant();
+    var modeRaw = (mode ?? "upcoming").Trim();
+    var modeNorm = (string.IsNullOrEmpty(modeRaw) ? "upcoming" : modeRaw).ToLowerInvariant();
+    if (modeNorm == "all-upcoming")
+        modeNorm = "upcoming";
+
     var filterNorm = (filter ?? "all").Trim().ToLowerInvariant();
-    // Tabs already imply media; keep API honest when UI sends redundant "all" on upcoming-movies / upcoming-tv.
+    // Legacy browse modes: media was implied by tab name.
     if (modeNorm == "upcoming-movies")
         filterNorm = "movie";
     else if (modeNorm == "upcoming-tv")
@@ -3607,42 +3910,14 @@ app.MapGet("/api/trailers/browse", async (TrailersCuratedPriorityProvider curate
     var pool = new List<Pitflix.Core.Models.TmdbDiscoverItem>();
     var searchTrim = search?.Trim() ?? "";
 
-    if (searchTrim.Length >= 2)
+    if (modeNorm == "latest")
     {
-        pool.AddRange(await tmdb.SearchDiscoverForTrailersAsync(searchTrim, wantMovie, wantTv, 15, ct)
-            .ConfigureAwait(false));
-        pool = TrailersFeedHelpers.RankTrailerCandidatePool(pool, wantMovie, wantTv);
-        if (modeNorm == "latest")
-        {
-            var latestSearch = await TrailersFeedHelpers
-                .CollectHomeLatestTrailersByPublishedWindowAsync(tmdb, pool, 48, 35, ct,
-                    upcomingTrailerPublishedDays: 105, maxApiPasses: 56, fetchBackdrop: false)
-                .ConfigureAwait(false);
-            var enrichedSearch = await TrailersFeedHelpers
-                .EnrichTrailerCardsWithCanonicalTmdbAsync(tmdb, latestSearch, ct)
-                .ConfigureAwait(false);
-            return Results.Json(enrichedSearch.Select(c => new
-            {
-                tmdbId = c.TmdbId,
-                mediaType = c.MediaType,
-                title = c.Title,
-                posterUrl = c.PosterUrl,
-                backdropUrl = c.BackdropUrl,
-                youtubeKey = c.YoutubeKey,
-                trailerTitle = c.TrailerTitle,
-                releaseDate = c.ReleaseDate,
-                trailerPublishedAtUtc = c.TrailerPublishedAtUtc
-            }).ToList(), jsonSerializerOptions);
-        }
-    }
-    else if (modeNorm == "latest")
-    {
-        var latestBrowse = await TrailersFeedHelpers.BuildHomeLatestTrailerCardsAsync(
-                httpFactory, configuration, logger, curated, tmdb,
-                maxTrailers: 48, recentDays: 35, wantMovie, wantTv, ct,
-                maxApiPasses: 72, maxRssTitlesToResolveOverride: 22)
+        var repoMt = PersistedTrailerUiFeed.BrowseRepoMediaType(wantMovie, wantTv);
+        var fetchLimit = searchTrim.Length >= 2 ? 200 : 64;
+        var persisted = await PersistedTrailerUiFeed.BuildAsync(trailersRepo, tmdb, fetchLimit, repoMt, ct)
             .ConfigureAwait(false);
-        return Results.Json(latestBrowse.Select(c => new
+        var latestRows = PersistedTrailerUiFeed.TakeForBrowse(persisted, searchTrim.Length >= 2 ? searchTrim : null, 48);
+        return Results.Json(latestRows.Select(c => new
         {
             tmdbId = c.TmdbId,
             mediaType = c.MediaType,
@@ -3654,6 +3929,13 @@ app.MapGet("/api/trailers/browse", async (TrailersCuratedPriorityProvider curate
             releaseDate = c.ReleaseDate,
             trailerPublishedAtUtc = c.TrailerPublishedAtUtc
         }).ToList(), jsonSerializerOptions);
+    }
+
+    if (searchTrim.Length >= 2)
+    {
+        pool.AddRange(await tmdb.SearchDiscoverForTrailersAsync(searchTrim, wantMovie, wantTv, 15, ct)
+            .ConfigureAwait(false));
+        pool = TrailersFeedHelpers.RankTrailerCandidatePool(pool, wantMovie, wantTv);
     }
     else
     {
@@ -3679,12 +3961,15 @@ app.MapGet("/api/trailers/browse", async (TrailersCuratedPriorityProvider curate
             pool = TrailersFeedHelpers.RankTrailerCandidatePool(pool, wantMovie, wantTv, curatedKeys);
         }
 
-        if (modeNorm is "upcoming-movies" or "all-upcoming")
+        var addUpcomingMovies = modeNorm == "upcoming-movies" || (modeNorm == "upcoming" && wantMovie);
+        var addUpcomingTv = modeNorm == "upcoming-tv" || (modeNorm == "upcoming" && wantTv);
+
+        if (addUpcomingMovies)
         {
             pool.AddRange(await TrailersFeedHelpers.BuildUpcomingMoviesPoolAsync(tmdb, ct).ConfigureAwait(false));
         }
 
-        if (modeNorm is "upcoming-tv" or "all-upcoming")
+        if (addUpcomingTv)
         {
             pool.AddRange(await TrailersFeedHelpers.BuildUpcomingTvPoolAsync(tmdb, ct).ConfigureAwait(false));
         }

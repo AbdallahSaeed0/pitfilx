@@ -10,11 +10,13 @@ public sealed class LibraryAutoScanService : BackgroundService
 {
     private readonly IServiceScopeFactory _scopes;
     private readonly ScanRuntime _scanRuntime;
+    private readonly RatingsRefreshQueue _ratingsRefreshQueue;
 
-    public LibraryAutoScanService(IServiceScopeFactory scopes, ScanRuntime scanRuntime)
+    public LibraryAutoScanService(IServiceScopeFactory scopes, ScanRuntime scanRuntime, RatingsRefreshQueue ratingsRefreshQueue)
     {
         _scopes = scopes;
         _scanRuntime = scanRuntime;
+        _ratingsRefreshQueue = ratingsRefreshQueue;
     }
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
@@ -87,5 +89,6 @@ public sealed class LibraryAutoScanService : BackgroundService
         var pipeline = new ScanPipeline(new FileScanner(), tmdb, repo);
         var progress = new Progress<ScanProgress>(_ => { });
         await pipeline.RunScanOnFilesAsync(distinct, progress, cancellationToken).ConfigureAwait(false);
+        _ratingsRefreshQueue.TryEnqueueStaleSweep();
     }
 }

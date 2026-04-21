@@ -496,7 +496,9 @@ public sealed class ScanPipeline
                 MediaId = details.Id,
                 MediaType = "Series",
                 Name = c.Name,
-                Character = string.IsNullOrEmpty(c.Character) ? null : c.Character,
+                Character = c.Character,
+                ProfilePath = string.IsNullOrWhiteSpace(c.ProfilePath) ? null : c.ProfilePath.Trim(),
+                BillingOrder = c.BillingOrder,
                 ProfileLocalPath = c.ProfileLocalPath
             });
             await _repo.ReplaceCastMembersAsync(details.Id, "Series", castRows, cancellationToken)
@@ -529,7 +531,9 @@ public sealed class ScanPipeline
                 MediaId = details.Id,
                 MediaType = "Movie",
                 Name = c.Name,
-                Character = string.IsNullOrEmpty(c.Character) ? null : c.Character,
+                Character = c.Character,
+                ProfilePath = string.IsNullOrWhiteSpace(c.ProfilePath) ? null : c.ProfilePath.Trim(),
+                BillingOrder = c.BillingOrder,
                 ProfileLocalPath = c.ProfileLocalPath
             });
             await _repo.ReplaceCastMembersAsync(details.Id, "Movie", castRows, cancellationToken)

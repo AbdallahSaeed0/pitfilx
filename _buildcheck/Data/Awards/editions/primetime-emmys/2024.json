@@ -1,0 +1,168 @@
+{
+  "awardId": "primetime-emmys",
+  "year": 2024,
+  "label": "76th Primetime Emmy Awards (2024 ceremony)",
+  "categories": [
+    {
+      "id": "outstanding-drama-series",
+      "name": "Outstanding Drama Series",
+      "nominees": [
+        {
+          "title": "Shōgun",
+          "mediaType": "tv",
+          "tmdbId": 126308,
+          "winner": true
+        },
+        {
+          "title": "3 Body Problem",
+          "mediaType": "tv",
+          "tmdbId": 202555,
+          "winner": false
+        },
+        {
+          "title": "The Crown",
+          "mediaType": "tv",
+          "tmdbId": 65494,
+          "winner": false
+        },
+        {
+          "title": "Fallout",
+          "mediaType": "tv",
+          "tmdbId": 106541,
+          "winner": false
+        },
+        {
+          "title": "The Gilded Age",
+          "mediaType": "tv",
+          "tmdbId": 83050,
+          "winner": false
+        },
+        {
+          "title": "The Morning Show",
+          "mediaType": "tv",
+          "tmdbId": 79744,
+          "winner": false
+        },
+        {
+          "title": "Mr. & Mrs. Smith",
+          "mediaType": "tv",
+          "tmdbId": 157239,
+          "winner": false
+        },
+        {
+          "title": "Slow Horses",
+          "mediaType": "tv",
+          "tmdbId": 95480,
+          "winner": false
+        }
+      ]
+    },
+    {
+      "id": "outstanding-comedy-series",
+      "name": "Outstanding Comedy Series",
+      "nominees": [
+        {
+          "title": "Hacks",
+          "mediaType": "tv",
+          "tmdbId": 113479,
+          "winner": true
+        },
+        {
+          "title": "Abbott Elementary",
+          "mediaType": "tv",
+          "tmdbId": 125935,
+          "winner": false
+        },
+        {
+          "title": "The Bear",
+          "mediaType": "tv",
+          "tmdbId": 136315,
+          "winner": false
+        },
+        {
+          "title": "Curb Your Enthusiasm",
+          "mediaType": "tv",
+          "tmdbId": 4546,
+          "winner": false
+        },
+        {
+          "title": "Only Murders in the Building",
+          "mediaType": "tv",
+          "tmdbId": 107110,
+          "winner": false
+        },
+        {
+          "title": "Palm Royale",
+          "mediaType": "tv",
+          "tmdbId": 157367,
+          "winner": false
+        },
+        {
+          "title": "Reservation Dogs",
+          "mediaType": "tv",
+          "tmdbId": 113962,
+          "winner": false
+        },
+        {
+          "title": "What We Do in the Shadows",
+          "mediaType": "tv",
+          "tmdbId": 86248,
+          "winner": false
+        }
+      ]
+    },
+    {
+      "id": "outstanding-limited-series",
+      "name": "Outstanding Limited or Anthology Series",
+      "nominees": [
+        {
+          "title": "Baby Reindeer",
+          "mediaType": "tv",
+          "tmdbId": 241052,
+          "winner": true
+        },
+        {
+          "title": "Fargo",
+          "mediaType": "tv",
+          "tmdbId": 60622,
+          "winner": false
+        },
+        {
+          "title": "Lessons in Chemistry",
+          "mediaType": "tv",
+          "tmdbId": 220542,
+          "winner": false
+        },
+        {
+          "title": "Ripley",
+          "mediaType": "tv",
+          "tmdbId": 225716,
+          "winner": false
+        },
+        {
+          "title": "True Detective: Night Country",
+          "mediaType": "tv",
+          "tmdbId": 46648,
+          "winner": false
+        }
+      ]
+    }
+  ],
+  "dataSource": "Television Academy 76th (2024) — curated seed",
+  "notes": "Nominee lists aligned to televisionacademy.com; TMDB ids for Pitflix artwork links.",
+  "qa": {
+    "version": 1,
+    "lastAuditAt": "2026-04-07T17:54:39.624Z",
+    "isSeedEdition": false,
+    "needsNomineeBackfill": false,
+    "needsTmdbEnrichment": false,
+    "warnings": [],
+    "stats": {
+      "categoryCount": 3,
+      "nomineeCount": 21,
+      "winnerCount": 3,
+      "tmdbNull": 0,
+      "tmdbSet": 21
+    }
+  }
+}

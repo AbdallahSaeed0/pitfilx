@@ -7,6 +7,7 @@ using Microsoft.EntityFrameworkCore;
 using Pitflix.Core.Api;
 using Pitflix.Core;
 using Pitflix.Core.Models;
+using Pitflix.Core.Playback;
 
 namespace Pitflix.Core.Database;
 
@@ -153,6 +154,33 @@ public sealed class LibraryRepository
     {
         return await _db.Movies.FirstOrDefaultAsync(m => m.TmdbId == tmdbId, cancellationToken)
             .ConfigureAwait(false);
+    }
+
+    /// <summary>Distinct matched TMDB ids for ratings backfill (movies + series, each side capped).</summary>
+    public async Task<(IReadOnlyList<int> MovieTmdbIds, IReadOnlyList<int> ShowTmdbIds)> GetDistinctMatchedTmdbIdsForRatingsAsync(
+        int maxMovies,
+        int maxShows,
+        CancellationToken cancellationToken = default)
+    {
+        maxMovies = Math.Clamp(maxMovies, 0, 50_000);
+        maxShows = Math.Clamp(maxShows, 0, 50_000);
+        var movies = await _db.Movies.AsNoTracking()
+            .Where(m => m.IsMatched && m.TmdbId > 0)
+            .Select(m => m.TmdbId)
+            .Distinct()
+            .OrderBy(id => id)
+            .Take(maxMovies)
+            .ToListAsync(cancellationToken)
+            .ConfigureAwait(false);
+        var shows = await _db.Shows.AsNoTracking()
+            .Where(s => s.IsMatched && s.TmdbId > 0)
+            .Select(s => s.TmdbId)
+            .Distinct()
+            .OrderBy(id => id)
+            .Take(maxShows)
+            .ToListAsync(cancellationToken)
+            .ConfigureAwait(false);
+        return (movies, shows);
     }
 
     public async Task<IReadOnlyList<Movie>> GetArabicMoviesAsync(CancellationToken cancellationToken = default)
@@ -593,7 +621,11 @@ public sealed class LibraryRepository
             StartedAt = now,
             FileDurationSeconds = fileDurationSeconds,
             EstimatedSeconds = 0,
-            IsCompleted = false
+            IsCompleted = false,
+            MaxKnownPositionSeconds = 0,
+            LastExplicitPositionSeconds = 0,
+            LastHeartbeatAtUtc = null,
+            IsStopFinalized = false
         };
         _db.WatchHistories.Add(h);
         await _db.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
@@ -646,6 +678,11 @@ public sealed class LibraryRepository
             {
                 h.EstimatedSeconds = Math.Max(h.EstimatedSeconds, current.EstimatedSeconds);
                 h.FileDurationSeconds = Math.Max(h.FileDurationSeconds, current.FileDurationSeconds);
+                h.MaxKnownPositionSeconds = Math.Max(h.MaxKnownPositionSeconds, current.MaxKnownPositionSeconds);
+                h.LastExplicitPositionSeconds =
+                    Math.Max(h.LastExplicitPositionSeconds, current.LastExplicitPositionSeconds);
+                h.LastHeartbeatAtUtc = MaxUtc(h.LastHeartbeatAtUtc, current.LastHeartbeatAtUtc);
+                h.IsStopFinalized = h.IsStopFinalized || current.IsStopFinalized;
                 if (!h.StartedAt.HasValue || (current.StartedAt.HasValue && current.StartedAt > h.StartedAt))
                     h.StartedAt = current.StartedAt;
                 if (!h.StoppedAt.HasValue || (current.StoppedAt.HasValue && current.StoppedAt > h.StoppedAt))
@@ -656,6 +693,11 @@ public sealed class LibraryRepository
             {
                 current.EstimatedSeconds = Math.Max(current.EstimatedSeconds, h.EstimatedSeconds);
                 current.FileDurationSeconds = Math.Max(current.FileDurationSeconds, h.FileDurationSeconds);
+                current.MaxKnownPositionSeconds = Math.Max(current.MaxKnownPositionSeconds, h.MaxKnownPositionSeconds);
+                current.LastExplicitPositionSeconds =
+                    Math.Max(current.LastExplicitPositionSeconds, h.LastExplicitPositionSeconds);
+                current.LastHeartbeatAtUtc = MaxUtc(current.LastHeartbeatAtUtc, h.LastHeartbeatAtUtc);
+                current.IsStopFinalized = current.IsStopFinalized || h.IsStopFinalized;
                 if (!current.StartedAt.HasValue || (h.StartedAt.HasValue && h.StartedAt > current.StartedAt))
                     current.StartedAt = h.StartedAt;
                 if (!current.StoppedAt.HasValue || (h.StoppedAt.HasValue && h.StoppedAt > current.StoppedAt))
@@ -663,7 +705,11 @@ public sealed class LibraryRepository
             }
         }
 
-        return perFile.Values
+        var merged = perFile.Values.ToList();
+        foreach (var h in merged)
+            TrustedResumePolicy.ApplyTo(h);
+
+        return merged
             .OrderByDescending(h => h.OpenedAt)
             .Take(Math.Max(1, count))
             .ToList();
@@ -671,6 +717,15 @@ public sealed class LibraryRepository
 
     private static string NormalizeHistoryPath(string? path) =>
         (path ?? "").Trim().Replace('\\', '/').ToLowerInvariant();
+
+    private static DateTime? MaxUtc(DateTime? a, DateTime? b)
+    {
+        if (!a.HasValue)
+            return b;
+        if (!b.HasValue)
+            return a;
+        return a.Value >= b.Value ? a : b;
+    }
 
     /// <summary>
     /// All in-progress series: at least one episode started, not fully completed, next episode exists in library.
@@ -918,7 +973,12 @@ public sealed class LibraryRepository
         if (h == null)
             return;
 
+        if (h.IsStopFinalized)
+            return;
+
         h.StoppedAt = stoppedAtUtc;
+        h.LastHeartbeatAtUtc = MaxUtc(h.LastHeartbeatAtUtc, stoppedAtUtc);
+        h.IsStopFinalized = true;
         if (sessionSeconds > 60)
             h.EstimatedSeconds = Math.Max(h.EstimatedSeconds, sessionSeconds);
 
@@ -943,9 +1003,16 @@ public sealed class LibraryRepository
         if (h == null)
             return;
 
+        if (h.IsStopFinalized)
+            return;
+
         if (durationSeconds is int ds && ds > 0)
             h.FileDurationSeconds = Math.Max(h.FileDurationSeconds, ds);
 
+        var now = DateTime.UtcNow;
+        h.LastHeartbeatAtUtc = now;
+        h.LastExplicitPositionSeconds = positionSeconds;
+        h.MaxKnownPositionSeconds = Math.Max(h.MaxKnownPositionSeconds, positionSeconds);
         h.EstimatedSeconds = Math.Max(h.EstimatedSeconds, positionSeconds);
 
         var dur = h.FileDurationSeconds;
@@ -1001,8 +1068,15 @@ public sealed class LibraryRepository
         if (h == null)
             return;
 
+        if (h.IsStopFinalized)
+            return;
+
         h.StoppedAt = stoppedAtUtc;
+        h.LastHeartbeatAtUtc = MaxUtc(h.LastHeartbeatAtUtc, stoppedAtUtc);
+        h.LastExplicitPositionSeconds = Math.Max(h.LastExplicitPositionSeconds, positionSeconds);
+        h.MaxKnownPositionSeconds = Math.Max(h.MaxKnownPositionSeconds, positionSeconds);
         h.EstimatedSeconds = Math.Max(h.EstimatedSeconds, positionSeconds);
+        h.IsStopFinalized = true;
         if (h.FileDurationSeconds > 0 && h.EstimatedSeconds >= h.FileDurationSeconds * 0.9)
             h.IsCompleted = true;
 
@@ -1053,6 +1127,31 @@ public sealed class LibraryRepository
             .ConfigureAwait(false);
         await AddIfMissingAsync("IsCompleted",
                 "ALTER TABLE WatchHistories ADD COLUMN IsCompleted INTEGER NOT NULL DEFAULT 0")
+            .ConfigureAwait(false);
+        await AddIfMissingAsync("MaxKnownPositionSeconds",
+                "ALTER TABLE WatchHistories ADD COLUMN MaxKnownPositionSeconds INTEGER NOT NULL DEFAULT 0")
+            .ConfigureAwait(false);
+        await AddIfMissingAsync("LastExplicitPositionSeconds",
+                "ALTER TABLE WatchHistories ADD COLUMN LastExplicitPositionSeconds INTEGER NOT NULL DEFAULT 0")
+            .ConfigureAwait(false);
+        await AddIfMissingAsync("LastHeartbeatAtUtc",
+                "ALTER TABLE WatchHistories ADD COLUMN LastHeartbeatAtUtc TEXT NULL")
+            .ConfigureAwait(false);
+        await AddIfMissingAsync("IsStopFinalized",
+                "ALTER TABLE WatchHistories ADD COLUMN IsStopFinalized INTEGER NOT NULL DEFAULT 0")
+            .ConfigureAwait(false);
+
+        await _db.Database.ExecuteSqlRawAsync(
+                """
+                CREATE INDEX IF NOT EXISTS "IX_WatchHistories_FilePath_OpenedAt" ON "WatchHistories" ("FilePath", "OpenedAt" DESC)
+                """,
+                cancellationToken)
+            .ConfigureAwait(false);
+        await _db.Database.ExecuteSqlRawAsync(
+                """
+                CREATE INDEX IF NOT EXISTS "IX_WatchHistories_IsStopFinalized_LastHeartbeatAtUtc" ON "WatchHistories" ("IsStopFinalized", "LastHeartbeatAtUtc")
+                """,
+                cancellationToken)
             .ConfigureAwait(false);
     }
 
@@ -1622,8 +1721,142 @@ public sealed class LibraryRepository
     {
         return await _db.CastMembers.AsNoTracking()
             .Where(c => c.MediaId == mediaTmdbId && c.MediaType == mediaType)
-            .OrderBy(c => c.Name)
+            .OrderBy(c => c.BillingOrder)
+            .ThenBy(c => c.Name)
+            .Take(10)
             .ToListAsync(cancellationToken).ConfigureAwait(false);
+    }
+
+    /// <summary>Replaces cast rows from TMDB <c>/credits</c> only (top-billed + portrait cache).</summary>
+    public async Task<(bool Ok, string? Error)> RefreshMovieCastFromTmdbAsync(int movieLibraryId, TmdbClient tmdb,
+        CancellationToken cancellationToken = default)
+    {
+        var m = await _db.Movies.AsNoTracking()
+            .FirstOrDefaultAsync(x => x.Id == movieLibraryId, cancellationToken).ConfigureAwait(false);
+        if (m == null)
+            return (false, "Movie not found.");
+        if (m.TmdbId <= 0)
+            return (false, "No TMDB id for this title.");
+        var (ok, err, _, _) =
+            await ReplaceCastMembersFromTmdbCreditsCoreAsync(m.TmdbId, "Movie", tmdb, cancellationToken)
+                .ConfigureAwait(false);
+        return (ok, err);
+    }
+
+    /// <summary>Replaces cast rows from TMDB <c>/credits</c> only (top-billed + portrait cache).</summary>
+    public async Task<(bool Ok, string? Error)> RefreshShowCastFromTmdbAsync(int showLibraryId, TmdbClient tmdb,
+        CancellationToken cancellationToken = default)
+    {
+        var s = await _db.Shows.AsNoTracking()
+            .FirstOrDefaultAsync(x => x.Id == showLibraryId, cancellationToken).ConfigureAwait(false);
+        if (s == null)
+            return (false, "Series not found.");
+        if (s.TmdbId <= 0)
+            return (false, "No TMDB id for this title.");
+        var (ok, err, _, _) =
+            await ReplaceCastMembersFromTmdbCreditsCoreAsync(s.TmdbId, "Series", tmdb, cancellationToken)
+                .ConfigureAwait(false);
+        return (ok, err);
+    }
+
+    /// <summary>
+    /// Batch backfill: walks matched movies then series by library id (exclusive cursors), up to <paramref name="limit"/> titles.
+    /// </summary>
+    public async Task<CastMetadataBackfillBatchResult> BackfillCastMetadataBatchAsync(TmdbClient tmdb, int limit,
+        int afterMovieLibraryIdExclusive, int afterShowLibraryIdExclusive,
+        CancellationToken cancellationToken = default)
+    {
+        limit = Math.Clamp(limit, 1, 100);
+        var moviesProcessed = 0;
+        var showsProcessed = 0;
+        var rowsWritten = 0;
+        var missingProfile = 0;
+        var failed = 0;
+        var lastMovie = afterMovieLibraryIdExclusive;
+        var lastShow = afterShowLibraryIdExclusive;
+
+        var movieBatch = await _db.Movies.AsNoTracking()
+            .Where(m => m.TmdbId > 0 && m.Id > afterMovieLibraryIdExclusive)
+            .OrderBy(m => m.Id)
+            .Take(limit)
+            .ToListAsync(cancellationToken).ConfigureAwait(false);
+
+        foreach (var m in movieBatch)
+        {
+            var (ok, err, rows, miss) =
+                await ReplaceCastMembersFromTmdbCreditsCoreAsync(m.TmdbId, "Movie", tmdb, cancellationToken)
+                    .ConfigureAwait(false);
+            lastMovie = m.Id;
+            if (!ok)
+            {
+                failed++;
+                continue;
+            }
+
+            moviesProcessed++;
+            rowsWritten += rows;
+            missingProfile += miss;
+        }
+
+        var remaining = limit - movieBatch.Count;
+        if (remaining > 0)
+        {
+            var showBatch = await _db.Shows.AsNoTracking()
+                .Where(s => s.TmdbId > 0 && s.Id > afterShowLibraryIdExclusive)
+                .OrderBy(s => s.Id)
+                .Take(remaining)
+                .ToListAsync(cancellationToken).ConfigureAwait(false);
+            foreach (var s in showBatch)
+            {
+                var (ok, err, rows, miss) =
+                    await ReplaceCastMembersFromTmdbCreditsCoreAsync(s.TmdbId, "Series", tmdb, cancellationToken)
+                        .ConfigureAwait(false);
+                lastShow = s.Id;
+                if (!ok)
+                {
+                    failed++;
+                    continue;
+                }
+
+                showsProcessed++;
+                rowsWritten += rows;
+                missingProfile += miss;
+            }
+        }
+
+        var moreMovies = await _db.Movies.AsNoTracking()
+            .AnyAsync(m => m.TmdbId > 0 && m.Id > lastMovie, cancellationToken).ConfigureAwait(false);
+        var moreShows = await _db.Shows.AsNoTracking()
+            .AnyAsync(s => s.TmdbId > 0 && s.Id > lastShow, cancellationToken).ConfigureAwait(false);
+        var hasMore = moreMovies || moreShows;
+
+        return new CastMetadataBackfillBatchResult(moviesProcessed, showsProcessed, rowsWritten, missingProfile,
+            failed, lastMovie, lastShow, hasMore);
+    }
+
+    private async Task<(bool Ok, string? Error, int Rows, int MissingProfile)> ReplaceCastMembersFromTmdbCreditsCoreAsync(
+        int mediaTmdbId, string mediaType, TmdbClient tmdb, CancellationToken cancellationToken)
+    {
+        var cast = await tmdb.TryFetchTopCastWithPortraitCachesAsync(mediaTmdbId, mediaType, cancellationToken)
+            .ConfigureAwait(false);
+        if (cast == null)
+            return (false, "TMDB credits could not be loaded.", 0, 0);
+
+        var missing = cast.Count(static c => string.IsNullOrWhiteSpace(c.ProfilePath));
+        var rows = cast.Select(c => new CastMember
+        {
+            PersonTmdbId = c.Id,
+            MediaId = mediaTmdbId,
+            MediaType = mediaType,
+            Name = c.Name,
+            Character = c.Character,
+            ProfilePath = string.IsNullOrWhiteSpace(c.ProfilePath) ? null : c.ProfilePath.Trim(),
+            BillingOrder = c.BillingOrder,
+            ProfileLocalPath = c.ProfileLocalPath
+        }).ToList();
+
+        await ReplaceCastMembersAsync(mediaTmdbId, mediaType, rows, cancellationToken).ConfigureAwait(false);
+        return (true, null, rows.Count, missing);
     }
 
     public async Task EnsureCastMemberPersonTmdbIdColumnAsync(CancellationToken cancellationToken = default)
@@ -1635,6 +1868,26 @@ public sealed class LibraryRepository
                 "ALTER TABLE CastMembers ADD COLUMN PersonTmdbId INTEGER NOT NULL DEFAULT 0",
                 cancellationToken)
             .ConfigureAwait(false);
+    }
+
+    public async Task EnsureCastMemberProfilePathAndBillingOrderColumnsAsync(
+        CancellationToken cancellationToken = default)
+    {
+        if (!await SqliteColumnExistsAsync("CastMembers", "ProfilePath", cancellationToken).ConfigureAwait(false))
+        {
+            await _db.Database
+                .ExecuteSqlRawAsync("ALTER TABLE CastMembers ADD COLUMN ProfilePath TEXT NULL", cancellationToken)
+                .ConfigureAwait(false);
+        }
+
+        if (!await SqliteColumnExistsAsync("CastMembers", "BillingOrder", cancellationToken).ConfigureAwait(false))
+        {
+            await _db.Database
+                .ExecuteSqlRawAsync(
+                    "ALTER TABLE CastMembers ADD COLUMN BillingOrder INTEGER NOT NULL DEFAULT 0",
+                    cancellationToken)
+                .ConfigureAwait(false);
+        }
     }
 
     /// <summary>SQLite: skip <c>ALTER TABLE … ADD COLUMN</c> when the column already exists (avoids EF error logs).</summary>
@@ -2663,7 +2916,9 @@ public sealed class LibraryRepository
                 MediaId = details.Id,
                 MediaType = "Movie",
                 Name = c.Name,
-                Character = string.IsNullOrEmpty(c.Character) ? null : c.Character,
+                Character = c.Character,
+                ProfilePath = string.IsNullOrWhiteSpace(c.ProfilePath) ? null : c.ProfilePath.Trim(),
+                BillingOrder = c.BillingOrder,
                 ProfileLocalPath = c.ProfileLocalPath
             });
 
@@ -2709,7 +2964,9 @@ public sealed class LibraryRepository
                 MediaId = details.Id,
                 MediaType = "Series",
                 Name = c.Name,
-                Character = string.IsNullOrEmpty(c.Character) ? null : c.Character,
+                Character = c.Character,
+                ProfilePath = string.IsNullOrWhiteSpace(c.ProfilePath) ? null : c.ProfilePath.Trim(),
+                BillingOrder = c.BillingOrder,
                 ProfileLocalPath = c.ProfileLocalPath
             });
 

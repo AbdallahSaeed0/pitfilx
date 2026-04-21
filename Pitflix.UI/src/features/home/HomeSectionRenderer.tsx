@@ -24,7 +24,7 @@ function seeAllHref(section: HomeSectionConfig): string | null {
   if (section.sourceType === "next_episodes") return "/next-episodes";
   if (section.sourceType === "latest_trailers") return "/trailers?mode=latest";
   if (section.sourceType === "coming_soon_trailers" || section.sourceType === "upcoming_trending_trailers")
-    return "/trailers?mode=all-upcoming";
+    return "/trailers?mode=upcoming";
   if (section.sourceType === "coming_soon") return null;
   if (section.mediaType === "series") return "/series";
   if (section.mediaType === "movie") return "/movies";
