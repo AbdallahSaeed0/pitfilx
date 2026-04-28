@@ -7,6 +7,7 @@ import { usePlayback } from "../../hooks/usePlayback";
 import { cn } from "../../utils/cn";
 import { trustedResumeHeadFromRow } from "../../utils/trustedResume";
 import type { PlayContext } from "../../hooks/usePlayback";
+import { useNavigate } from "react-router-dom";
 
 function continueReturnContext(item: WatchHistoryRow): PlayContext {
   const returnTo =
@@ -30,32 +31,33 @@ function ContinueThumb({
   item: WatchHistoryRow;
   onManage?: (id: number) => void;
 }) {
+  const navigate = useNavigate();
   const { play } = usePlayback();
   const src = toPosterSrc(item.posterLocalPath ?? item.posterRemoteUrl ?? undefined);
   const fallbackSrc =
     item.posterLocalPath && item.posterRemoteUrl ? toPosterSrc(item.posterRemoteUrl) : undefined;
+
+  const goToDetailPage = () => {
+    if (item.libraryMovieId != null) {
+      navigate(`/movie/${item.libraryMovieId}`);
+    } else if (item.libraryShowId != null) {
+      navigate(`/series/${item.libraryShowId}`);
+    }
+  };
+
   return (
     <div className="flex w-[200px] shrink-0 items-stretch gap-1 rounded-xl bg-black/30 p-1 ring-1 ring-white/10">
       <button
         type="button"
-        onClick={() =>
-          void play(
-            item.filePath,
-            item.title,
-            item.posterLocalPath ?? null,
-            item.mediaType || "Movie",
-            item.fileDurationSeconds ?? 0,
-            continueReturnContext(item),
-            trustedResumeHeadFromRow(item),
-          )
-        }
+        onClick={() => goToDetailPage()}
         className="flex min-w-0 flex-1 gap-2 rounded-lg p-1 text-left transition hover:bg-white/5"
+        title="Go to series or movie details"
       >
         <MediaImage
           src={src}
           fallbackSrc={fallbackSrc}
           alt=""
-          className="h-20 w-14 shrink-0 rounded-lg bg-pitflix-card object-cover"
+          className="h-20 w-14 shrink-0 rounded-lg bg-pitflix-card object-cover cursor-pointer hover:opacity-90 transition-opacity"
           fallbackText=""
           loading="lazy"
         />

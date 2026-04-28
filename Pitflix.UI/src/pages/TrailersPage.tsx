@@ -10,6 +10,7 @@ import {
 } from "../api/homeDiscover";
 import { TrailerModal } from "../components/trailers/TrailerModal";
 import { MediaImage } from "../components/ui/MediaImage";
+import { Pagination } from "../components/ui/Pagination";
 import { useDebounce } from "../hooks/useDebounce";
 import { cn } from "../utils/cn";
 
@@ -78,6 +79,8 @@ function TrailerGridSkeleton({ count = 10 }: { count?: number }) {
 export function TrailersPage() {
   const [searchParams, setSearchParams] = useSearchParams();
   const mode = useMemo(() => modeFromParams(searchParams.get("mode")), [searchParams]);
+  const [currentPage, setCurrentPage] = useState(1);
+  const itemsPerPage = 20;
 
   useEffect(() => {
     if (searchParams.get("mode")) return;
@@ -137,6 +140,19 @@ export function TrailersPage() {
 
   const loading = mode === "latest" ? latestQ.isLoading : browseQ.isLoading;
   const error = mode === "latest" ? latestQ.isError : browseQ.isError;
+
+  // Reset to page 1 when filters change
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [mode, filter, debouncedSearch]);
+
+  // Paginate results
+  const totalPages = Math.ceil(list.length / itemsPerPage);
+  const paginatedList = useMemo(() => {
+    const start = (currentPage - 1) * itemsPerPage;
+    const end = start + itemsPerPage;
+    return list.slice(start, end);
+  }, [list, currentPage]);
 
   return (
     <div className="mx-auto max-w-6xl space-y-5 pb-12">
@@ -213,31 +229,44 @@ export function TrailersPage() {
       ) : null}
 
       {!loading && list.length > 0 ? (
-        <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5">
-          {list.map((t) => {
-            const youtubeThumb = `https://img.youtube.com/vi/${t.youtubeKey}/hqdefault.jpg`;
-            const thumb = youtubeThumb || t.posterUrl || t.backdropUrl;
-            return (
-              <button
-                key={`${t.mediaType}-${t.tmdbId}-${t.youtubeKey}`}
-                type="button"
-                onClick={() => setActive(t)}
-                className="group overflow-hidden rounded-xl border border-pitflix-card/60 bg-black/30 text-left shadow-lg transition-all hover:border-pitflix-primary/45"
-              >
-                <div className="relative aspect-video w-full">
-                  <MediaImage src={thumb} alt="" className="h-full w-full object-cover" fallbackText="▶" />
-                  <div className="absolute inset-0 flex items-center justify-center bg-black/30 opacity-90 transition-opacity group-hover:bg-black/45">
-                    <CirclePlay className="h-10 w-10 text-white drop-shadow-md" />
+        <>
+          <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5">
+            {paginatedList.map((t) => {
+              const youtubeThumb = `https://img.youtube.com/vi/${t.youtubeKey}/hqdefault.jpg`;
+              const thumb = youtubeThumb || t.posterUrl || t.backdropUrl;
+              return (
+                <button
+                  key={`${t.mediaType}-${t.tmdbId}-${t.youtubeKey}`}
+                  type="button"
+                  onClick={() => setActive(t)}
+                  className="group overflow-hidden rounded-xl border border-pitflix-card/60 bg-black/30 text-left shadow-lg transition-all hover:border-pitflix-primary/45"
+                >
+                  <div className="relative aspect-video w-full">
+                    <MediaImage src={thumb} alt="" className="h-full w-full object-cover" fallbackText="▶" />
+                    <div className="absolute inset-0 flex items-center justify-center bg-black/30 opacity-90 transition-opacity group-hover:bg-black/45">
+                      <CirclePlay className="h-10 w-10 text-white drop-shadow-md" />
+                    </div>
                   </div>
-                </div>
-                <div className="space-y-0.5 p-2">
-                  <p className="line-clamp-2 text-xs font-semibold text-white">{t.title}</p>
-                  <p className="line-clamp-1 text-[10px] text-pitflix-subtle">{t.trailerTitle}</p>
-                </div>
-              </button>
-            );
-          })}
-        </div>
+                  <div className="space-y-0.5 p-2">
+                    <p className="line-clamp-2 text-xs font-semibold text-white">{t.title}</p>
+                    <p className="line-clamp-1 text-[10px] text-pitflix-subtle">{t.trailerTitle}</p>
+                  </div>
+                </button>
+              );
+            })}
+          </div>
+          {totalPages > 1 ? (
+            <div className="mt-8">
+              <Pagination
+                currentPage={currentPage}
+                totalPages={totalPages}
+                totalItems={list.length}
+                pageSize={itemsPerPage}
+                onPageChange={setCurrentPage}
+              />
+            </div>
+          ) : null}
+        </>
       ) : null}
 
       <TrailerModal open={!!active} onClose={() => setActive(null)} trailer={active} />
