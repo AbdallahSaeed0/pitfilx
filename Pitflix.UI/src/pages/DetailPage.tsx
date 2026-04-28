@@ -85,6 +85,8 @@ export function MovieDetailPage() {
     queryKey: ["movie", mid],
     queryFn: () => getMovie(mid),
     enabled: Number.isFinite(mid) && mid > 0,
+    staleTime: 10 * 60_000,
+    gcTime: 60 * 60_000,
   });
 
   if (!Number.isFinite(mid) || mid <= 0) return <p className="text-pitflix-muted">Invalid id</p>;
@@ -365,6 +367,8 @@ export function ShowDetailPage() {
     queryKey: ["show", sid],
     queryFn: () => getShow(sid),
     enabled: Number.isFinite(sid) && sid > 0,
+    staleTime: 10 * 60_000,
+    gcTime: 60 * 60_000,
   });
 
   const episodesGrouped = (data?.episodes ?? []) as { season: number; episodes: EpisodeRow[] }[];

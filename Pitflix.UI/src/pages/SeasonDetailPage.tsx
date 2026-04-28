@@ -38,7 +38,7 @@ export function SeasonDetailPage() {
     season: number;
     episodeNumber: number;
   } | null>(null);
-  const [episodePickId, setEpisodePickId] = useState<number | null>(null);
+  const [episodePickIds, setEpisodePickIds] = useState<number[] | null>(null);
   const [episodeRematchBusyId, setEpisodeRematchBusyId] = useState<number | null>(null);
   const [episodeActionMsg, setEpisodeActionMsg] = useState<string | null>(null);
   const [selectedIds, setSelectedIds] = useState<Set<number>>(() => new Set());
@@ -59,6 +59,8 @@ export function SeasonDetailPage() {
     queryKey: ["show-season", libraryId, season],
     queryFn: () => getShowSeason(libraryId, season),
     enabled: Number.isFinite(libraryId) && libraryId > 0 && Number.isFinite(season),
+    staleTime: 10 * 60_000,
+    gcTime: 60 * 60_000,
   });
 
   const selectAllInSeason = useCallback(() => {
@@ -143,13 +145,14 @@ export function SeasonDetailPage() {
   }, [episodes, selectedIds, libraryId, season, navigate, qc, clearSelection]);
 
   const bulkRelink = useCallback(() => {
-    if (selectedIds.size !== 1) {
-      setEpisodeActionMsg("Re-link one episode at a time — select a single episode.");
-      window.setTimeout(() => setEpisodeActionMsg(null), 4500);
+    const ids = episodes.filter((e) => selectedIds.has(e.id)).map((e) => e.id);
+    if (ids.length === 0) {
+      setEpisodeActionMsg("Select at least one episode to re-link.");
+      window.setTimeout(() => setEpisodeActionMsg(null), 3500);
       return;
     }
-    setEpisodePickId([...selectedIds][0]!);
-  }, [selectedIds]);
+    setEpisodePickIds(ids);
+  }, [episodes, selectedIds]);
 
   const poster = useMemo(
     () => toPosterSrc(show?.selectedPosterPath || show?.posterLocalPath || undefined),
@@ -346,7 +349,7 @@ export function SeasonDetailPage() {
                     <button
                       type="button"
                       disabled={episodeRematchBusyId !== null}
-                      onClick={() => setEpisodePickId(ep.id)}
+                      onClick={() => setEpisodePickIds([ep.id])}
                       className="rounded-xl border border-pitflix-card bg-pitflix-surface px-3 py-2 text-xs font-semibold text-pitflix-muted shadow-md hover:border-pitflix-primary/50 hover:text-white disabled:opacity-45"
                     >
                       Re-link…
@@ -412,11 +415,24 @@ export function SeasonDetailPage() {
       />
 
       <PickTmdbTitleModal
-        open={episodePickId !== null}
-        onClose={() => setEpisodePickId(null)}
-        target={episodePickId !== null ? { kind: "episode", episodeId: episodePickId } : null}
+        open={episodePickIds != null}
+        onClose={() => setEpisodePickIds(null)}
+        target={
+          episodePickIds == null
+            ? null
+            : episodePickIds.length === 1
+              ? { kind: "episode", episodeId: episodePickIds[0]! }
+              : { kind: "episode-bulk", episodeIds: episodePickIds }
+        }
         hintTitle={show.title ?? ""}
         onMatched={(r) => {
+          clearSelection();
+          setEpisodeActionMsg(
+            episodePickIds && episodePickIds.length > 1
+              ? `Re-linked ${episodePickIds.length} selected episodes.`
+              : "Episode re-linked.",
+          );
+          window.setTimeout(() => setEpisodeActionMsg(null), 4500);
           void qc.invalidateQueries({ queryKey: ["show-season", libraryId, season] });
           void qc.invalidateQueries({ queryKey: ["show", libraryId] });
           if (r.showId != null && r.showId !== libraryId) {

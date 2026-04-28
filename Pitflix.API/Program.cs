@@ -49,6 +49,8 @@ builder.Services.AddCors(options =>
                 "http://localhost:1420",
                 "http://localhost:5173",
                 "http://127.0.0.1:5173",
+                "http://localhost:4173",
+                "http://127.0.0.1:4173",
                 "http://localhost:3000",
                 "http://127.0.0.1:3000",
                 "tauri://localhost",
@@ -797,6 +799,8 @@ app.MapGet("/api/unmatched", async (
     int pageSize = 30,
     string? search = null,
     string type = "all",
+    string? sortBy = "date",
+    string? sortDir = "desc",
     CancellationToken ct = default) =>
 {
     var shelf = type.ToLowerInvariant() switch
@@ -805,7 +809,7 @@ app.MapGet("/api/unmatched", async (
         "series" => "Series",
         _ => (string?)null
     };
-    var result = await repo.GetUnmatchedPageAsync(search, shelf, page, pageSize, ct).ConfigureAwait(false);
+    var result = await repo.GetUnmatchedPageAsync(search, shelf, page, pageSize, sortBy, sortDir, ct).ConfigureAwait(false);
     var dtos = result.Items.Select(ToScanLogDto).ToList();
     return Results.Json(new
     {
@@ -1095,14 +1099,28 @@ app.MapPost("/api/unmatched/search", async (UnmatchedSearchBody body, Cancellati
     var tmdb = TmdbClientFactory.Create();
     if (tmdb == null)
         return Results.Json(Array.Empty<object>(), jsonSerializerOptions);
-    var q = body.Query ?? "";
+    var q = (body.Query ?? "").Trim();
+    if (q.Length < 2)
+        return Results.Json(Array.Empty<object>(), jsonSerializerOptions);
+    var qFallback = Regex.Replace(q, @"[._\-]+", " ");
+    qFallback = Regex.Replace(qFallback, @"\s+", " ").Trim();
+    if (qFallback.Length >= 4)
+        qFallback = Regex.Replace(qFallback, @"\b(19\d{2}|20\d{2})\b", "").Trim();
     var mtRaw = string.IsNullOrWhiteSpace(body.MediaType) ? "Movie" : body.MediaType!;
     List<(TmdbSearchResult Result, string Media)> combined;
 
     if (mtRaw.Equals("Both", StringComparison.OrdinalIgnoreCase))
     {
-        var movies = await tmdb.SearchAsync(q, "Movie", false, ct, 10).ConfigureAwait(false);
-        var series = await tmdb.SearchAsync(q, "Series", false, ct, 10).ConfigureAwait(false);
+        var movies = await tmdb.SearchAsync(q, "Movie", false, ct, 12).ConfigureAwait(false);
+        var series = await tmdb.SearchAsync(q, "Series", false, ct, 12).ConfigureAwait(false);
+        if ((movies.Count + series.Count) < 6 && !string.Equals(qFallback, q, StringComparison.Ordinal))
+        {
+            var movies2 = await tmdb.SearchAsync(qFallback, "Movie", false, ct, 12).ConfigureAwait(false);
+            var series2 = await tmdb.SearchAsync(qFallback, "Series", false, ct, 12).ConfigureAwait(false);
+            movies = movies.Concat(movies2).ToList();
+            series = series.Concat(series2).ToList();
+        }
+
         combined = movies.Select(r => (Result: r, Media: "Movie"))
             .Concat(series.Select(r => (Result: r, Media: "Series")))
             .OrderByDescending(x => x.Result.Popularity)
@@ -1111,7 +1129,12 @@ app.MapPost("/api/unmatched/search", async (UnmatchedSearchBody body, Cancellati
     }
     else
     {
-        var list = await tmdb.SearchAsync(q, mtRaw, false, ct, 12).ConfigureAwait(false);
+        var list = await tmdb.SearchAsync(q, mtRaw, false, ct, 14).ConfigureAwait(false);
+        if (list.Count < 7 && !string.Equals(qFallback, q, StringComparison.Ordinal))
+        {
+            var fallback = await tmdb.SearchAsync(qFallback, mtRaw, false, ct, 14).ConfigureAwait(false);
+            list = list.Concat(fallback).ToList();
+        }
         combined = list.Select(r => (Result: r, Media: mtRaw)).ToList();
     }
 
@@ -3119,11 +3142,16 @@ app.MapPost("/api/ratings/re-enrich", async (HttpRequest req, RatingsRefreshQueu
         CancellationToken ct) =>
 {
     var expected = cfg["Pitflix:Ratings:ManualReEnrichKey"]?.Trim();
+    var requireAuth = cfg.GetValue<bool>("Pitflix:Ratings:RequireManualReEnrichAuth");
+    
     if (!string.IsNullOrEmpty(expected))
     {
         if (!req.Headers.TryGetValue("X-Pitflix-Ratings-ReEnrich-Key", out var key) ||
             !string.Equals(key.ToString(), expected, StringComparison.Ordinal))
-            return Results.Unauthorized();
+        {
+            if (requireAuth)
+                return Results.Unauthorized();
+        }
     }
 
     var body = await req.ReadFromJsonAsync<RatingsReEnrichBody>(cancellationToken: ct).ConfigureAwait(false);
@@ -3141,11 +3169,16 @@ app.MapPost("/api/ratings/queue-library", async (HttpRequest req, LibraryReposit
         IConfiguration cfg, int? limit, CancellationToken ct) =>
 {
     var expected = cfg["Pitflix:Ratings:ManualReEnrichKey"]?.Trim();
+    var requireAuth = cfg.GetValue<bool>("Pitflix:Ratings:RequireManualReEnrichAuth");
+    
     if (!string.IsNullOrEmpty(expected))
     {
         if (!req.Headers.TryGetValue("X-Pitflix-Ratings-ReEnrich-Key", out var key) ||
             !string.Equals(key.ToString(), expected, StringComparison.Ordinal))
-            return Results.Unauthorized();
+        {
+            if (requireAuth)
+                return Results.Unauthorized();
+        }
     }
 
     var cap = Math.Clamp(limit ?? 500, 1, 5000);
@@ -3422,41 +3455,47 @@ app.MapPut("/api/home/next-episodes/followed", async (List<FollowedExternalShow>
     return Results.Ok();
 });
 
-app.MapGet("/api/home/next-episodes", async (LibraryContext db, LibraryRepository repo, CancellationToken ct) =>
+app.MapGet("/api/home/next-episodes", async (LibraryContext db, LibraryRepository repo, string? view, int? limit,
+    CancellationToken ct) =>
 {
     var tmdb = TmdbClientFactory.Create();
     if (tmdb == null)
         return Results.Json(Array.Empty<object>(), jsonSerializerOptions);
+    var viewKey = string.Equals(view, "all", StringComparison.OrdinalIgnoreCase) ? "all" : "priority";
+    var limitCap = viewKey == "all" ? 240 : 96;
+    var takeLimit = Math.Clamp(limit ?? (viewKey == "all" ? 160 : 48), 12, limitCap);
 
     var pinnedIds = await repo.GetNextEpisodesPinnedShowIdsAsync(ct).ConfigureAwait(false);
     var pinnedSet = pinnedIds.Count == 0 ? null : pinnedIds.ToHashSet();
 
-    List<(int Id, string? Title, int TmdbId)> pinnedShows;
+    List<(int Id, string? Title, int TmdbId, string? PosterLocalPath, string? SelectedPosterPath)> pinnedShows;
     if (pinnedSet == null || pinnedSet.Count == 0)
-        pinnedShows = new List<(int Id, string? Title, int TmdbId)>();
+        pinnedShows = new List<(int Id, string? Title, int TmdbId, string? PosterLocalPath, string? SelectedPosterPath)>();
     else
     {
         var rawPinned = await db.Shows.AsNoTracking()
             .Where(s => pinnedSet.Contains(s.Id) && s.IsMatched && s.TmdbId > 0)
-            .Select(s => new { s.Id, s.Title, s.TmdbId })
+            .Select(s => new { s.Id, s.Title, s.TmdbId, s.PosterLocalPath, s.SelectedPosterPath })
             .ToListAsync(ct)
             .ConfigureAwait(false);
-        pinnedShows = rawPinned.ConvertAll(s => (s.Id, (string?)s.Title, s.TmdbId));
+        pinnedShows = rawPinned.ConvertAll(s => (s.Id, (string?)s.Title, s.TmdbId, s.PosterLocalPath, s.SelectedPosterPath));
     }
 
     var restQuery = db.Shows.AsNoTracking().Where(s => s.IsMatched && s.TmdbId > 0);
     if (pinnedSet is { Count: > 0 })
         restQuery = restQuery.Where(s => !pinnedSet.Contains(s.Id));
 
+    var restTake = viewKey == "all" ? 1500 : 900;
     var rawRest = await restQuery
         .OrderByDescending(s => s.DateAdded)
-        .Take(400)
-        .Select(s => new { s.Id, s.Title, s.TmdbId })
+        .Take(restTake)
+        .Select(s => new { s.Id, s.Title, s.TmdbId, s.PosterLocalPath, s.SelectedPosterPath })
         .ToListAsync(ct)
         .ConfigureAwait(false);
-    var rest = rawRest.ConvertAll(s => (s.Id, (string?)s.Title, s.TmdbId));
+    var rest = rawRest.ConvertAll(s => (s.Id, (string?)s.Title, s.TmdbId, s.PosterLocalPath, s.SelectedPosterPath));
 
-    var shows = new List<(int Id, string? Title, int TmdbId)>(pinnedShows.Count + rest.Count);
+    var shows = new List<(int Id, string? Title, int TmdbId, string? PosterLocalPath, string? SelectedPosterPath)>(
+        pinnedShows.Count + rest.Count);
     shows.AddRange(pinnedShows);
     shows.AddRange(rest);
 
@@ -3488,6 +3527,7 @@ app.MapGet("/api/home/next-episodes", async (LibraryContext db, LibraryRepositor
                 if (airDay < today)
                     return;
                 var isPinned = pinnedSet != null && pinnedSet.Contains(s.Id);
+                var posterUrl = ImageUrls.ToImageUrl(s.SelectedPosterPath ?? s.PosterLocalPath);
                 var row = new
                 {
                     kind = "library",
@@ -3499,8 +3539,9 @@ app.MapGet("/api/home/next-episodes", async (LibraryContext db, LibraryRepositor
                     episodeNumber = en,
                     airDate = ad,
                     pinned = isPinned,
+                    posterUrl,
                 };
-                var tier = isPinned ? 0 : 1;
+                var tier = viewKey == "all" ? 1 : (isPinned ? 0 : 1);
                 bag.Add((tier, isPinned, airDay, s.Title ?? "", row));
             }
             catch
@@ -3558,13 +3599,14 @@ app.MapGet("/api/home/next-episodes", async (LibraryContext db, LibraryRepositor
             }
         }).ConfigureAwait(false);
 
-    var ordered = bag
-        .OrderBy(x => x.Tier)
-        .ThenByDescending(x => x.Pinned)
-        .ThenBy(x => x.Air)
-        .ThenBy(x => x.SortTitle, StringComparer.OrdinalIgnoreCase)
+    var ordered = (viewKey == "all"
+            ? bag.OrderBy(x => x.Air).ThenBy(x => x.SortTitle, StringComparer.OrdinalIgnoreCase)
+            : bag.OrderBy(x => x.Tier)
+                .ThenByDescending(x => x.Pinned)
+                .ThenBy(x => x.Air)
+                .ThenBy(x => x.SortTitle, StringComparer.OrdinalIgnoreCase))
         .Select(x => x.Row)
-        .Take(48)
+        .Take(takeLimit)
         .ToList();
 
     return Results.Json(ordered, jsonSerializerOptions);
@@ -3658,10 +3700,52 @@ app.MapGet("/api/discover/tv-schedule", async (int tmdbId, CancellationToken ct)
 async Task<IResult> HomeTrailersLatestCore(TrailersRepository trailersRepo, TmdbClient tmdb, ILogger<Program> logger,
     CancellationToken ct)
 {
-    var rows = await PersistedTrailerUiFeed.BuildAsync(trailersRepo, tmdb, limit: 16, mediaType: null, ct)
+    var rows = await PersistedTrailerUiFeed.BuildAsync(trailersRepo, tmdb, limit: 120, mediaType: null, ct)
         .ConfigureAwait(false);
+    var today = DateOnly.FromDateTime(DateTime.UtcNow);
+    var recentReleaseCutoff = today.AddDays(-75);
+    var freshTrailerCutoffUtc = DateTime.UtcNow.AddDays(-21);
+
+    bool TryParseDateOnly(string? ymd, out DateOnly d)
+    {
+        d = default;
+        if (string.IsNullOrWhiteSpace(ymd) || ymd.Length < 10)
+            return false;
+        return DateOnly.TryParse(ymd.AsSpan(0, 10), out d);
+    }
+
+    int Bucket(Pitflix.API.Services.Trailers.TrailerCardUiRow r)
+    {
+        var hasPub = r.TrailerPublishedAtUtc != default;
+        if (TryParseDateOnly(r.ReleaseDate, out var release))
+        {
+            if (release > today)
+                return 0; // unreleased first
+            if (release >= recentReleaseCutoff)
+                return 1; // recently released
+            if (hasPub && r.TrailerPublishedAtUtc >= freshTrailerCutoffUtc)
+                return 2; // older title but very fresh trailer
+            return 9; // too old for "latest"
+        }
+
+        // Unknown release date: keep only if trailer itself is very recent.
+        if (hasPub && r.TrailerPublishedAtUtc >= freshTrailerCutoffUtc)
+            return 3;
+        return 9;
+    }
+
+    rows = rows
+        .Select(r => (Row: r, B: Bucket(r)))
+        .Where(x => x.B < 9)
+        .OrderBy(x => x.B)
+        .ThenByDescending(x => x.Row.TrailerPublishedAtUtc)
+        .ThenBy(x => x.Row.Title, StringComparer.OrdinalIgnoreCase)
+        .Select(x => x.Row)
+        .Take(16)
+        .ToList();
+
     if (rows.Count == 0)
-        logger.LogInformation("Home trailers latest: persisted feed empty (run ingestion or widen channels).");
+        logger.LogInformation("Home trailers latest: no rows passed latest-window gate (run ingestion or widen channels).");
     return Results.Json(rows.Select(c => new
     {
         tmdbId = c.TmdbId,
