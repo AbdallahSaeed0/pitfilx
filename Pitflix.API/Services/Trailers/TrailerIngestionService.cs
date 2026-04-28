@@ -418,38 +418,23 @@ public sealed class TrailerIngestionService
         }
 
         var normalized = NormalizeTitle(title);
+        
+        // Reject obvious junk
         if (BlockedTitlePattern.IsMatch(normalized))
         {
             reason = "blocked_title_pattern";
             return true;
         }
 
-        if (Regex.IsMatch(normalized, @"\bteaser\b", RegexOptions.IgnoreCase) &&
-            !TrailerWordPattern.IsMatch(normalized) &&
-            !OfficialTrailerOrTeaserGatePattern.IsMatch(normalized))
+        // Allow if contains "trailer" or "teaser" (primary gate - very permissive)
+        if (Regex.IsMatch(normalized, @"\b(trailer|teaser)\b", RegexOptions.IgnoreCase))
         {
-            reason = "teaser_without_trailer_word";
-            return true;
+            return false;
         }
 
-        var hasOfficialGatePhrase = OfficialTrailerOrTeaserGatePattern.IsMatch(normalized) ||
-                                    OfficialFinalTrailerGatePattern.IsMatch(normalized);
-        var hasTrailerWord = TrailerWordPattern.IsMatch(normalized) || TrailerNumberedPattern.IsMatch(normalized) ||
-                             Regex.IsMatch(normalized, @"\bfinal\s+trailer\b", RegexOptions.IgnoreCase);
-        // Allow if has trailer word OR official gate phrase (was too strict before)
-        if (!hasTrailerWord && !hasOfficialGatePhrase)
-        {
-            reason = "missing_trailer_word_or_official_phrase";
-            return true;
-        }
-
-        if (!hasOfficialGatePhrase && !hasTrailerWord && normalized.Replace(" ", "").Length < 10)
-        {
-            reason = "short_title_without_official_trailer_phrase";
-            return true;
-        }
-
-        return false;
+        // If no trailer/teaser word, reject (too risky)
+        reason = "missing_trailer_or_teaser_word";
+        return true;
     }
 
     private async Task<(List<YoutubeVideoCandidate> Videos, bool QuotaExceeded, int NewSinceWatermark)>
