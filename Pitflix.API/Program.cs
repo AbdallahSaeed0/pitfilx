@@ -3963,6 +3963,44 @@ app.MapGet("/api/trailers/monitor/status", (HttpRequest req, IConfiguration cfg,
     return Results.Json(monitor.Snapshot(), jsonSerializerOptions);
 });
 
+app.MapGet("/api/trailers/test-youtube-quota", async (IHttpClientFactory httpFactory, IConfiguration cfg, CancellationToken ct) =>
+{
+    var apiKey = cfg["Pitflix:YouTubeApiKey"]?.Trim();
+    if (string.IsNullOrEmpty(apiKey))
+    {
+        return Results.Json(new { ok = false, error = "No YouTube API key configured" }, jsonSerializerOptions);
+    }
+
+    try
+    {
+        var http = httpFactory.CreateClient();
+        var url = $"https://www.googleapis.com/youtube/v3/channels?part=id&forUsername=test&key={Uri.EscapeDataString(apiKey)}";
+        using var resp = await http.GetAsync(url, ct).ConfigureAwait(false);
+        var body = await resp.Content.ReadAsStringAsync(ct).ConfigureAwait(false);
+        
+        if (resp.StatusCode == System.Net.HttpStatusCode.Forbidden || body.Contains("quotaExceeded"))
+        {
+            return Results.Json(new { ok = false, error = "YouTube API quota exceeded or forbidden", statusCode = (int)resp.StatusCode }, jsonSerializerOptions);
+        }
+        
+        if (resp.StatusCode == System.Net.HttpStatusCode.Unauthorized)
+        {
+            return Results.Json(new { ok = false, error = "YouTube API key is invalid", statusCode = (int)resp.StatusCode }, jsonSerializerOptions);
+        }
+
+        if (resp.IsSuccessStatusCode)
+        {
+            return Results.Json(new { ok = true, message = "YouTube API is working", statusCode = (int)resp.StatusCode }, jsonSerializerOptions);
+        }
+
+        return Results.Json(new { ok = false, error = $"Unexpected status: {resp.StatusCode}", body = body }, jsonSerializerOptions);
+    }
+    catch (Exception ex)
+    {
+        return Results.Json(new { ok = false, error = ex.Message }, jsonSerializerOptions);
+    }
+});
+
 /// <param name="mode">latest | trending | upcoming | upcoming-movies | upcoming-tv | all-upcoming</param>
 /// <param name="filter">movie | tv | all</param>
 /// <param name="search">When at least 2 characters, TMDB search replaces the usual discover pool (still respects filter).</param>
