@@ -15,6 +15,7 @@ import {
   searchLibraryTitles,
 } from "../api/library";
 import { clearImageCache } from "../api/maintenance";
+import { runTrailerIngestion } from "../api/homeDiscover";
 import {
   addLibraryPath,
   addPinnedScanPath,
@@ -108,6 +109,8 @@ export function SettingsPage() {
   const [ratingsBackfillBusy, setRatingsBackfillBusy] = useState(false);
   const [ratingsStaleBusy, setRatingsStaleBusy] = useState(false);
   const [ratingsMaintMsg, setRatingsMaintMsg] = useState<string | null>(null);
+  const [trailerIngestionBusy, setTrailerIngestionBusy] = useState(false);
+  const [trailerIngestionMsg, setTrailerIngestionMsg] = useState<string | null>(null);
   const [toast, setToast] = useState<string | null>(null);
   const [removeBrowseRefresh, setRemoveBrowseRefresh] = useState(0);
   const [mediaPlayerPath, setMediaPlayerPath] = useState("");
@@ -1172,6 +1175,36 @@ export function SettingsPage() {
               >
                 🎨 Refresh Artwork
               </button>
+              <div className="col-span-2 rounded-lg border border-blue-500/20 bg-blue-950/15 px-3 py-2.5">
+                <p className="mb-1.5 text-[10px] font-semibold uppercase tracking-wide text-pitflix-muted">
+                  Trailers
+                </p>
+                <button
+                  type="button"
+                  disabled={trailerIngestionBusy}
+                  className="w-full rounded-lg border border-blue-500/35 bg-pitflix-bg text-xs font-medium text-blue-100 hover:bg-blue-500/15 disabled:opacity-50"
+                  onClick={() => {
+                    setTrailerIngestionMsg(null);
+                    setTrailerIngestionBusy(true);
+                    void runTrailerIngestion()
+                      .then(() => {
+                        setTrailerIngestionMsg("Trailer ingestion started. Check Trailers page in a moment.");
+                        void qc.invalidateQueries({
+                          predicate: (q) => q.queryKey[0] === "trailers" || q.queryKey[0] === "home",
+                        });
+                      })
+                      .catch((err) => {
+                        setTrailerIngestionMsg(formatScanOrApiError(err));
+                      })
+                      .finally(() => setTrailerIngestionBusy(false));
+                  }}
+                >
+                  {trailerIngestionBusy ? "Ingesting…" : "🎬 Run Trailer Ingestion"}
+                </button>
+                {trailerIngestionMsg ? (
+                  <p className="mt-2 text-[11px] leading-snug text-blue-100">{trailerIngestionMsg}</p>
+                ) : null}
+              </div>
               <div className="col-span-2 rounded-lg border border-violet-500/20 bg-violet-950/15 px-3 py-2.5">
                 <p className="mb-1.5 text-[10px] font-semibold uppercase tracking-wide text-pitflix-muted">
                   Ratings (persisted)

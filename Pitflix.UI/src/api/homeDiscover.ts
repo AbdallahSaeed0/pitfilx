@@ -43,6 +43,9 @@ export const putNextEpisodesFollowed = (body: FollowedExternalShow[]) =>
 export const getNextEpisodesAir = () =>
   api.get<NextEpisodeAir[]>("/home/next-episodes").then((r) => r.data);
 
+export const getNextEpisodesAirScoped = (params?: { view?: "priority" | "all"; limit?: number }) =>
+  api.get<NextEpisodeAir[]>("/home/next-episodes", { params }).then((r) => r.data);
+
 export const getNextEpisodesPins = () =>
   api.get<{ showIds: number[] }>("/home/next-episodes/pins").then((r) => r.data);
 
@@ -124,4 +127,9 @@ export const browseTrailers = (
         ...(search && search.trim().length >= 2 ? { search: search.trim() } : {}),
       },
     })
+    .then((r) => r.data);
+
+export const runTrailerIngestion = () =>
+  api
+    .post<{ ok: boolean; message?: string }>("/trailers/monitor/run", {}, { timeout: 300_000 })
     .then((r) => r.data);
