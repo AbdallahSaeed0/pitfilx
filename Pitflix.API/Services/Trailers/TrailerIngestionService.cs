@@ -436,13 +436,14 @@ public sealed class TrailerIngestionService
                                     OfficialFinalTrailerGatePattern.IsMatch(normalized);
         var hasTrailerWord = TrailerWordPattern.IsMatch(normalized) || TrailerNumberedPattern.IsMatch(normalized) ||
                              Regex.IsMatch(normalized, @"\bfinal\s+trailer\b", RegexOptions.IgnoreCase);
-        if (!hasOfficialGatePhrase && !hasTrailerWord)
+        // Allow if has trailer word OR official gate phrase (was too strict before)
+        if (!hasTrailerWord && !hasOfficialGatePhrase)
         {
-            reason = "missing_official_trailer_and_trailer_word";
+            reason = "missing_trailer_word_or_official_phrase";
             return true;
         }
 
-        if (!hasOfficialGatePhrase && normalized.Replace(" ", "").Length < 10)
+        if (!hasOfficialGatePhrase && !hasTrailerWord && normalized.Replace(" ", "").Length < 10)
         {
             reason = "short_title_without_official_trailer_phrase";
             return true;
