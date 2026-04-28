@@ -128,44 +128,52 @@ public sealed class TrailerIngestionService
         var newUploadsSinceWatermark = 0;
         var fallbackUsed = false;
 
-        foreach (var ch in channelsToPoll)
+        // Try YouTube API if key exists, but gracefully handle quota exceeded
+        if (!string.IsNullOrEmpty(apiKey))
         {
-            if (quotaStop)
-                break;
-            channelsPolled++;
-            _log.LogInformation("Trailers channel uploads sync start Channel={Channel} ChannelId={ChannelId}", ch.Name,
-                ch.ChannelId);
-            var (uploads, hitQ, newSince) = await FetchNewUploadsFromChannelAsync(apiKey!, ch, ct).ConfigureAwait(false);
-            newUploadsSinceWatermark += newSince;
-            uploadCandidates.AddRange(uploads);
-            if (hitQ)
-            {
-                quotaStop = true;
-                _log.LogWarning("Trailers ingestion: YouTube quota hit during uploads playlist poll.");
-            }
-
-            _log.LogInformation(
-                "Trailers channel uploads sync end Channel={Channel} Candidates={Count} NewSinceWatermark={NewSince}",
-                ch.Name, uploads.Count, newSince);
-        }
-
-        var enableSearch = _configuration.GetValue("Pitflix:Trailers:EnableSearchFallback", true);
-        if (!quotaStop && enableSearch)
-        {
-            fallbackUsed = true;
             foreach (var ch in channelsToPoll)
             {
                 if (quotaStop)
                     break;
-                var (videos, hitQuota) = await FetchFromChannelSearchAsync(apiKey!, ch, ct).ConfigureAwait(false);
-                if (hitQuota)
+                channelsPolled++;
+                _log.LogInformation("Trailers channel uploads sync start Channel={Channel} ChannelId={ChannelId}", ch.Name,
+                    ch.ChannelId);
+                var (uploads, hitQ, newSince) = await FetchNewUploadsFromChannelAsync(apiKey, ch, ct).ConfigureAwait(false);
+                newUploadsSinceWatermark += newSince;
+                uploadCandidates.AddRange(uploads);
+                if (hitQ)
                 {
                     quotaStop = true;
-                    _log.LogWarning("Trailers ingestion: YouTube quota hit during search fallback.");
+                    _log.LogWarning("Trailers ingestion: YouTube quota hit during uploads playlist poll. Will fall back to RSS.");
                 }
 
-                searchCandidates.AddRange(videos);
+                _log.LogInformation(
+                    "Trailers channel uploads sync end Channel={Channel} Candidates={Count} NewSinceWatermark={NewSince}",
+                    ch.Name, uploads.Count, newSince);
             }
+
+            var enableSearch = _configuration.GetValue("Pitflix:Trailers:EnableSearchFallback", true);
+            if (!quotaStop && enableSearch)
+            {
+                fallbackUsed = true;
+                foreach (var ch in channelsToPoll)
+                {
+                    if (quotaStop)
+                        break;
+                    var (videos, hitQuota) = await FetchFromChannelSearchAsync(apiKey, ch, ct).ConfigureAwait(false);
+                    if (hitQuota)
+                    {
+                        quotaStop = true;
+                        _log.LogWarning("Trailers ingestion: YouTube quota hit during search fallback. Will fall back to RSS.");
+                    }
+
+                    searchCandidates.AddRange(videos);
+                }
+            }
+        }
+        else
+        {
+            _log.LogInformation("Trailers ingestion: No YouTube API key configured, skipping YouTube API methods.");
         }
 
         var byVideoId = new Dictionary<string, YoutubeVideoCandidate>(StringComparer.Ordinal);
