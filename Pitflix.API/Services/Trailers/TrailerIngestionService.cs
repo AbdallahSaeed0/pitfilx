@@ -128,9 +128,17 @@ public sealed class TrailerIngestionService
             var tmdbOnlyByMatch = new List<TrailerItem>();
             foreach (var g in tmdbNativeTrailers.GroupBy(x => (x.TmdbId, x.MediaType)))
             {
-                var ordered = g.OrderByDescending(x => x.QualityScore).ThenByDescending(x => x.MatchConfidence)
-                    .ThenByDescending(x => x.PublishedAtUtc).ToList();
-                tmdbOnlyByMatch.Add(ordered[0]);
+                var ordered = g.OrderByDescending(x => x.PublishedAtUtc)  // Most recent first
+                    .ThenByDescending(x => x.QualityScore)
+                    .ThenByDescending(x => x.MatchConfidence).ToList();
+                
+                // Keep up to 3 recent trailers per TMDB ID for variety (Trailer, Teaser, Clip)
+                var kept = ordered.Take(3).ToList();
+                tmdbOnlyByMatch.AddRange(kept);
+                
+                _log.LogDebug(
+                    "TMDB-only dedup: {Title} ({MediaType}, TMDB {TmdbId}) - kept {KeptCount} of {TotalCount} trailers, most recent published {PublishedAt:o}",
+                    g.First().Title, g.Key.MediaType, g.Key.TmdbId, kept.Count, ordered.Count, ordered[0].PublishedAtUtc);
             }
 
             var tmdbInserted = 0;
@@ -407,18 +415,25 @@ public sealed class TrailerIngestionService
         var byTmdb = new List<TrailerItem>();
         foreach (var g in matched.GroupBy(x => (x.TmdbId, x.MediaType)))
         {
-            var ordered = g.OrderByDescending(x => x.QualityScore).ThenByDescending(x => x.MatchConfidence)
-                .ThenByDescending(x => x.PublishedAtUtc).ThenBy(x => x.TrustTier).ToList();
+            var ordered = g.OrderByDescending(x => x.PublishedAtUtc)  // Most recent first
+                .ThenByDescending(x => x.QualityScore)
+                .ThenByDescending(x => x.MatchConfidence)
+                .ThenBy(x => x.TrustTier).ToList();
+            
+            // Keep up to 3 recent trailers per TMDB ID (Trailer/Teaser prioritized)
+            // This allows multiple trailers for the same content (e.g., official trailer + teaser + clip)
+            var kept = ordered.Take(3).ToList();
+            byTmdb.AddRange(kept);
+            
             var winner = ordered[0];
-            byTmdb.Add(winner);
             TraceFromTrailerItem("selected_per_tmdb_scope_for_db", winner,
-                $"tmdbId={winner.TmdbId} mediaType={winner.MediaType} quality={winner.QualityScore:F3} conf={winner.MatchConfidence:F3}");
-            foreach (var loser in ordered.Skip(1))
+                $"tmdbId={winner.TmdbId} mediaType={winner.MediaType} quality={winner.QualityScore:F3} conf={winner.MatchConfidence:F3} kept={kept.Count}_of_{ordered.Count}");
+            
+            foreach (var loser in ordered.Skip(3))
             {
                 TraceFromTrailerItem("deduped_in_memory_loser_not_persisted_this_run", loser,
-                    $"winnerVideoId={winner.VideoId} winnerQuality={winner.QualityScore:F3} loserQuality={loser.QualityScore:F3} " +
-                    $"winnerConf={winner.MatchConfidence:F3} loserConf={loser.MatchConfidence:F3} " +
-                    "note=loser_row_is_not_written_to_db_on_this_ingest_path");
+                    $"kept_count=3 quality={loser.QualityScore:F3} rank={ordered.IndexOf(loser)} of {ordered.Count} " +
+                    $"note=keeping_3_most_recent_per_tmdb_id");
             }
         }
 
