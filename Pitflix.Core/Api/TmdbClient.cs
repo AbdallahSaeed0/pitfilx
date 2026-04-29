@@ -1505,6 +1505,144 @@ public sealed class TmdbClient
         };
     }
 
+    /// <summary>
+    /// Latest TMDB trailers from recently-released movies and TV shows.
+    /// Returns items with YouTube trailer URLs and published dates for recency filtering.
+    /// Movies: released in last 6 months. TV: first aired in last 3 months.
+    /// Filters to only items with a valid YouTube trailer (published_at timestamp required).
+    /// </summary>
+    public async Task<List<(int TmdbId, string MediaType, string Title, string ReleaseDate, string VideoKey, 
+        string VideoName, string VideoType, DateTime? PublishedAtUtc, double VoteAverage, int VoteCount)>>
+        GetLatestTmdbTrailersAsync(CancellationToken cancellationToken = default)
+    {
+        var results = new List<(int, string, string, string, string, string, string, DateTime?, double, int)>();
+        
+        var now = DateTime.UtcNow;
+        var sixMonthsAgo = now.AddMonths(-6).ToString("yyyy-MM-dd");
+        var threeMonthsAgo = now.AddMonths(-3).ToString("yyyy-MM-dd");
+        
+        // Fetch recent movies (last 6 months, by popularity)
+        var recentMoviesPages = new List<Task<List<TmdbDiscoverItem>>>();
+        for (var p = 1; p <= 3; p++)
+        {
+            recentMoviesPages.Add(DiscoverMoviesPrimaryReleaseFromAsync(sixMonthsAgo, p, cancellationToken));
+        }
+        
+        // Also fetch trending movies (catches popular rereleases, specials, etc.)
+        recentMoviesPages.Add(GetTrendingMoviesWeekAsync(cancellationToken));
+        
+        // Fetch recent TV (last 3 months, by popularity)  
+        var recentTvPages = new List<Task<List<TmdbDiscoverItem>>>();
+        for (var p = 1; p <= 3; p++)
+        {
+            recentTvPages.Add(DiscoverTvFirstAirDateGteAsync(threeMonthsAgo, p, cancellationToken));
+        }
+        
+        // Also fetch trending TV (catches new seasons, popular shows, etc.)
+        recentTvPages.Add(GetTrendingTvWeekAsync(cancellationToken));
+        
+        // Also fetch "on the air" which includes new seasons being broadcast/streaming
+        recentTvPages.Add(GetOnTheAirTvAsync(1, cancellationToken));
+        recentTvPages.Add(GetOnTheAirTvAsync(2, cancellationToken));
+        
+        // Also fetch popular TV - catches shows with new seasons that just got trailers
+        recentTvPages.Add(DiscoverPopularTvAsync(1, cancellationToken));
+        recentTvPages.Add(DiscoverPopularTvAsync(2, cancellationToken));
+
+        await Task.WhenAll(recentMoviesPages.Concat(recentTvPages)).ConfigureAwait(false);
+
+        var recentMovies = new List<TmdbDiscoverItem>();
+        var recentTv = new List<TmdbDiscoverItem>();
+        
+        foreach (var task in recentMoviesPages)
+            recentMovies.AddRange(await task.ConfigureAwait(false));
+        foreach (var task in recentTvPages)
+            recentTv.AddRange(await task.ConfigureAwait(false));
+
+        // Deduplicate by TMDB ID before creating dictionaries (multiple sources can yield same IDs)
+        recentMovies = recentMovies.DistinctBy(x => x.Id).ToList();
+        recentTv = recentTv.DistinctBy(x => x.Id).ToList();
+
+        // Fetch videos for each title and extract YouTube trailers with published dates
+        var videoTasks = new Dictionary<(int Id, string Type), Task<IReadOnlyList<(string, string, string, int, DateTime?)>>>();
+        
+        foreach (var item in recentMovies)
+        {
+            if (item.Id <= 0) continue;
+            videoTasks[(item.Id, "Movie")] = GetYoutubePromosDetailedAsync(item.Id, "Movie", cancellationToken);
+        }
+
+        foreach (var item in recentTv)
+        {
+            if (item.Id <= 0) continue;
+            videoTasks[(item.Id, "Series")] = GetYoutubePromosDetailedAsync(item.Id, "Series", cancellationToken);
+        }
+
+        // Build a map for quick title/date lookup
+        var movieMap = recentMovies.ToDictionary(x => x.Id);
+        var tvMap = recentTv.ToDictionary(x => x.Id);
+
+        // Await all video fetch tasks and process results
+        await Task.WhenAll(videoTasks.Values).ConfigureAwait(false);
+
+        foreach (var ((tmdbId, mediaType), videoTask) in videoTasks)
+        {
+            var videos = await videoTask.ConfigureAwait(false);
+            if (videos.Count == 0)
+                continue;
+
+            var sourceItem = mediaType == "Movie" 
+                ? (movieMap.TryGetValue(tmdbId, out var m) ? m : null)
+                : (tvMap.TryGetValue(tmdbId, out var t) ? t : null);
+
+            if (sourceItem == null)
+                continue;
+
+            // Include trailers, teasers, and clips from YouTube
+            foreach (var (key, name, type, rank, publishedAt) in videos)
+            {
+                if (string.IsNullOrEmpty(key))
+                    continue;
+
+                // Only include trailers, teasers, and clips
+                if (!type.Equals("Trailer", StringComparison.OrdinalIgnoreCase) &&
+                    !type.Equals("Teaser", StringComparison.OrdinalIgnoreCase) &&
+                    !type.Equals("Clip", StringComparison.OrdinalIgnoreCase))
+                    continue;
+
+                // Use video's published date if available, otherwise fall back to media release/air date
+                var effectivePublishedAt = publishedAt;
+                if (effectivePublishedAt == null && !string.IsNullOrEmpty(sourceItem.ReleaseDate))
+                {
+                    if (DateTime.TryParse(sourceItem.ReleaseDate, out var parsedDate))
+                        effectivePublishedAt = DateTime.SpecifyKind(parsedDate, DateTimeKind.Utc);
+                }
+
+                // Only include if we have some date information
+                if (effectivePublishedAt == null)
+                    continue;
+
+                results.Add((
+                    tmdbId,
+                    mediaType.ToLowerInvariant(),
+                    sourceItem.Title,
+                    sourceItem.ReleaseDate,
+                    key,
+                    name,
+                    type,
+                    effectivePublishedAt,
+                    sourceItem.VoteAverage,
+                    sourceItem.VoteCount
+                ));
+            }
+        }
+
+        return results
+            .OrderByDescending(x => x.Item8)  // Most recent first (Item8 = PublishedAtUtc)
+            .DistinctBy(x => x.Item5) // Deduplicate by video key (Item5 = VideoKey)
+            .ToList();
+    }
+
     private static IEnumerable<TmdbImage> ParseImageArray(JArray? array)
     {
         if (array == null)

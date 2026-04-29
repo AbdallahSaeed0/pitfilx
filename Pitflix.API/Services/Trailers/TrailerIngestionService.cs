@@ -75,17 +75,81 @@ public sealed class TrailerIngestionService
         var apiKey = _configuration["Pitflix:YoutubeApiKey"]?.Trim()
                      ?? _configuration["YoutubeApiKey"]?.Trim()
                      ?? Environment.GetEnvironmentVariable("PITFLIX_YOUTUBE_API_KEY")?.Trim();
-        if (string.IsNullOrWhiteSpace(apiKey))
+
+        var tmdb = TmdbClientFactory.Create();
+        
+        // Discover TMDB native trailers EARLY/INDEPENDENTLY (before YouTube processing)
+        // This ensures they get added even if YouTube API quota is hit
+        var tmdbNativeTrailers = new List<TrailerItem>();
+        var enableTmdbNative = _configuration.GetValue("Pitflix:Trailers:EnableTmdbNative", false);
+        if (enableTmdbNative && tmdb != null)
+        {
+            try
+            {
+                var tmdbNativeDiscovery = new TmdbNativeTrailerDiscovery(_log);
+                var tmdbNativePublishedAfterDays = Math.Clamp(
+                    _configuration.GetValue("Pitflix:Trailers:TmdbNativePublishedAfterDays", 14), 1, 90);
+                var publishedCutoff = DateTime.UtcNow.AddDays(-tmdbNativePublishedAfterDays);
+                tmdbNativeTrailers = await tmdbNativeDiscovery.DiscoverLatestAsync(tmdb, publishedCutoff, ct)
+                    .ConfigureAwait(false);
+                _log.LogInformation(
+                    "Trailers ingestion: TMDB native discovery (early) fetched {Count} trailers",
+                    tmdbNativeTrailers.Count);
+            }
+            catch (Exception ex)
+            {
+                _log.LogWarning(ex, "Trailers ingestion: TMDB native discovery failed, continuing with YouTube sources");
+            }
+        }
+
+        // YouTube API is optional if TMDB native is enabled
+        var youtubeRequired = !enableTmdbNative;
+        if (youtubeRequired && string.IsNullOrWhiteSpace(apiKey))
         {
             _log.LogWarning("Trailers ingestion skipped: YouTube API key is not configured");
             return new TrailerIngestionRunResult(0, 0, 0, 0, 0, "missing_youtube_api_key", false, 0, 0);
         }
 
         var channels = await _channelsProvider.GetChannelsAsync(ct).ConfigureAwait(false);
-        if (channels.Count == 0)
+        if (youtubeRequired && channels.Count == 0)
         {
             _log.LogWarning("Trailers ingestion skipped: no official channels configured");
             return new TrailerIngestionRunResult(0, 0, 0, 0, 0, "missing_channels_config", false, 0, 0);
+        }
+
+        // If TMDB native found trailers and YouTube is not required, skip YouTube and use TMDB-only
+        if (!youtubeRequired && tmdbNativeTrailers.Count > 0 && string.IsNullOrWhiteSpace(apiKey))
+        {
+            _log.LogInformation(
+                "Trailers ingestion: TMDB-only mode (no YouTube API), persisting {Count} TMDB native trailers",
+                tmdbNativeTrailers.Count);
+            
+            // Go straight to deduplication and persistence with TMDB native trailers
+            var tmdbOnlyByMatch = new List<TrailerItem>();
+            foreach (var g in tmdbNativeTrailers.GroupBy(x => (x.TmdbId, x.MediaType)))
+            {
+                var ordered = g.OrderByDescending(x => x.QualityScore).ThenByDescending(x => x.MatchConfidence)
+                    .ThenByDescending(x => x.PublishedAtUtc).ToList();
+                tmdbOnlyByMatch.Add(ordered[0]);
+            }
+
+            var tmdbInserted = 0;
+            foreach (var t in tmdbOnlyByMatch)
+            {
+                await _trailersRepo.AddOrUpdateTrailerAsync(t, ct).ConfigureAwait(false);
+                tmdbInserted++;
+            }
+
+            var tmdbRetentionDays = 90;
+            if (int.TryParse(_configuration["Pitflix:Trailers:InactiveRetentionDays"], out var rDays))
+                tmdbRetentionDays = rDays;
+            var tmdbPurged = await _trailersRepo.PurgeInactiveTrailersOlderThanAsync(tmdbRetentionDays, ct).ConfigureAwait(false);
+
+            _log.LogInformation(
+                "Pitflix.Trailers.Ingest summary (TMDB-only) Matched={Matched} Inserted={Inserted} Purged={Purged}",
+                tmdbNativeTrailers.Count, tmdbInserted, tmdbPurged);
+
+            return new TrailerIngestionRunResult(0, 0, 0, tmdbNativeTrailers.Count, tmdbInserted, null, false, tmdbPurged, 0);
         }
 
         _log.LogInformation(
@@ -214,7 +278,6 @@ public sealed class TrailerIngestionService
             .Select(g => g.OrderByDescending(ScoreCandidatePreMatch).ThenByDescending(x => x.PublishedAtUtc).First())
             .ToList();
 
-        var tmdb = TmdbClientFactory.Create();
         if (tmdb == null)
         {
             _log.LogWarning("Trailers ingestion skipped TMDB matching: TMDB client unavailable");
@@ -330,6 +393,15 @@ public sealed class TrailerIngestionService
             matched.Add(item);
             TraceFromTrailerItem("matched_in_memory", item,
                 $"tmdbId={tmdbId} mediaType={mediaType} quality={quality:F3} conf={matchConfidence:F3}");
+        }
+
+        // Add TMDB native trailers to matched list
+        matched.AddRange(tmdbNativeTrailers);
+        if (tmdbNativeTrailers.Count > 0)
+        {
+            _log.LogInformation(
+                "Trailers ingestion: added {Count} TMDB native trailers to matched pool (total matched: {Total})",
+                tmdbNativeTrailers.Count, matched.Count);
         }
 
         var byTmdb = new List<TrailerItem>();
