@@ -39,29 +39,18 @@ export function MediaImage({
   const displaySrc = phase === "primary" ? primary : backup;
   const dead = phase === "dead" || !displaySrc;
 
-  /** No URL to attempt: show initials placeholder immediately (avoids empty img / flash). */
-  if (!primary && !backup && (fallbackText?.trim() || alt.trim())) {
-    return (
-      <div
-        className={cn(
-          "flex items-center justify-center bg-pitflix-surface/80 font-semibold uppercase tracking-wide text-pitflix-subtle ring-1 ring-inset ring-white/15",
-          className,
-        )}
-      >
-        <span className="px-2 text-center text-xs">{fallbackText?.trim() || alt.slice(0, 2) || "?"}</span>
-      </div>
-    );
-  }
+  /** No URL at all — show initials placeholder (must not return before hooks below). */
+  const initialsPlaceholder = !primary && !backup && !!(fallbackText?.trim() || alt.trim());
 
   /** Cached / decoded images often skip <code>onLoad</code>; avoid a permanent loading pulse. */
   useLayoutEffect(() => {
-    if (dead) return;
+    if (initialsPlaceholder || dead) return;
     const el = imgRef.current;
     if (!el) return;
     if (el.complete && el.naturalHeight > 0) {
       setLoaded(true);
     }
-  }, [dead, displaySrc, phase]);
+  }, [dead, displaySrc, phase, initialsPlaceholder]);
 
   /** Transient failures (API warming up, race): one retry so users do not need to leave and re-enter the route. */
   useEffect(() => {
@@ -74,11 +63,24 @@ export function MediaImage({
     return () => window.clearTimeout(t);
   }, [phase, primary]);
 
+  if (initialsPlaceholder) {
+    return (
+      <div
+        className={cn(
+          "flex items-center justify-center bg-zinc-950 font-semibold uppercase tracking-wide text-zinc-500 ring-1 ring-inset ring-white/10",
+          className,
+        )}
+      >
+        <span className="px-2 text-center text-xs">{fallbackText?.trim() || alt.slice(0, 2) || "?"}</span>
+      </div>
+    );
+  }
+
   if (dead) {
     return (
       <div
         className={cn(
-          "flex items-center justify-center bg-pitflix-surface/80 text-pitflix-subtle ring-1 ring-inset ring-white/15",
+          "flex items-center justify-center bg-zinc-950 text-zinc-500 ring-1 ring-inset ring-white/10",
           className,
         )}
       >
@@ -90,7 +92,7 @@ export function MediaImage({
   return (
     <div className={cn("relative overflow-hidden", className)}>
       {!loaded ? (
-        <div className="absolute inset-0 z-10 animate-pulse rounded-[inherit] bg-pitflix-card" />
+        <div className="absolute inset-0 z-10 animate-pulse rounded-[inherit] bg-zinc-900" />
       ) : null}
       <img
         ref={imgRef}

@@ -1,8 +1,10 @@
 using System.Collections.Concurrent;
 using System.Net.Http;
 using System.Text.Json;
+using Microsoft.Extensions.DependencyInjection;
 using Pitflix.API;
 using Pitflix.Core.Api;
+using Pitflix.Core.Database;
 
 namespace Pitflix.API.Services.Awards;
 
@@ -18,13 +20,127 @@ public sealed class AwardsService
         string.Equals(Environment.GetEnvironmentVariable("PITFLIX_AWARDS_RESOLVE_MISSING_TMDB"), "true",
             StringComparison.OrdinalIgnoreCase);
 
+    /// <summary>Optional live IMDb lookup on edition read (extra TMDB calls). Cache/preload usually fills <see cref="AwardNomineeResponseDto.ImdbId"/>.</summary>
+    private static bool AwardsFetchImdbOnRead =>
+        string.Equals(Environment.GetEnvironmentVariable("PITFLIX_AWARDS_FETCH_IMDB_ON_READ"), "true",
+            StringComparison.OrdinalIgnoreCase);
+
     private readonly IAwardsDataProvider _provider;
     private readonly IWebHostEnvironment _env;
+    private readonly IServiceScopeFactory _scopeFactory;
 
-    public AwardsService(IAwardsDataProvider provider, IWebHostEnvironment env)
+    public AwardsService(IAwardsDataProvider provider, IWebHostEnvironment env, IServiceScopeFactory scopeFactory)
     {
         _provider = provider;
         _env = env;
+        _scopeFactory = scopeFactory;
+    }
+
+    private static string NomineeLookupKey(string categoryId, string title, string mediaType) =>
+        $"{categoryId.Trim()}\u001f{title.Trim()}\u001f{mediaType.Trim().ToLowerInvariant()}";
+
+    private static bool CategoryHasQaWarning(AwardEditionFileDto file, string categoryId)
+    {
+        if (file.Qa?.Warnings == null || file.Qa.Warnings.Count == 0)
+            return false;
+        foreach (var w in file.Qa.Warnings)
+        {
+            if (w.Contains($":{categoryId}:", StringComparison.Ordinal))
+                return true;
+        }
+
+        return false;
+    }
+
+    /// <summary>Per-category slate quality for badges (winner-only slates vs QA-flagged rows).</summary>
+    private static string ComputeCategoryCompleteness(AwardCategoryFileDto c, AwardEditionFileDto file)
+    {
+        var count = c.Nominees.Count;
+        if (count == 0)
+            return "empty";
+
+        if (CategoryHasQaWarning(file, c.Id))
+            return "incomplete";
+
+        if (count == 1 && c.Nominees[0].Winner)
+            return "winner_only";
+
+        return "full";
+    }
+
+    /// <summary>Build enriched rows for SQLite awards cache (preload / offline).</summary>
+    public async Task<IReadOnlyList<AwardNomineeCacheRow>> BuildCacheRowsForEditionAsync(string awardId, int year,
+        AwardEditionFileDto file, LibraryRepository lib, CancellationToken ct)
+    {
+        var tmdb = TmdbClientFactory.Create() ?? throw new InvalidOperationException("TMDB client unavailable.");
+        var now = DateTime.UtcNow;
+        var rows = new List<AwardNomineeCacheRow>();
+        foreach (var cat in file.Categories)
+        foreach (var n in cat.Nominees)
+        {
+            ct.ThrowIfCancellationRequested();
+            try
+            {
+                var explicitTmdb = n.TmdbId is int te && te > 0 ? te : (int?)null;
+                int? searched = null;
+                if (explicitTmdb == null)
+                    searched = await TryResolveNomineeTmdbIdAsync(tmdb, n, year, ct).ConfigureAwait(false);
+                var tid = explicitTmdb ?? searched;
+
+                string? imdb = null;
+                string? pp = null;
+                string? bp = null;
+                var streamEst = false;
+                if (tid is int id && id > 0)
+                {
+                    var mt = n.MediaType.Equals("tv", StringComparison.OrdinalIgnoreCase) ? "Series" : "Movie";
+                    imdb = await tmdb.TryGetImdbIdAsync(id, mt, ct).ConfigureAwait(false);
+                    var art = await tmdb.GetArtworkPathsAsync(id, mt, ct).ConfigureAwait(false);
+                    if (art.HasValue)
+                    {
+                        var av = art.Value;
+                        pp = string.IsNullOrWhiteSpace(av.PosterPath) ? null : av.PosterPath;
+                        bp = string.IsNullOrWhiteSpace(av.BackdropPath) ? null : av.BackdropPath;
+                    }
+
+                    streamEst = !string.IsNullOrWhiteSpace(imdb);
+                }
+
+                var inLib = false;
+                if (tid is int id2 && id2 > 0)
+                {
+                    if (n.MediaType.Equals("tv", StringComparison.OrdinalIgnoreCase))
+                        inLib = await lib.GetShowByTmdbIdAsync(id2, ct).ConfigureAwait(false) != null;
+                    else
+                        inLib = await lib.GetMovieByTmdbIdAsync(id2, ct).ConfigureAwait(false) != null;
+                }
+
+                rows.Add(new AwardNomineeCacheRow(awardId, year, cat.Id, n.Title, n.MediaType, n.Winner, tid, imdb, pp,
+                    bp, inLib, streamEst, now));
+            }
+            catch (OperationCanceledException)
+            {
+                throw;
+            }
+            catch
+            {
+                rows.Add(new AwardNomineeCacheRow(awardId, year, cat.Id, n.Title, n.MediaType, n.Winner, n.TmdbId, null,
+                    null, null, false, false, now));
+            }
+        }
+
+        return rows;
+    }
+
+    private static async Task ApplyLibraryOverlayAsync(LibraryRepository lib, AwardNomineeResponseDto dto,
+        AwardNomineeFileDto src, CancellationToken ct)
+    {
+        if (dto.InLibrary || dto.TmdbId is not int tid || tid <= 0)
+            return;
+        var isTv = src.MediaType.Equals("tv", StringComparison.OrdinalIgnoreCase);
+        dto.InLibrary = isTv
+            ? await lib.GetShowByTmdbIdAsync(tid, ct).ConfigureAwait(false) != null
+            : await lib.GetMovieByTmdbIdAsync(tid, ct).ConfigureAwait(false) != null;
     }
 
     /// <summary>Save a TMDB still to disk so the UI can load same-origin <c>/images/...</c> (Tauri WebView often blocks image.tmdb.org).</summary>
@@ -165,6 +281,7 @@ public sealed class AwardsService
 
     private async Task<AwardNomineeResponseDto> BuildNomineeResponseDtoAsync(
         TmdbClient? tmdb,
+        AwardNomineeCacheRow? cache,
         string awardId,
         int year,
         string categoryId,
@@ -172,19 +289,21 @@ public sealed class AwardsService
         string? accent,
         CancellationToken ct)
     {
-        var explicitTmdb = n.TmdbId is > 0 ? n.TmdbId : null;
+        var explicitTmdb = n.TmdbId is int te0 && te0 > 0 ? te0 : (int?)null;
+        var cacheTmdb = cache?.TmdbId is int ctm && ctm > 0 ? ctm : (int?)null;
         int? searchedTmdb = null;
-        if (explicitTmdb == null && tmdb != null && AwardsResolveMissingTmdbOnRead)
+        if (explicitTmdb == null && cacheTmdb == null && tmdb != null && AwardsResolveMissingTmdbOnRead)
             searchedTmdb = await TryResolveNomineeTmdbIdAsync(tmdb, n, year, ct).ConfigureAwait(false);
-        var effectiveTmdb = explicitTmdb ?? searchedTmdb;
+        var effectiveTmdb = explicitTmdb ?? cacheTmdb ?? searchedTmdb;
 
         var nomineePosterPath = AwardsImageCache.NomineePosterPath(awardId, year, categoryId, n.Title, effectiveTmdb);
         var nomineeBackdropPath = AwardsImageCache.NomineeBackdropPath(awardId, year, categoryId, n.Title, effectiveTmdb);
         string? posterUrl = ImageUrls.ToImageUrl(nomineePosterPath);
         string? backdropUrl = ImageUrls.ToImageUrl(nomineeBackdropPath);
-        string? fragP = null;
-        string? fragB = null;
-        if ((posterUrl == null || backdropUrl == null) && tmdb != null && effectiveTmdb is int ntmdb && ntmdb > 0)
+        string? fragP = string.IsNullOrWhiteSpace(cache?.PosterPath) ? null : cache!.PosterPath;
+        string? fragB = string.IsNullOrWhiteSpace(cache?.BackdropPath) ? null : cache!.BackdropPath;
+        if ((posterUrl == null || backdropUrl == null || fragP == null || fragB == null) && tmdb != null &&
+            effectiveTmdb is int ntmdb && ntmdb > 0)
         {
             var mt = n.MediaType.Equals("tv", StringComparison.OrdinalIgnoreCase) ? "Series" : "Movie";
             try
@@ -192,8 +311,8 @@ public sealed class AwardsService
                 var art = await tmdb.GetArtworkPathsAsync(ntmdb, mt, ct).ConfigureAwait(false);
                 if (art.HasValue)
                 {
-                    fragP = art.Value.PosterPath;
-                    fragB = art.Value.BackdropPath;
+                    fragP ??= string.IsNullOrWhiteSpace(art.Value.PosterPath) ? null : art.Value.PosterPath;
+                    fragB ??= string.IsNullOrWhiteSpace(art.Value.BackdropPath) ? null : art.Value.BackdropPath;
                 }
             }
             catch
@@ -219,6 +338,18 @@ public sealed class AwardsService
         // Backdrop is optional for nominee rows; avoid proxying unrelated art.
         backdropUrl ??= ImageUrls.ToImageUrl(nomineeBackdropPath);
 
+        string? imdbId = cache?.ImdbId;
+        if (string.IsNullOrWhiteSpace(imdbId) && AwardsFetchImdbOnRead && tmdb != null && effectiveTmdb is int idv &&
+            idv > 0)
+        {
+            var mt = n.MediaType.Equals("tv", StringComparison.OrdinalIgnoreCase) ? "Series" : "Movie";
+            imdbId = await tmdb.TryGetImdbIdAsync(idv, mt, ct).ConfigureAwait(false);
+        }
+
+        var inLib = cache?.LocalLibraryMatch == true;
+        var streamEligible = cache?.StreamAvailableEstimate == true ||
+                             (!string.IsNullOrWhiteSpace(imdbId) && effectiveTmdb is int et && et > 0);
+
         return new AwardNomineeResponseDto
         {
             Title = n.Title,
@@ -226,7 +357,10 @@ public sealed class AwardsService
             TmdbId = effectiveTmdb,
             Winner = n.Winner,
             PosterUrl = posterUrl,
-            BackdropUrl = backdropUrl
+            BackdropUrl = backdropUrl,
+            ImdbId = string.IsNullOrWhiteSpace(imdbId) ? null : imdbId,
+            InLibrary = inLib,
+            StreamEligible = streamEligible
         };
     }
 
@@ -344,6 +478,14 @@ public sealed class AwardsService
         var catEntryEarly = catalogList.FirstOrDefault(x => x.Id == awardId);
         var nomineeAccent = catEntryEarly?.Accent;
 
+        await using var scope = _scopeFactory.CreateAsyncScope();
+        var cacheRepo = scope.ServiceProvider.GetRequiredService<AwardNomineeCacheRepository>();
+        var libRepo = scope.ServiceProvider.GetRequiredService<LibraryRepository>();
+        var cacheRows = await cacheRepo.GetEditionRowsAsync(awardId, year, ct).ConfigureAwait(false);
+        var cacheByKey = new Dictionary<string, AwardNomineeCacheRow>(StringComparer.Ordinal);
+        foreach (var row in cacheRows)
+            cacheByKey[NomineeLookupKey(row.CategoryId, row.Title, row.MediaType)] = row;
+
         var tmdb = TmdbClientFactory.Create();
         var res = new AwardEditionResponseDto
         {
@@ -380,6 +522,7 @@ public sealed class AwardsService
                 {
                     Id = c.Id,
                     Name = c.Name,
+                    Completeness = ComputeCategoryCompleteness(c, file),
                     Nominees = new List<AwardNomineeResponseDto>()
                 });
                 continue;
@@ -392,15 +535,21 @@ public sealed class AwardsService
                 po,
                 async (i, token) =>
                 {
-                    nomineesArr[i] = await BuildNomineeResponseDtoAsync(tmdb, awardId, year, c.Id, ordered[i],
+                    cacheByKey.TryGetValue(NomineeLookupKey(c.Id, ordered[i].Title, ordered[i].MediaType),
+                        out var crow);
+                    nomineesArr[i] = await BuildNomineeResponseDtoAsync(tmdb, crow, awardId, year, c.Id, ordered[i],
                             nomineeAccent, token)
                         .ConfigureAwait(false);
                 }).ConfigureAwait(false);
+
+            for (var i = 0; i < nomineesArr.Length; i++)
+                await ApplyLibraryOverlayAsync(libRepo, nomineesArr[i], ordered[i], ct).ConfigureAwait(false);
 
             res.Categories.Add(new AwardCategoryResponseDto
             {
                 Id = c.Id,
                 Name = c.Name,
+                Completeness = ComputeCategoryCompleteness(c, file),
                 Nominees = nomineesArr.ToList()
             });
         }

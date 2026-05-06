@@ -6,6 +6,7 @@ import { Link } from "react-router-dom";
 import { postHomeSectionQuery } from "../../api/homeLayout";
 import { HorizontalScrollRow } from "../../components/ui/HorizontalScrollRow";
 import { PosterCard } from "../../components/ui/PosterCard";
+import { ScrollReveal } from "../../components/ui/ScrollReveal";
 import { useHomeCustomizeStore } from "../../store/homeCustomizeStore";
 import type { HomeSectionConfig, WatchHistoryRow } from "../../types/homeSection";
 import type { MediaCard } from "../../types/media";
@@ -22,6 +23,7 @@ import { ComingSoonTrailersSection } from "./ComingSoonTrailersSection";
 function seeAllHref(section: HomeSectionConfig): string | null {
   if (section.sourceType === "watching_currently") return "/series";
   if (section.sourceType === "next_episodes") return "/next-episodes";
+  if (section.sourceType === "next_episodes_all") return "/next-episodes";
   if (section.sourceType === "latest_trailers") return "/trailers?mode=latest";
   if (section.sourceType === "coming_soon_trailers" || section.sourceType === "upcoming_trending_trailers")
     return "/trailers?mode=upcoming";
@@ -36,6 +38,7 @@ function isHomeDiscoverSpecial(st: HomeSectionConfig["sourceType"]): boolean {
   return (
     st === "coming_soon" ||
     st === "next_episodes" ||
+    st === "next_episodes_all" ||
     st === "latest_trailers" ||
     st === "coming_soon_trailers" ||
     st === "upcoming_trending_trailers"
@@ -214,7 +217,7 @@ export function HomeSectionRenderer({
         extraRight={!isEditing ? refreshShuffle : null}
         dragHandle={dragHandle}
       />
-      {body}
+      <ScrollReveal>{body}</ScrollReveal>
     </section>
   );
 
@@ -237,6 +240,8 @@ export function HomeSectionRenderer({
         <ComingSoonSection embedded />
       ) : section.sourceType === "next_episodes" ? (
         <NextEpisodesSection embedded />
+      ) : section.sourceType === "next_episodes_all" ? (
+        <NextEpisodesSection embedded variant="all" />
       ) : section.sourceType === "latest_trailers" ? (
         <LatestTrailersSection embedded />
       ) : section.sourceType === "coming_soon_trailers" || section.sourceType === "upcoming_trending_trailers" ? (

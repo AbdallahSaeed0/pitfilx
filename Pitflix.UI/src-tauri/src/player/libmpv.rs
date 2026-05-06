@@ -1,4 +1,5 @@
 //! libmpv dynamic load + render API (OpenGL) bindings.
+#![allow(non_camel_case_types)] // C API / FFI names (`mpv_*`, `MPV_*`).
 
 use std::{
   ffi::{c_char, c_int, c_void, CString},
@@ -208,20 +209,18 @@ impl MpvClient {
     if handle.is_null() {
       return Err("mpv_create returned null".to_string());
     }
-    unsafe {
-      let _ = opt(&api, handle, "terminal", "no")?;
-      let _ = opt(&api, handle, "input-default-bindings", "no")?;
-      let _ = opt(&api, handle, "input-vo-keyboard", "no")?;
-      let _ = opt(&api, handle, "volume-max", "200")?;
-      let _ = opt(&api, handle, "vo", "libmpv")?;
-      // Letterbox / pillarbox with black unused areas (VLC-like), not stretched video.
-      let _ = opt(&api, handle, "keepaspect", "yes")?;
-      // mpv 0.38+: background is a mode (color/tiles/none); color goes in background-color.
-      let _ = opt(&api, handle, "background", "color")?;
-      let _ = opt(&api, handle, "background-color", "#000000")?;
-      // Software decode first — rules out GPU/driver hwdec failures when diagnosing black video.
-      let _ = opt(&api, handle, "hwdec", "no")?;
-    }
+    let _ = opt(&api, handle, "terminal", "no")?;
+    let _ = opt(&api, handle, "input-default-bindings", "no")?;
+    let _ = opt(&api, handle, "input-vo-keyboard", "no")?;
+    let _ = opt(&api, handle, "volume-max", "200")?;
+    let _ = opt(&api, handle, "vo", "libmpv")?;
+    // Letterbox / pillarbox with black unused areas (VLC-like), not stretched video.
+    let _ = opt(&api, handle, "keepaspect", "yes")?;
+    // mpv 0.38+: background is a mode (color/tiles/none); color goes in background-color.
+    let _ = opt(&api, handle, "background", "color")?;
+    let _ = opt(&api, handle, "background-color", "#000000")?;
+    // Software decode first — rules out GPU/driver hwdec failures when diagnosing black video.
+    let _ = opt(&api, handle, "hwdec", "no")?;
     Ok(Self { api, handle })
   }
 

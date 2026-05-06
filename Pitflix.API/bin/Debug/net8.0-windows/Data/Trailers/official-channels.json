@@ -121,6 +121,46 @@
       "aliases": ["Warner Bros", "WB Pictures"]
     },
     {
+      "name": "Warner Bros.",
+      "channelId": "UCjmJDM5pRKbUlVIzDYYWb6g",
+      "priority": 97,
+      "trustTier": 1,
+      "enabled": true,
+      "mediaFocus": "both",
+      "pollingPriority": 97,
+      "aliases": ["Warner Bros Pictures"]
+    },
+    {
+      "name": "Warner Bros. Entertainment",
+      "channelId": "UCgKkNPU2Ib7_TcyAl8M2S-w",
+      "priority": 96,
+      "trustTier": 1,
+      "enabled": true,
+      "mediaFocus": "both",
+      "pollingPriority": 96,
+      "aliases": ["WB Entertainment"]
+    },
+    {
+      "name": "Warner Bros. Pictures International",
+      "channelId": "UCupexWkgdZOLdswNqEOjAMQ",
+      "priority": 96,
+      "trustTier": 1,
+      "enabled": true,
+      "mediaFocus": "movie",
+      "pollingPriority": 96,
+      "aliases": ["WBPicsInternational", "Warner Bros International"]
+    },
+    {
+      "name": "Warner Bros. UK & Ireland",
+      "channelId": "UCbxjDfYwfF8RjYBp5htJ38Q",
+      "priority": 95,
+      "trustTier": 1,
+      "enabled": true,
+      "mediaFocus": "movie",
+      "pollingPriority": 95,
+      "aliases": ["Warner Bros UK", "Warner Bros UK Trailers"]
+    },
+    {
       "name": "Universal Pictures",
       "channelId": "UCq0OueAsdxH6b8nyAspwViw",
       "priority": 100,
@@ -129,6 +169,16 @@
       "mediaFocus": "movie",
       "pollingPriority": 100,
       "aliases": ["Universal Studios", "Universal"]
+    },
+    {
+      "name": "Universal Pictures UK",
+      "channelId": "UCQLBOKpgXrSj3nPU-YC3K9Q",
+      "priority": 95,
+      "trustTier": 1,
+      "enabled": true,
+      "mediaFocus": "movie",
+      "pollingPriority": 95,
+      "aliases": ["Universal UK"]
     },
     {
       "name": "Paramount Pictures",
@@ -141,6 +191,16 @@
       "aliases": ["Paramount"]
     },
     {
+      "name": "Paramount Pictures UK",
+      "channelId": "UCi_iW2lqB3ADsJOobe_8yeg",
+      "priority": 95,
+      "trustTier": 1,
+      "enabled": true,
+      "mediaFocus": "movie",
+      "pollingPriority": 95,
+      "aliases": ["Paramount UK"]
+    },
+    {
       "name": "Sony Pictures Entertainment",
       "channelId": "UCz97F7dMxBNOfGYu3rx8aCw",
       "priority": 100,
@@ -149,6 +209,16 @@
       "mediaFocus": "movie",
       "pollingPriority": 100,
       "aliases": ["Sony Pictures", "SPE"]
+    },
+    {
+      "name": "Sony Pictures Releasing UK",
+      "channelId": "UCJJap_3RGZ2UxqLTLz0K39g",
+      "priority": 95,
+      "trustTier": 1,
+      "enabled": true,
+      "mediaFocus": "movie",
+      "pollingPriority": 95,
+      "aliases": ["Sony UK"]
     },
     {
       "name": "Sony Pictures Classics",
@@ -229,6 +299,16 @@
       "mediaFocus": "movie",
       "pollingPriority": 95,
       "aliases": ["20th Century Fox", "20th Century"]
+    },
+    {
+      "name": "20th Century Studios UK",
+      "channelId": "UCzBay5naMlbKZicNqYmAQdQ",
+      "priority": 93,
+      "trustTier": 1,
+      "enabled": true,
+      "mediaFocus": "movie",
+      "pollingPriority": 93,
+      "aliases": ["20th Century UK"]
     },
     {
       "name": "Searchlight Pictures",

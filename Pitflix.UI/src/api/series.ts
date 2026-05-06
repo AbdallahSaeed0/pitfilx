@@ -15,6 +15,8 @@ export type SeasonSummary = {
   airDate: string | null;
   episodeCount: number;
   tmdbEpisodeCount: number;
+  /** False when the season exists on TMDB but you have no episodes locally yet */
+  inLibrary?: boolean;
 };
 
 export type ShowDetailResponse = {

@@ -6,6 +6,8 @@ export function useUnmatchedPage(params: {
   pageSize?: number;
   search?: string;
   type?: string;
+  sortBy?: string;
+  sortDir?: string;
 }) {
   return useQuery({
     queryKey: ["unmatched", params],

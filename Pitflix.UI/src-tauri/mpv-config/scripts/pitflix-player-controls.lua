@@ -8,6 +8,13 @@ local function osd(text)
   mp.osd_message(text, 1.2)
 end
 
+local function emit_shortcut(code)
+  local payload = code .. ":" .. tostring(mp.get_time())
+  mp.set_property_native("user-data/pitflix-shortcut", payload)
+  print("[PITFLIX_SHORTCUT]" .. code)
+  io.stdout:flush()
+end
+
 local function seek_relative(delta)
   mp.commandv("seek", tostring(delta), "relative")
 end
@@ -58,11 +65,33 @@ local function cycle_sub_style()
   mp.set_property_number("user-data/pitflix-sub-style-idx", idx)
 end
 
+--- Readable stroke on bright scenes (no uOSC bar button — shortcut only).
+local function sub_strong_outline()
+  mp.set_property("sub-border-color", "#000000FF")
+  mp.set_property_number("sub-border-size", 3)
+  osd("Subtitle outline: strong")
+end
+
+local function generate_arabic_subtitle()
+  osd("Generating Arabic subtitle...")
+  emit_shortcut("generate_arabic_subtitle")
+end
+
 -- Force-bind seek keys at mpv layer for reliability in external window.
 mp.add_forced_key_binding("RIGHT", "pitflix-seek-right-5s", function() seek_relative(5) end, { repeatable = true })
 mp.add_forced_key_binding("LEFT", "pitflix-seek-left-5s", function() seek_relative(-5) end, { repeatable = true })
 mp.add_forced_key_binding("Shift+RIGHT", "pitflix-seek-right-1s", function() seek_relative(1) end, { repeatable = true })
 mp.add_forced_key_binding("Shift+LEFT", "pitflix-seek-left-1s", function() seek_relative(-1) end, { repeatable = true })
+
+-- Volume: match companion page / wheel step (5) instead of mpv default step.
+local function add_volume(delta)
+  local cur = mp.get_property_number("volume") or 0
+  local vmax = mp.get_property_number("volume-max") or 100
+  local nextv = math.max(0, math.min(vmax, cur + delta))
+  mp.set_property_number("volume", nextv)
+end
+mp.add_forced_key_binding("UP", "pitflix-vol-up", function() add_volume(5) end, { repeatable = true })
+mp.add_forced_key_binding("DOWN", "pitflix-vol-down", function() add_volume(-5) end, { repeatable = true })
 
 -- Subtitle appearance controls (mpv-owned, live apply).
 mp.add_forced_key_binding("Ctrl+UP", "pitflix-sub-size-up", function() add_sub_font_size(2) end, { repeatable = true })
@@ -73,12 +102,16 @@ mp.add_forced_key_binding("Ctrl+1", "pitflix-sub-style-white", sub_style_white)
 mp.add_forced_key_binding("Ctrl+2", "pitflix-sub-style-warm", sub_style_warm)
 mp.add_forced_key_binding("Ctrl+3", "pitflix-sub-style-cyan", sub_style_cyan)
 mp.add_forced_key_binding("Ctrl+4", "pitflix-sub-style-arabic", sub_style_arabic)
+mp.add_forced_key_binding("Ctrl+b", "pitflix-sub-strong-outline", sub_strong_outline)
+mp.add_forced_key_binding("Ctrl+g", "pitflix-generate-arabic-subtitle", generate_arabic_subtitle)
 
--- Expose script messages for uosc control-bar buttons (mpv-window controls area).
+-- Script messages kept for automation / tests (uOSC bar does not bind these by default).
 mp.register_script_message("pitflix-sub-size-up", function() add_sub_font_size(2) end)
 mp.register_script_message("pitflix-sub-size-down", function() add_sub_font_size(-2) end)
 mp.register_script_message("pitflix-sub-pos-up", function() add_sub_pos(-2) end)
 mp.register_script_message("pitflix-sub-pos-down", function() add_sub_pos(2) end)
 mp.register_script_message("pitflix-sub-style-cycle", cycle_sub_style)
+mp.register_script_message("pitflix-sub-strong-outline", sub_strong_outline)
+mp.register_script_message("pitflix-generate-arabic-subtitle", generate_arabic_subtitle)
 
-msg.info("Pitflix media-player controls loaded (seek + subtitle appearance)")
+msg.info("Pitflix media-player controls loaded (seek + volume + subtitle appearance + arabic subtitle generation)")

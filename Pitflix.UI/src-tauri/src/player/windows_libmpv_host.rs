@@ -241,6 +241,8 @@ pub fn create_embedded_libmpv_session(
   mpv.observe_property(2, "time-pos", mpv_format::MPV_FORMAT_DOUBLE)?;
   mpv.observe_property(3, "duration", mpv_format::MPV_FORMAT_DOUBLE)?;
   mpv.observe_property(4, "volume", mpv_format::MPV_FORMAT_DOUBLE)?;
+  // Episode nav / uOSC buttons set `user-data/pitflix-shortcut` from Lua — mirror external IPC bridge.
+  mpv.observe_property(12, "user-data/pitflix-shortcut", mpv_format::MPV_FORMAT_STRING)?;
   mpv.observe_property(99, "video-params", mpv_format::MPV_FORMAT_NODE)?;
   mpv.observe_property(100, "hwdec-current", mpv_format::MPV_FORMAT_STRING)?;
 
@@ -321,6 +323,20 @@ pub fn create_embedded_libmpv_session(
                 Some(&app_ev),
                 &format!("[libmpv-diag] hwdec-current={hw}"),
               );
+            } else if name == "user-data/pitflix-shortcut" {
+              if prop.format as i32 == mpv_format::MPV_FORMAT_STRING as i32 && !prop.data.is_null() {
+                unsafe {
+                  let pp = prop.data as *const *const std::ffi::c_char;
+                  if !pp.is_null() && !(*pp).is_null() {
+                    let raw = std::ffi::CStr::from_ptr(*pp).to_string_lossy().into_owned();
+                    let code = raw.split(':').next().unwrap_or("").trim().to_string();
+                    if !code.is_empty() && code != "script_loaded" {
+                      let _ = app_ev.emit("player2-shortcut", &code);
+                    }
+                    (mpv_ev.api.mpv_free)((*pp) as *mut std::ffi::c_void);
+                  }
+                }
+              }
             }
           }
           if let Some(delta) = parse_libmpv_property_change(prop) {

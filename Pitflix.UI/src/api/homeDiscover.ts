@@ -79,6 +79,8 @@ export type WatchingCurrentlyCard = {
   posterUrl: string | null;
   lastWatchedLabel: string;
   nextLabel: string;
+  nextSeason: number;
+  nextEpisode: number;
   episodesRemaining: number;
   watchedEpisodes: number;
   totalEpisodes: number;
@@ -86,8 +88,44 @@ export type WatchingCurrentlyCard = {
   lastPlayedAtUtc: string;
 };
 
+function normalizeWatchingRow(raw: Record<string, unknown>): WatchingCurrentlyCard {
+  const n = (v: unknown): number => {
+    if (typeof v === "number" && Number.isFinite(v)) return v;
+    if (typeof v === "string" && v.trim() !== "") {
+      const x = Number(v);
+      return Number.isFinite(x) ? x : 0;
+    }
+    return 0;
+  };
+  const libraryShowId = n(raw.libraryShowId ?? raw.LibraryShowId);
+  let nextSeason = n(raw.nextSeason ?? raw.NextSeason);
+  const nextLabel = String(raw.nextLabel ?? raw.NextLabel ?? "");
+  if (!Number.isFinite(nextSeason) || nextSeason <= 0) {
+    const m = /^S(\d+)/i.exec(nextLabel.trim());
+    if (m) nextSeason = parseInt(m[1]!, 10);
+  }
+  return {
+    libraryShowId,
+    showTitle: String(raw.showTitle ?? raw.ShowTitle ?? ""),
+    showTmdbId: n(raw.showTmdbId ?? raw.ShowTmdbId),
+    posterUrl: (raw.posterUrl ?? raw.PosterUrl ?? null) as string | null,
+    lastWatchedLabel: String(raw.lastWatchedLabel ?? raw.LastWatchedLabel ?? ""),
+    nextLabel,
+    nextSeason,
+    nextEpisode: n(raw.nextEpisode ?? raw.NextEpisode),
+    episodesRemaining: n(raw.episodesRemaining ?? raw.EpisodesRemaining),
+    watchedEpisodes: n(raw.watchedEpisodes ?? raw.WatchedEpisodes),
+    totalEpisodes: n(raw.totalEpisodes ?? raw.TotalEpisodes),
+    progressFraction: Number(raw.progressFraction ?? raw.ProgressFraction ?? 0) || 0,
+    lastPlayedAtUtc: String(raw.lastPlayedAtUtc ?? raw.LastPlayedAtUtc ?? ""),
+  };
+}
+
 export const getWatchingCurrently = () =>
-  api.get<WatchingCurrentlyCard[]>("/home/watching-currently").then((r) => r.data);
+  api.get<WatchingCurrentlyCard[]>("/home/watching-currently").then((r) => {
+    const rows = r.data as unknown[];
+    return rows.map((row) => normalizeWatchingRow(row as Record<string, unknown>));
+  });
 
 export type TvSearchHit = { tmdbId: number; title: string; year: number | null; posterUrl: string | null };
 

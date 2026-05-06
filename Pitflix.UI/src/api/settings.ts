@@ -24,6 +24,8 @@ export type PitflixSettings = {
   mediaPlayerPath?: string;
   /** When true (default), the desktop app uses bundled mpv instead of external players. */
   useBuiltinPlayer?: boolean;
+  /** When true (default), show corner toasts when pinned/hourly auto-scan matches or flags a file. */
+  libraryScanDesktopToasts?: boolean;
   setupComplete?: boolean;
   setupWizardStep?: number | null;
   setupWizardState?: Partial<WizardDraft> | null;
@@ -57,6 +59,7 @@ export const saveSettings = (body: {
   libraryPaths?: string[];
   mediaPlayerPath?: string;
   useBuiltinPlayer?: boolean;
+  libraryScanDesktopToasts?: boolean;
 }) => api.post("/settings", body).then((r) => r.data);
 
 export const addLibraryPath = (path: string) =>

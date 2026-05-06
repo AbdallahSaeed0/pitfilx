@@ -32,6 +32,10 @@ use player::tauri_commands::{
     player2_set_embedded_safe_mode,
     player2_open_detached,
     player2_open_embedded_minimal_no_config,
+    get_subtitle_tracks,
+    extract_subtitle,
+    translate_srt_to_arabic,
+    generate_arabic_subtitle,
 };
 
 /// Holds the spawned Pitflix.API process so we can kill it on app exit.
@@ -253,12 +257,76 @@ fn cleanup_broken_autostart_registry_entries() {
 #[cfg(not(windows))]
 fn cleanup_broken_autostart_registry_entries() {}
 
+#[derive(serde::Serialize)]
+pub struct DeviceFsEntry {
+    pub name: String,
+    pub path: String,
+    pub is_directory: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub media_kind: Option<String>,
+}
+
+#[tauri::command]
+fn device_read_dir(path: String) -> Result<Vec<DeviceFsEntry>, String> {
+    let p = PathBuf::from(path.trim());
+    if !p.is_dir() {
+        return Err("Not a directory".into());
+    }
+
+    let read = std::fs::read_dir(&p).map_err(|e| e.to_string())?;
+    let mut out: Vec<DeviceFsEntry> = Vec::new();
+
+    for ent in read.flatten() {
+        let meta = ent.metadata().ok();
+        let is_dir = meta.map(|m| m.is_dir()).unwrap_or(false);
+        let name = ent.file_name().to_string_lossy().into_owned();
+        let full = ent.path();
+        let ext = full
+            .extension()
+            .and_then(|x| x.to_str())
+            .unwrap_or("")
+            .to_lowercase();
+
+        let media_kind = if is_dir {
+            None
+        } else if matches!(
+            ext.as_str(),
+            "jpg" | "jpeg" | "png" | "gif" | "webp" | "bmp" | "avif" | "jfif"
+        ) {
+            Some("image".into())
+        } else if matches!(
+            ext.as_str(),
+            "mp4" | "mkv" | "avi" | "mov" | "webm" | "m4v" | "wmv" | "mpg" | "mpeg"
+        ) {
+            Some("video".into())
+        } else {
+            Some("other".into())
+        };
+
+        out.push(DeviceFsEntry {
+            name,
+            path: full.to_string_lossy().into_owned(),
+            is_directory: is_dir,
+            media_kind,
+        });
+    }
+
+    out.sort_by(|a, b| match (a.is_directory, b.is_directory) {
+        (true, false) => std::cmp::Ordering::Less,
+        (false, true) => std::cmp::Ordering::Greater,
+        _ => a.name.to_lowercase().cmp(&b.name.to_lowercase()),
+    });
+
+    Ok(out)
+}
+
 const PITFLIX_BUILD_MARKER: &str = "0.3.6-detached-revert-2";
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let app = tauri::Builder::default()
         .invoke_handler(tauri::generate_handler![
+            device_read_dir,
             prepare_update_exit,
             player2_open,
             player2_send,
@@ -287,7 +355,11 @@ pub fn run() {
             playback_pol_tick_next_countdown,
             playback_pol_persist_progress,
             playback_pol_set_extension_thumbnails,
-            playback_pol_set_extension_skip_intro
+            playback_pol_set_extension_skip_intro,
+            get_subtitle_tracks,
+            extract_subtitle,
+            translate_srt_to_arabic,
+            generate_arabic_subtitle,
         ])
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())

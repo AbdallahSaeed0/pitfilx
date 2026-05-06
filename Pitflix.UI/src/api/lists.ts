@@ -21,6 +21,9 @@ export const getListById = (id: number) => api.get<UserListMeta>(`/lists/${id}`)
 export const createList = (body: { name: string }) =>
   api.post("/lists", body).then((r) => r.data);
 
+export const renameList = (id: number, body: { name: string }) =>
+  api.put(`/lists/${id}`, body).then((r) => r.data);
+
 export const deleteList = (id: number) =>
   api.delete(`/lists/${id}`).then((r) => r.data);
 

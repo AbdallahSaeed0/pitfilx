@@ -229,6 +229,46 @@ public sealed class RatingsAggregationService
 
         return null;
     }
+
+    /// <summary>OMDb per-episode IMDb score (when API key is set). Cached independently from <see cref="TryEpisodeRatingAsync"/>.</summary>
+    public async Task<double?> TryGetEpisodeImdbRatingAsync(int tvTmdbId, int season, int episodeNumber,
+        CancellationToken ct)
+    {
+        if (!_omdb.IsConfigured || tvTmdbId <= 0 || season < 0 || episodeNumber <= 0)
+            return null;
+
+        var key = $"ratings:imdbep:{tvTmdbId}:{season}:{episodeNumber}";
+        if (_cache.TryGetValue(key, out double cachedHit))
+            return cachedHit;
+
+        var tmdb = TmdbClientFactory.Create();
+        if (tmdb == null)
+            return null;
+
+        try
+        {
+            var seriesImdb = await tmdb.TryGetImdbIdAsync(tvTmdbId, "Series", ct).ConfigureAwait(false);
+            if (string.IsNullOrEmpty(seriesImdb))
+                return null;
+
+            var o = await _omdb.TryGetEpisodeBySeriesImdbIdAsync(seriesImdb, season, episodeNumber, ct)
+                .ConfigureAwait(false);
+            if (o != null &&
+                double.TryParse(o.ImdbRatingOutOf10, System.Globalization.NumberStyles.Float,
+                    System.Globalization.CultureInfo.InvariantCulture, out var imdbEp))
+            {
+                _cache.Set(key, imdbEp, new MemoryCacheEntryOptions { AbsoluteExpirationRelativeToNow = TimeSpan.FromHours(12) });
+                return imdbEp;
+            }
+        }
+        catch (Exception ex)
+        {
+            _log.LogDebug(ex, "Ratings: OMDb episode IMDb rating failed for TV {Id} S{Season}E{Ep}", tvTmdbId,
+                season, episodeNumber);
+        }
+
+        return null;
+    }
 }
 
 public sealed record RatingsAggregateDto(

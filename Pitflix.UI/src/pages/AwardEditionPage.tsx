@@ -1,11 +1,26 @@
 import { useQuery } from "@tanstack/react-query";
-import { Link, useParams } from "react-router-dom";
+import { useEffect, useMemo, useState } from "react";
+import { Link, Navigate, useParams } from "react-router-dom";
 import { getAwardEdition, getAwardsCatalog, getAwardYears } from "../api/awards";
-import { AwardEditionHero } from "../components/awards/AwardEditionHero";
-import { AwardEditionYearNav } from "../components/awards/AwardEditionYearNav";
 import { AwardCategorySection } from "../components/awards/AwardCategorySection";
+import { AwardCategoryTabs } from "../components/awards/AwardCategoryTabs";
+import { AwardEditionHero } from "../components/awards/AwardEditionHero";
+import { AwardEditionInsightStrip } from "../components/awards/AwardEditionInsightStrip";
+import { AwardEditionYearNav } from "../components/awards/AwardEditionYearNav";
+import { AwardWinnerRecommendations } from "../components/awards/AwardWinnerRecommendations";
 import { Spinner } from "../components/ui/Spinner";
+import { useLibraryTmdbIndex } from "../hooks/useLibraryTmdbIndex";
+import { debugAwards } from "../utils/awardDebug";
+import { getAwardBrandingImageSrc } from "../utils/awardBranding";
 import { toPosterSrc } from "../utils/posterSrc";
+
+function isAwardPlaceholderUrl(url: string | null | undefined) {
+  return (
+    !url ||
+    url.includes("/api/awards/placeholder/poster") ||
+    url.includes("awards/placeholder/poster")
+  );
+}
 
 export function AwardEditionPage() {
   const { awardId, year: yearStr } = useParams();
@@ -26,24 +41,93 @@ export function AwardEditionPage() {
     gcTime: 3_600_000,
   });
 
+  const years = yearsQ.data ?? [];
+  const yearsReady = yearsQ.isSuccess;
+  const yearIsListed = year > 0 && years.includes(year);
+  const editionFetchEnabled = Boolean(awardId && yearsReady && years.length > 0 && yearIsListed);
+
   const editionQ = useQuery({
     queryKey: ["award-edition", awardId, year],
     queryFn: () => getAwardEdition(awardId!, year),
-    enabled: !!awardId && year > 0,
+    enabled: editionFetchEnabled,
     staleTime: 600_000,
     gcTime: 3_600_000,
   });
+
+  const libQ = useLibraryTmdbIndex();
+
+  const [activeCatId, setActiveCatId] = useState<string | null>(null);
+
+  const edition = editionQ.data;
+
+  useEffect(() => {
+    if (!edition) return;
+    const nonEmpty = edition.categories.filter((c) => c.nominees.length > 0);
+    const fallback = nonEmpty[0] ?? edition.categories[0];
+    if (!fallback) {
+      setActiveCatId(null);
+      return;
+    }
+    if (!activeCatId || !edition.categories.some((c) => c.id === activeCatId)) {
+      setActiveCatId(fallback.id);
+      return;
+    }
+    const current = edition.categories.find((c) => c.id === activeCatId);
+    if (current && current.nominees.length === 0 && nonEmpty.length > 0) {
+      setActiveCatId(nonEmpty[0]!.id);
+    }
+  }, [edition, activeCatId]);
+
+  const nomineeCount = useMemo(() => {
+    if (!edition) return 0;
+    return edition.categories.reduce((acc, c) => acc + c.nominees.length, 0);
+  }, [edition]);
+
+  useEffect(() => {
+    const active =
+      edition?.categories.find((c) => c.id === activeCatId) ?? edition?.categories[0] ?? null;
+    debugAwards("AwardEditionPage", {
+      selectedAward: awardId,
+      selectedYear: year,
+      selectedCategory: activeCatId,
+      categoryName: active?.name,
+      nomineesLoaded: !!edition,
+      entriesCount: nomineeCount,
+      categoryEntries: active?.nominees.length ?? 0,
+    });
+  }, [awardId, year, activeCatId, edition, nomineeCount]);
 
   if (!awardId) return <p className="text-pitflix-muted">Missing award</p>;
 
   const catalogName = (catQ.data ?? []).find((a) => a.id === awardId)?.name;
   const awardLabelForShell = catalogName ?? awardId;
-  const years = yearsQ.data ?? [];
-  const yearsPending = yearsQ.isLoading || yearsQ.isFetching;
-  const edition = editionQ.data;
-  const editionPending = editionQ.isPending || (editionQ.isFetching && !edition);
 
-  const showNotFound = editionQ.isError || (!editionPending && !edition);
+  const yearsPending = yearsQ.isLoading || yearsQ.isFetching;
+
+  if (!yearsReady)
+    return (
+      <div className="flex justify-center py-24">
+        <Spinner />
+      </div>
+    );
+
+  if (years.length === 0)
+    return (
+      <div className="space-y-4">
+        <Link to="/awards" className="text-sm text-pitflix-primary hover:underline">
+          ← All awards
+        </Link>
+        <p className="text-sm text-pitflix-muted">No edition years available for this award yet.</p>
+      </div>
+    );
+
+  if (year <= 0 || !years.includes(year)) {
+    const latest = Math.max(...years);
+    return <Navigate to={`/awards/${encodeURIComponent(awardId)}/${latest}`} replace />;
+  }
+
+  const editionPending = editionFetchEnabled && (editionQ.isPending || (editionQ.isFetching && !edition));
+  const showNotFound = editionFetchEnabled && !editionPending && (editionQ.isError || !edition);
 
   if (showNotFound)
     return (
@@ -83,13 +167,21 @@ export function AwardEditionPage() {
     return null;
   }
 
-  const ceremonyPoster = toPosterSrc(edition.eventPosterUrl ?? edition.heroPosterUrl ?? undefined);
+  const rawCeremonyPoster = edition.eventPosterUrl ?? edition.heroPosterUrl ?? null;
+  let ceremonyPoster = toPosterSrc(rawCeremonyPoster ?? undefined);
+  if (isAwardPlaceholderUrl(rawCeremonyPoster)) {
+    const brand = getAwardBrandingImageSrc(awardId);
+    if (brand) ceremonyPoster = toPosterSrc(brand) ?? ceremonyPoster;
+  }
+
   const awardLabel = edition.label ?? edition.awardId;
   const sparseSeed =
     edition.categories.length <= 1 &&
     (edition.dataSource?.toLowerCase().includes("wikidata") ||
       edition.notes?.toLowerCase().includes("wikidata") ||
       edition.notes?.toLowerCase().includes("winner-only"));
+
+  const activeCat = edition.categories.find((c) => c.id === activeCatId);
 
   return (
     <div className="mx-auto max-w-5xl space-y-8 pb-16 sm:space-y-10">
@@ -123,11 +215,28 @@ export function AwardEditionPage() {
         <AwardEditionYearNav awardId={awardId} years={years} activeYear={year} />
       </div>
 
+      <AwardEditionInsightStrip edition={edition} library={libQ.data} />
+
+      <AwardCategoryTabs
+        categories={edition.categories}
+        activeId={activeCatId}
+        onSelect={(id) => setActiveCatId(id)}
+      />
+
       <div className="space-y-5 sm:space-y-6">
-        {edition.categories.map((cat) => (
-          <AwardCategorySection key={cat.id} category={cat} />
-        ))}
+        {activeCat ? (
+          <AwardCategorySection
+            key={activeCat.id}
+            category={activeCat}
+            ceremonyYear={edition.year}
+            libraryIndex={libQ.data}
+          />
+        ) : (
+          <p className="text-sm text-pitflix-muted">No categories for this edition.</p>
+        )}
       </div>
+
+      <AwardWinnerRecommendations edition={edition} library={libQ.data} />
     </div>
   );
 }

@@ -11,6 +11,7 @@ pub mod mpv_gl_win;
 #[cfg(windows)]
 pub mod windows_libmpv_host;
 pub mod tauri_commands;
+pub mod subtitle_generator;
 
 #[cfg(windows)]
 pub mod windows_host;

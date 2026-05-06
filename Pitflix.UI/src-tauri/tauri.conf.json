@@ -1,11 +1,11 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "Pitflix",
-  "version": "0.3.8",
+  "version": "0.3.9",
   "identifier": "Pitflix",
   "build": {
     "beforeDevCommand": "npm run dev",
-    "devUrl": "http://127.0.0.1:5173",
+    "devUrl": "http://127.0.0.1:4173",
     "beforeBuildCommand": "npm run bundle:prepare && npm run icons:prepare && npm run build",
     "frontendDist": "../dist"
   },
@@ -29,7 +29,11 @@
       }
     ],
     "security": {
-      "csp": null
+      "csp": null,
+      "assetProtocol": {
+        "enable": true,
+        "scope": ["**"]
+      }
     }
   },
   "bundle": {

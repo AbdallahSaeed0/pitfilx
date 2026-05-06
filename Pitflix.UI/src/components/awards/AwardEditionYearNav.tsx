@@ -9,9 +9,16 @@ export type AwardEditionYearNavProps = {
   awardId: string;
   years: number[];
   activeYear: number;
+  /** Visible label above the scroller (edition page vs hub). */
+  heading?: string;
 };
 
-export function AwardEditionYearNav({ awardId, years, activeYear }: AwardEditionYearNavProps) {
+export function AwardEditionYearNav({
+  awardId,
+  years,
+  activeYear,
+  heading = "Jump to year",
+}: AwardEditionYearNavProps) {
   const qc = useQueryClient();
   const scrollerRef = useRef<HTMLDivElement | null>(null);
   const activeRef = useRef<HTMLAnchorElement | null>(null);
@@ -75,9 +82,7 @@ export function AwardEditionYearNav({ awardId, years, activeYear }: AwardEdition
   return (
     <div className="space-y-2">
       <div className="flex items-center justify-between gap-3">
-        <p className="text-[11px] font-semibold uppercase tracking-[0.12em] text-pitflix-subtle">
-          Jump to year
-        </p>
+        <p className="text-[11px] font-semibold uppercase tracking-[0.12em] text-pitflix-subtle">{heading}</p>
         <p className="hidden text-[11px] text-pitflix-subtle sm:block">
           {years.length} editions · drag or use arrows
         </p>

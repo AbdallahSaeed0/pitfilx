@@ -52,22 +52,28 @@ public sealed class TmdbNativeTrailerDiscovery
 
             var filtered = new List<TrailerItem>();
             var skipped = 0;
+            var mediaAgeCutoff = DateTime.UtcNow.AddDays(-180); // 6 months age limit for media
+
             foreach (var (tmdbId, mediaType, title, releaseDate, videoKey, videoName, videoType, publishedAt,
                          voteAverage, voteCount) in latestTrailers)
             {
-                // Primary filter: only on trailer publication date, not media age
+                // Primary filter: only on trailer publication date
                 if (publishedAt == null || publishedAt < publishedCutoff)
                 {
                     skipped++;
-                    _log.LogDebug(
-                        "Skip: {Title} ({MediaType}, TMDB {TmdbId}) - trailer published {PublishedAt} (before cutoff {Cutoff})",
-                        title, mediaType, tmdbId, publishedAt, publishedCutoff);
                     continue;
                 }
 
-                // Keep all trailers if they're recent, regardless of media age
-                // New seasons of old shows will have recent trailers and should be included
-                // (e.g., Ted Lasso Season 4 from 2020 show, House of the Dragon S3 from 2022 show)
+                // Secondary filter: Media age. Don't show trailers for stuff that's been out for a long time.
+                if (!string.IsNullOrEmpty(releaseDate) && DateTime.TryParse(releaseDate, out var airDate))
+                {
+                    if (airDate < mediaAgeCutoff)
+                    {
+                        skipped++;
+                        _log.LogDebug("Skip old media: {Title} (released {ReleaseDate})", title, releaseDate);
+                        continue;
+                    }
+                }
 
                 var item = new TrailerItem
                 {

@@ -22,6 +22,7 @@ type EpisodeRow = {
   watchStatus?: string;
   stillLocalPath?: string | null;
   tmdbVoteAverage?: number | null;
+  imdbVoteAverage?: number | null;
 };
 
 export function SeasonDetailPage() {
@@ -283,6 +284,11 @@ export function SeasonDetailPage() {
                     {ep.tmdbVoteAverage != null && ep.tmdbVoteAverage > 0 ? (
                       <span className="shrink-0 rounded bg-white/10 px-1.5 py-0.5 text-[10px] text-pitflix-muted">
                         TMDB ★ {ep.tmdbVoteAverage.toFixed(1)}
+                      </span>
+                    ) : null}
+                    {ep.imdbVoteAverage != null && ep.imdbVoteAverage > 0 ? (
+                      <span className="shrink-0 rounded bg-amber-950/80 px-1.5 py-0.5 text-[10px] text-amber-100/95 ring-1 ring-amber-500/35">
+                        IMDb ★ {ep.imdbVoteAverage.toFixed(1)}
                       </span>
                     ) : null}
                   </p>

@@ -1,6 +1,7 @@
 import { Link } from "react-router-dom";
 import { MediaImage } from "../ui/MediaImage";
 import { cn } from "../../utils/cn";
+import { getAwardBrandingFallbackSrc } from "../../utils/awardBranding";
 import { toPosterSrc } from "../../utils/posterSrc";
 
 export type AwardEditionHeroProps = {
@@ -8,6 +9,8 @@ export type AwardEditionHeroProps = {
   awardLabel: string;
   year: number;
   ceremonyPoster?: string | null;
+  /** Optional explicit fallback when poster URL fails (defaults to SVG branding under public/). */
+  ceremonyPosterFallback?: string | null;
   heroBackdropUrl?: string | null;
   dataSource?: string | null;
 };
@@ -17,10 +20,13 @@ export function AwardEditionHero({
   awardLabel,
   year,
   ceremonyPoster,
+  ceremonyPosterFallback,
   heroBackdropUrl,
   dataSource,
 }: AwardEditionHeroProps) {
   const backdrop = toPosterSrc(heroBackdropUrl ?? undefined);
+  const posterFallback =
+    ceremonyPosterFallback ?? toPosterSrc(getAwardBrandingFallbackSrc(awardId) ?? undefined);
 
   return (
     <div
@@ -95,9 +101,10 @@ export function AwardEditionHero({
           <div className="flex justify-start sm:justify-end">
             <MediaImage
               src={ceremonyPoster}
+              fallbackSrc={posterFallback}
               alt=""
               loading="eager"
-              className="aspect-[2/3] h-44 w-[7.35rem] shrink-0 overflow-hidden rounded-xl border border-white/15 bg-black/40 object-cover shadow-2xl ring-1 ring-white/10 sm:h-[13.5rem] sm:w-[9rem]"
+              className="aspect-[2/3] h-44 w-[7.35rem] shrink-0 overflow-hidden rounded-xl border border-white/15 bg-zinc-950 object-cover shadow-2xl ring-1 ring-white/10 sm:h-[13.5rem] sm:w-[9rem]"
               fallbackText={awardLabel.slice(0, 2)}
             />
           </div>

@@ -2,6 +2,7 @@ import { Outlet } from "react-router-dom";
 import { useScanStream } from "../../hooks/useScanProgress";
 import { UpdateStartupBanner } from "../updater/UpdateStartupBanner";
 import { SmartMatchProgressOverlay } from "../SmartMatchProgressOverlay";
+import { LibraryAddToast } from "./LibraryAddToast";
 import { ScanProgressOverlay } from "./ScanProgressOverlay";
 import { Sidebar } from "./Sidebar";
 import { TitleBar } from "./TitleBar";
@@ -13,13 +14,14 @@ export function MainLayout() {
       <TitleBar />
       <div className="flex min-h-0 flex-1">
         <Sidebar />
-        <main className="min-h-0 flex-1 overflow-y-auto p-6">
+        <main className="min-h-0 flex-1 overflow-y-auto px-6 pb-6 pt-3">
           <UpdateStartupBanner />
           <Outlet />
         </main>
       </div>
       <ScanProgressOverlay />
       <SmartMatchProgressOverlay />
+      <LibraryAddToast />
     </div>
   );
 }

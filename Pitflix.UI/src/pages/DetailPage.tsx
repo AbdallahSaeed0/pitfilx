@@ -15,6 +15,7 @@ import { Badge } from "../components/ui/Badge";
 import type { MediaCard } from "../types/media";
 import { formatRating, formatYear } from "../utils/format";
 import { toPosterSrc } from "../utils/posterSrc";
+import { cn } from "../utils/cn";
 import { RatingsPanel } from "../components/RatingsPanel";
 
 type CrewMember = {
@@ -85,7 +86,7 @@ export function MovieDetailPage() {
     queryKey: ["movie", mid],
     queryFn: () => getMovie(mid),
     enabled: Number.isFinite(mid) && mid > 0,
-    staleTime: 10 * 60_000,
+    staleTime: 30 * 60_000,
     gcTime: 60 * 60_000,
   });
 
@@ -121,31 +122,32 @@ export function MovieDetailPage() {
 
   return (
     <div>
-      <button
-        type="button"
-        onClick={() => navigate(-1)}
-        className="mb-4 text-sm text-pitflix-muted hover:text-white"
-      >
-        ← Back
-      </button>
-      <div className="relative overflow-hidden rounded-xl bg-pitflix-card">
-        <div className="pointer-events-none absolute inset-0 min-h-[200px] sm:min-h-[240px]">
-          {backdrop ? (
-            <div className="absolute inset-0 [&_img]:opacity-70">
-              <MediaImage
-                src={backdrop}
-                alt=""
-                className="h-full w-full bg-pitflix-card"
-                fallbackText=""
-              />
-            </div>
-          ) : (
-            <div className="absolute inset-0 bg-pitflix-card" />
-          )}
-          <div className="absolute inset-0 bg-gradient-to-r from-pitflix-bg via-pitflix-bg/60 to-transparent" />
-          <div className="absolute inset-0 bg-gradient-to-t from-pitflix-bg to-transparent" />
-        </div>
-        <div className="relative z-10 flex w-full max-w-[min(100%,1040px)] flex-col gap-4 p-4 pt-24 sm:flex-row sm:items-start sm:gap-5 sm:p-8 sm:pt-28">
+      <div className="-mx-6 mb-8">
+        <div className="relative overflow-hidden rounded-xl bg-pitflix-card">
+          <button
+            type="button"
+            onClick={() => navigate(-1)}
+            className="absolute left-4 top-4 z-20 rounded-lg border border-white/15 bg-black/45 px-3 py-2 text-sm font-medium text-white shadow-lg backdrop-blur-md transition hover:border-pitflix-primary/50 hover:bg-black/60"
+          >
+            ← Back
+          </button>
+          <div className="pointer-events-none absolute inset-0 min-h-[200px] sm:min-h-[240px]">
+            {backdrop ? (
+              <div className="absolute inset-0 [&_img]:opacity-70">
+                <MediaImage
+                  src={backdrop}
+                  alt=""
+                  className="h-full w-full bg-pitflix-card"
+                  fallbackText=""
+                />
+              </div>
+            ) : (
+              <div className="absolute inset-0 bg-pitflix-card" />
+            )}
+            <div className="absolute inset-0 bg-gradient-to-r from-pitflix-bg via-pitflix-bg/60 to-transparent" />
+            <div className="absolute inset-0 bg-gradient-to-t from-pitflix-bg to-transparent" />
+          </div>
+          <div className="relative z-10 mx-auto flex w-full max-w-[min(100%,1040px)] flex-col gap-4 p-4 pt-14 sm:flex-row sm:items-start sm:gap-5 sm:p-8 sm:pt-16">
           <MediaImage
             src={poster}
             alt={movie.title}
@@ -229,6 +231,7 @@ export function MovieDetailPage() {
               <RatingsPanel tmdbId={movie.tmdbId} mediaType="movie" />
             </div>
           </div>
+        </div>
         </div>
       </div>
 
@@ -367,7 +370,7 @@ export function ShowDetailPage() {
     queryKey: ["show", sid],
     queryFn: () => getShow(sid),
     enabled: Number.isFinite(sid) && sid > 0,
-    staleTime: 10 * 60_000,
+    staleTime: 30 * 60_000,
     gcTime: 60 * 60_000,
   });
 
@@ -421,31 +424,32 @@ export function ShowDetailPage() {
 
   return (
     <div>
-      <button
-        type="button"
-        onClick={() => navigate(-1)}
-        className="mb-4 text-sm text-pitflix-muted hover:text-white"
-      >
-        ← Back
-      </button>
-      <div className="relative overflow-hidden rounded-xl bg-pitflix-card">
-        <div className="pointer-events-none absolute inset-0 min-h-[200px] sm:min-h-[240px]">
-          {backdrop ? (
-            <div className="absolute inset-0 [&_img]:opacity-70">
-              <MediaImage
-                src={backdrop}
-                alt=""
-                className="h-full w-full bg-pitflix-card"
-                fallbackText=""
-              />
-            </div>
-          ) : (
-            <div className="absolute inset-0 bg-pitflix-card" />
-          )}
-          <div className="absolute inset-0 bg-gradient-to-r from-pitflix-bg via-pitflix-bg/60 to-transparent" />
-          <div className="absolute inset-0 bg-gradient-to-t from-pitflix-bg to-transparent" />
-        </div>
-        <div className="relative z-10 flex w-full max-w-[min(100%,1040px)] flex-col gap-4 p-4 pt-24 sm:flex-row sm:items-start sm:gap-5 sm:p-8 sm:pt-28">
+      <div className="-mx-6 mb-8">
+        <div className="relative overflow-hidden rounded-xl bg-pitflix-card">
+          <button
+            type="button"
+            onClick={() => navigate(-1)}
+            className="absolute left-4 top-4 z-20 rounded-lg border border-white/15 bg-black/45 px-3 py-2 text-sm font-medium text-white shadow-lg backdrop-blur-md transition hover:border-pitflix-primary/50 hover:bg-black/60"
+          >
+            ← Back
+          </button>
+          <div className="pointer-events-none absolute inset-0 min-h-[200px] sm:min-h-[240px]">
+            {backdrop ? (
+              <div className="absolute inset-0 [&_img]:opacity-70">
+                <MediaImage
+                  src={backdrop}
+                  alt=""
+                  className="h-full w-full bg-pitflix-card"
+                  fallbackText=""
+                />
+              </div>
+            ) : (
+              <div className="absolute inset-0 bg-pitflix-card" />
+            )}
+            <div className="absolute inset-0 bg-gradient-to-r from-pitflix-bg via-pitflix-bg/60 to-transparent" />
+            <div className="absolute inset-0 bg-gradient-to-t from-pitflix-bg to-transparent" />
+          </div>
+          <div className="relative z-10 mx-auto flex w-full max-w-[min(100%,1040px)] flex-col gap-4 p-4 pt-14 sm:flex-row sm:items-start sm:gap-5 sm:p-8 sm:pt-16">
           <MediaImage
             src={poster}
             alt={show.title}
@@ -552,6 +556,7 @@ export function ShowDetailPage() {
             </div>
           </div>
         </div>
+        </div>
       </div>
 
       {showPosterPicker ? (
@@ -583,30 +588,65 @@ export function ShowDetailPage() {
             available.
           </p>
           <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5">
-            {seasonsSummary.map((s) => (
-              <Link
-                key={s.seasonNumber}
-                to={`/series/${sid}/season/${s.seasonNumber}`}
-                className="group overflow-hidden rounded-2xl border border-pitflix-card/70 bg-pitflix-surface/40 transition-all hover:border-pitflix-primary/50 hover:shadow-lg hover:shadow-pitflix-primary/10"
-              >
-                <MediaImage
-                  src={s.posterUrl ?? undefined}
-                  alt=""
-                  className="aspect-[2/3] w-full object-cover transition-transform duration-300 group-hover:scale-[1.02]"
-                  fallbackText={s.name.slice(0, 2)}
-                />
-                <div className="space-y-0.5 p-3">
-                  <p className="line-clamp-2 text-sm font-semibold text-white">{s.name}</p>
-                  <p className="text-[11px] text-pitflix-muted">
-                    {s.episodeCount} in library
-                    {s.tmdbEpisodeCount > 0 ? ` · ${s.tmdbEpisodeCount} on TMDB` : ""}
-                  </p>
-                  {s.airDate ? (
-                    <p className="text-[10px] text-pitflix-subtle">Premiered {s.airDate}</p>
-                  ) : null}
+            {seasonsSummary.map((s) => {
+              const inLibrary = s.inLibrary !== false;
+              const inner = (
+                <>
+                  <div className="relative aspect-[2/3] w-full overflow-hidden">
+                    <MediaImage
+                      src={s.posterUrl ?? undefined}
+                      alt=""
+                      className={cn(
+                        "h-full w-full object-cover transition-transform duration-300",
+                        inLibrary ? "group-hover:scale-[1.02]" : "opacity-75 saturate-[0.85]",
+                      )}
+                      fallbackText={s.name.slice(0, 2)}
+                    />
+                    {!inLibrary ? (
+                      <div className="absolute inset-0 flex flex-col justify-between bg-gradient-to-t from-black/85 via-black/20 to-transparent p-2">
+                        <span className="self-end rounded-md border border-amber-500/60 bg-amber-950/90 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-amber-100 shadow-lg">
+                          Missing
+                        </span>
+                      </div>
+                    ) : null}
+                  </div>
+                  <div className="space-y-0.5 p-3">
+                    <p className="line-clamp-2 text-sm font-semibold text-white">{s.name}</p>
+                    <p className="text-[11px] text-pitflix-muted">
+                      {inLibrary ? (
+                        <>
+                          {s.episodeCount} in library
+                          {s.tmdbEpisodeCount > 0 ? ` · ${s.tmdbEpisodeCount} on TMDB` : ""}
+                        </>
+                      ) : (
+                        <>
+                          Not in library · {s.tmdbEpisodeCount > 0 ? `${s.tmdbEpisodeCount} eps on TMDB` : "On TMDB"}
+                        </>
+                      )}
+                    </p>
+                    {s.airDate ? (
+                      <p className="text-[10px] text-pitflix-subtle">Premiered {s.airDate}</p>
+                    ) : null}
+                  </div>
+                </>
+              );
+              return inLibrary ? (
+                <Link
+                  key={s.seasonNumber}
+                  to={`/series/${sid}/season/${s.seasonNumber}`}
+                  className="group overflow-hidden rounded-2xl border border-pitflix-card/70 bg-pitflix-surface/40 transition-all hover:border-pitflix-primary/50 hover:shadow-lg hover:shadow-pitflix-primary/10"
+                >
+                  {inner}
+                </Link>
+              ) : (
+                <div
+                  key={s.seasonNumber}
+                  className="group overflow-hidden rounded-2xl border border-amber-500/35 bg-pitflix-surface/30 ring-1 ring-amber-500/15"
+                >
+                  {inner}
                 </div>
-              </Link>
-            ))}
+              );
+            })}
           </div>
         </section>
       ) : seasons.length === 0 ? (

@@ -2,11 +2,26 @@ import { useEffect, useState } from "react";
 
 function parseReleaseUtc(dateStr: string, timeStr?: string | null): number | null {
   if (!dateStr?.trim()) return null;
-  const d = timeStr?.trim()
-    ? new Date(`${dateStr.trim()}T${timeStr.trim()}:00`)
-    : new Date(`${dateStr.trim()}T00:00:00`);
-  const t = d.getTime();
-  return Number.isFinite(t) ? t : null;
+  const ds = dateStr.trim();
+  const dm = /^(\d{4})-(\d{2})-(\d{2})$/.exec(ds);
+  if (!dm) return null;
+  const y = Number(dm[1]);
+  const mo = Number(dm[2]);
+  const d = Number(dm[3]);
+  if (!Number.isFinite(y) || !Number.isFinite(mo) || !Number.isFinite(d)) return null;
+
+  const ts = timeStr?.trim();
+  if (!ts) {
+    // TMDB air_date is date-only. Using end-of-day UTC avoids "countdown is too short" in many timezones.
+    return Date.UTC(y, mo - 1, d, 23, 59, 59);
+  }
+
+  const tm = /^(\d{1,2}):(\d{2})$/.exec(ts);
+  if (!tm) return Date.UTC(y, mo - 1, d, 23, 59, 59);
+  const hh = Number(tm[1]);
+  const mm = Number(tm[2]);
+  if (!Number.isFinite(hh) || !Number.isFinite(mm)) return Date.UTC(y, mo - 1, d, 23, 59, 59);
+  return Date.UTC(y, mo - 1, d, hh, mm, 0);
 }
 
 export function useCountdown(targetUtcMs: number | null) {

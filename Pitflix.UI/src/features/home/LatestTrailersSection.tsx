@@ -58,7 +58,7 @@ export function LatestTrailersSection({ embedded = false }: LatestTrailersProps)
   return (
     <div
       className={
-        embedded ? "" : "rounded-2xl border border-pitflix-card/40 bg-gradient-to-b from-pitflix-surface/40 to-pitflix-bg/20 p-6"
+        embedded ? "" : "rounded-2xl border border-pitflix-card/40 bg-gradient-to-b from-zinc-950/80 to-pitflix-bg/20 p-6"
       }
     >
       {embedded ? null : (

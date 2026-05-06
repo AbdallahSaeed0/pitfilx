@@ -286,7 +286,9 @@ F:\PitFilx-app\Pitflix.API\bin\Release\net8.0-windows\win-x64\Data\Awards\_revie
 F:\PitFilx-app\Pitflix.API\bin\Release\net8.0-windows\win-x64\Data\Awards\_review_for_chatgpt\golden-globes.json
 F:\PitFilx-app\Pitflix.API\bin\Release\net8.0-windows\win-x64\Data\Awards\_review_for_chatgpt\manifest.json
 F:\PitFilx-app\Pitflix.API\bin\Release\net8.0-windows\win-x64\Data\Awards\_review_for_chatgpt\primetime-emmys.json
+F:\PitFilx-app\Pitflix.API\bin\Release\net8.0-windows\win-x64\Data\Trailers\official-channels.json
 F:\PitFilx-app\Pitflix.API\bin\Release\net8.0-windows\win-x64\Data\Trailers\priority.json
+F:\PitFilx-app\Pitflix.API\bin\Release\net8.0-windows\win-x64\External\php-imdb-detail\fetch_rating.php
 F:\PitFilx-app\Pitflix.API\bin\Release\net8.0-windows\win-x64\Pitflix.API.staticwebassets.endpoints.json
 F:\PitFilx-app\Pitflix.API\bin\Release\net8.0-windows\win-x64\Pitflix.API.exe
 F:\PitFilx-app\Pitflix.API\bin\Release\net8.0-windows\win-x64\Pitflix.API.deps.json
@@ -986,5 +988,3 @@ F:\PitFilx-app\Pitflix.API\obj\Release\net8.0-windows\win-x64\Pitflix.API.dll
 F:\PitFilx-app\Pitflix.API\obj\Release\net8.0-windows\win-x64\refint\Pitflix.API.dll
 F:\PitFilx-app\Pitflix.API\obj\Release\net8.0-windows\win-x64\Pitflix.API.genruntimeconfig.cache
 F:\PitFilx-app\Pitflix.API\obj\Release\net8.0-windows\win-x64\ref\Pitflix.API.dll
-F:\PitFilx-app\Pitflix.API\bin\Release\net8.0-windows\win-x64\External\php-imdb-detail\fetch_rating.php
-F:\PitFilx-app\Pitflix.API\bin\Release\net8.0-windows\win-x64\Data\Trailers\official-channels.json

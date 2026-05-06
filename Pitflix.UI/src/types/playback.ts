@@ -4,6 +4,8 @@ export type PlayerReturnTo = {
   search?: string;
   hash?: string;
   scrollY?: number;
+  /** Scroll position for the app `<main>` scroller (overflow-y), when used instead of window scroll. */
+  mainScrollTop?: number;
 };
 
 /** Router state for `/player` (built-in mpv). */

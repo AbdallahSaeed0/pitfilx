@@ -2,11 +2,12 @@ import { useQuery } from "@tanstack/react-query";
 import { Link } from "react-router-dom";
 import { CalendarClock, Search, Tv } from "lucide-react";
 import { useMemo, useState } from "react";
-import { getNextEpisodesAir } from "../../api/homeDiscover";
+import { getNextEpisodesAirScoped } from "../../api/homeDiscover";
 import { Spinner } from "../../components/ui/Spinner";
 import { airDateToUtcMs, formatCountdown, useCountdown } from "../../hooks/useCountdown";
 import { cn } from "../../utils/cn";
 import { useDebounce } from "../../hooks/useDebounce";
+import { MediaImage } from "../../components/ui/MediaImage";
 
 function Row({
   title,
@@ -14,12 +15,14 @@ function Row({
   href,
   external,
   releaseDate,
+  posterUrl,
 }: {
   title: string;
   sub: string;
   href: string;
   external?: boolean;
   releaseDate: string;
+  posterUrl?: string | null;
 }) {
   const target = airDateToUtcMs(releaseDate, null);
   const left = useCountdown(target);
@@ -28,9 +31,14 @@ function Row({
     "flex items-center justify-between gap-3 rounded-xl border border-pitflix-card/50 bg-pitflix-surface/40 px-4 py-3 transition-colors hover:border-pitflix-primary/40";
   const inner = (
     <>
-      <div className="min-w-0">
-        <p className="truncate font-medium text-white">{title}</p>
-        <p className="truncate text-xs text-pitflix-subtle">{sub}</p>
+      <div className="flex min-w-0 items-center gap-3">
+        <div className="h-12 w-8 shrink-0 overflow-hidden rounded-md bg-pitflix-card/70">
+          <MediaImage src={posterUrl ?? undefined} alt="" className="h-full w-full object-cover" fallbackText="TV" />
+        </div>
+        <div className="min-w-0">
+          <p className="truncate font-medium text-white">{title}</p>
+          <p className="truncate text-xs text-pitflix-subtle">{sub}</p>
+        </div>
       </div>
       <div className="shrink-0 text-right">
         <p className="text-[11px] text-pitflix-muted">{releaseDate}</p>
@@ -51,15 +59,15 @@ function Row({
   );
 }
 
-type NextEpisodesProps = { embedded?: boolean };
+type NextEpisodesProps = { embedded?: boolean; variant?: "priority" | "all" };
 
-export function NextEpisodesSection({ embedded = false }: NextEpisodesProps) {
+export function NextEpisodesSection({ embedded = false, variant = "priority" }: NextEpisodesProps) {
   const [filterQ, setFilterQ] = useState("");
   const debouncedFilter = useDebounce(filterQ, 200);
 
   const q = useQuery({
-    queryKey: ["home-next-episodes"],
-    queryFn: getNextEpisodesAir,
+    queryKey: ["home-next-episodes", variant],
+    queryFn: () => getNextEpisodesAirScoped({ view: variant, limit: variant === "all" ? 160 : 56 }),
     staleTime: 120_000,
   });
 
@@ -76,7 +84,7 @@ export function NextEpisodesSection({ embedded = false }: NextEpisodesProps) {
 
   const shell = embedded
     ? "space-y-3"
-    : "rounded-2xl border border-pitflix-card/40 bg-gradient-to-b from-pitflix-surface/40 to-pitflix-bg/20 p-6";
+    : "rounded-2xl border border-pitflix-card/40 bg-gradient-to-b from-zinc-950/85 to-pitflix-bg/20 p-6";
 
   if (q.isLoading)
     return (
@@ -158,7 +166,9 @@ export function NextEpisodesSection({ embedded = false }: NextEpisodesProps) {
         <div className="mb-4 flex flex-wrap items-center gap-3">
           <div className="flex min-w-0 flex-1 items-center gap-2">
             <Tv className="h-5 w-5 shrink-0 text-pitflix-primary" />
-            <h2 className="text-lg font-bold text-white">Next episodes</h2>
+            <h2 className="text-lg font-bold text-white">
+              {variant === "all" ? "All upcoming episodes" : "Next episodes"}
+            </h2>
             <span className="hidden text-xs text-pitflix-subtle sm:inline">Library + TMDB</span>
           </div>
           <Link
@@ -180,7 +190,7 @@ export function NextEpisodesSection({ embedded = false }: NextEpisodesProps) {
           className="w-full rounded-lg border border-pitflix-card bg-pitflix-bg py-2 pl-9 pr-3 text-xs text-white placeholder:text-pitflix-muted focus:border-pitflix-primary focus:outline-none"
         />
       </div>
-      <div className="space-y-2">
+      <div className="max-h-[min(420px,52vh)] space-y-2 overflow-y-auto scroll-smooth pr-1">
         {rows.map((r) => {
           const lib = r.libraryShowId != null;
           const href = lib ? `/series/${r.libraryShowId}` : `https://www.themoviedb.org/tv/${r.showTmdbId}`;
@@ -192,6 +202,7 @@ export function NextEpisodesSection({ embedded = false }: NextEpisodesProps) {
               href={href}
               external={!lib}
               releaseDate={r.airDate}
+              posterUrl={r.posterUrl}
             />
           );
         })}

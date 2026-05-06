@@ -1266,7 +1266,7 @@ impl WindowsPlayerHost {
 
   pub fn send(&self, cmd: PlayerCommand) -> Result<(), String> {
     // Record last action for exit diagnostics.
-    if let Ok(mut g) = self.state.lock() {
+    if let Ok(g) = self.state.lock() {
       if let Some(s) = g.as_ref() {
         if let Ok(mut a) = s.last_action.lock() {
           *a = format!("send:{cmd:?}");
@@ -1515,7 +1515,7 @@ impl WindowsPlayerHost {
 
   /// Pause: `set_property` pause true (no wait), then `get_property` pause by `request_id` (blocking).
   pub fn pause_with_confirmation(&self) -> Result<(), String> {
-    if let Ok(mut g) = self.state.lock() {
+    if let Ok(g) = self.state.lock() {
       if let Some(s) = g.as_ref() {
         if let Ok(mut a) = s.last_action.lock() {
           *a = "pause".to_string();
@@ -1550,7 +1550,7 @@ impl WindowsPlayerHost {
   /// the mirror state over ~1500ms (initial 200ms delay, then ~175ms between attempts); on failure
   /// performs soft verification in the background for diagnostics only.
   pub fn resume_with_confirmation(&self) -> Result<(), String> {
-    if let Ok(mut g) = self.state.lock() {
+    if let Ok(g) = self.state.lock() {
       if let Some(s) = g.as_ref() {
         if let Ok(mut a) = s.last_action.lock() {
           *a = "resume".to_string();
@@ -2212,7 +2212,6 @@ fn emit_state_coalesced(
   // For external mode, coalesce aggressively
   let now = std::time::Instant::now();
   let mut should_emit = false;
-  let mut reason = "";
 
   if let Ok(mut last) = last_emit.lock() {
     let (last_time, last_state) = &*last;
@@ -2221,20 +2220,15 @@ fn emit_state_coalesced(
     // Critical state changes - emit immediately
     if st.paused != last_state.paused {
       should_emit = true;
-      reason = "pause_changed";
     } else if st.ended != last_state.ended {
       should_emit = true;
-      reason = "ended_changed";
     } else if st.loading != last_state.loading {
       should_emit = true;
-      reason = "loading_changed";
     } else if (st.duration - last_state.duration).abs() > 0.5 {
       should_emit = true;
-      reason = "duration_changed";
     } else if elapsed.as_millis() >= 1000 {
       // Non-critical updates: throttle to once per second
       should_emit = true;
-      reason = "throttle_interval";
     }
 
     if should_emit {
@@ -2919,7 +2913,7 @@ fn spawn_mpv_embedded(
   let mut args_for_log: Vec<String> = Vec::new();
 
   // Keep `args_for_log` exactly in the order we pass to mpv.
-  let mut add_arg = |cmd: &mut Command, args: &mut Vec<String>, s: String| {
+  let add_arg = |cmd: &mut Command, args: &mut Vec<String>, s: String| {
     args.push(s.clone());
     cmd.arg(&s);
   };

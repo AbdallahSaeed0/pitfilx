@@ -73,7 +73,7 @@ export function ComingSoonSection({ embedded = false }: ComingSoonProps) {
 
   const wrapClass = embedded
     ? ""
-    : "rounded-2xl border border-pitflix-card/40 bg-gradient-to-b from-pitflix-surface/40 to-pitflix-bg/20 p-6";
+    : "rounded-2xl border border-pitflix-card/40 bg-gradient-to-b from-zinc-950/80 to-pitflix-bg/20 p-6";
 
   if (q.isLoading)
     return (

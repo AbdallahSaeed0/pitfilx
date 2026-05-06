@@ -3,26 +3,8 @@ import { MediaImage } from "../../components/ui/MediaImage";
 import type { HomeLayoutStyle } from "../../types/homeSection";
 import type { WatchHistoryRow } from "../../types/homeSection";
 import { toPosterSrc } from "../../utils/posterSrc";
-import { usePlayback } from "../../hooks/usePlayback";
 import { cn } from "../../utils/cn";
-import { trustedResumeHeadFromRow } from "../../utils/trustedResume";
-import type { PlayContext } from "../../hooks/usePlayback";
 import { useNavigate } from "react-router-dom";
-
-function continueReturnContext(item: WatchHistoryRow): PlayContext {
-  const returnTo =
-    item.libraryMovieId != null
-      ? { pathname: `/movie/${item.libraryMovieId}` }
-      : item.libraryShowId != null
-        ? { pathname: `/series/${item.libraryShowId}` }
-        : undefined;
-  return {
-    libraryMovieId: item.libraryMovieId ?? undefined,
-    libraryShowId: item.libraryShowId ?? undefined,
-    libraryEpisodeId: item.libraryEpisodeId ?? undefined,
-    returnTo,
-  };
-}
 
 function ContinueThumb({
   item,
@@ -32,7 +14,6 @@ function ContinueThumb({
   onManage?: (id: number) => void;
 }) {
   const navigate = useNavigate();
-  const { play } = usePlayback();
   const src = toPosterSrc(item.posterLocalPath ?? item.posterRemoteUrl ?? undefined);
   const fallbackSrc =
     item.posterLocalPath && item.posterRemoteUrl ? toPosterSrc(item.posterRemoteUrl) : undefined;

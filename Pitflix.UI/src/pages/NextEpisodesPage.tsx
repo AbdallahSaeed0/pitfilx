@@ -7,7 +7,7 @@ import { toPosterSrc } from "../utils/posterSrc";
 import {
   discoverTvSchedule,
   discoverTvSearch,
-  getNextEpisodesAir,
+  getNextEpisodesAirScoped,
   getNextEpisodesFollowed,
   getNextEpisodesPins,
   putNextEpisodesFollowed,
@@ -31,7 +31,15 @@ function CountdownLine({ airDate }: { airDate: string }) {
   return cd ? <p className="font-mono text-[11px] text-amber-100/90">{cd}</p> : null;
 }
 
-function ScheduleRow({ r, pinned }: { r: NextEpisodeAir; pinned?: boolean }) {
+function ScheduleRow({
+  r,
+  pinned,
+  onTogglePin,
+}: {
+  r: NextEpisodeAir;
+  pinned?: boolean;
+  onTogglePin?: (libraryShowId: number, pin: boolean) => void;
+}) {
   const lib = r.libraryShowId != null;
   const href = lib ? `/series/${r.libraryShowId}` : `https://www.themoviedb.org/tv/${r.showTmdbId}`;
   const className = cn(
@@ -40,41 +48,59 @@ function ScheduleRow({ r, pinned }: { r: NextEpisodeAir; pinned?: boolean }) {
       ? "border-pitflix-primary/35 bg-pitflix-primary/10 hover:border-pitflix-primary/55"
       : "border-pitflix-card/50 bg-pitflix-surface/40 hover:border-pitflix-primary/40",
   );
-  const inner = (
-    <div className="flex w-full items-center justify-between gap-3">
-      <div className="flex min-w-0 flex-1 items-center gap-3">
-        {r.posterUrl ? (
-          <div className="h-14 w-10 shrink-0 overflow-hidden rounded-md bg-pitflix-card">
-            <img src={r.posterUrl} alt="" className="h-full w-full object-cover" />
-          </div>
-        ) : null}
-        <div className="min-w-0">
-          <p className="truncate font-medium text-white">{r.showTitle}</p>
-          <p className="truncate text-xs text-pitflix-subtle">
-            {r.episodeTitle || "Episode"} · S{r.season ?? "?"}E{r.episodeNumber ?? "?"}
-          </p>
-          {r.kind === "followed" ? (
-            <p className="text-[10px] text-amber-200/80">Followed · TMDB</p>
+  return (
+    <div className={className}>
+      <div className="flex w-full items-center justify-between gap-3">
+        <div className="flex min-w-0 flex-1 items-center gap-3">
+          {r.posterUrl ? (
+            <div className="h-14 w-10 shrink-0 overflow-hidden rounded-md bg-pitflix-card">
+              <img src={r.posterUrl} alt="" className="h-full w-full object-cover" />
+            </div>
           ) : null}
+          <div className="min-w-0">
+            <p className="truncate font-medium text-white">{r.showTitle}</p>
+            <p className="truncate text-xs text-pitflix-subtle">
+              {r.episodeTitle || "Episode"} · S{r.season ?? "?"}E{r.episodeNumber ?? "?"}
+            </p>
+            {r.kind === "followed" ? (
+              <p className="text-[10px] text-amber-200/80">Followed · TMDB</p>
+            ) : null}
+          </div>
+        </div>
+        <div className="shrink-0 text-right">
+          <p className="text-[11px] text-pitflix-muted">{r.airDate}</p>
+          <CountdownLine airDate={r.airDate} />
         </div>
       </div>
-      <div className="shrink-0 text-right">
-        <p className="text-[11px] text-pitflix-muted">{r.airDate}</p>
-        <CountdownLine airDate={r.airDate} />
+      <div className="mt-2 flex justify-end gap-2">
+        {lib ? (
+          <Link
+            to={href}
+            className="rounded-md border border-pitflix-card/60 px-2 py-1 text-[11px] text-pitflix-muted hover:text-white"
+          >
+            Open
+          </Link>
+        ) : (
+          <a
+            href={href}
+            target="_blank"
+            rel="noreferrer"
+            className="rounded-md border border-pitflix-card/60 px-2 py-1 text-[11px] text-pitflix-muted hover:text-white"
+          >
+            Open
+          </a>
+        )}
+        {lib && onTogglePin && r.libraryShowId ? (
+          <button
+            type="button"
+            onClick={() => onTogglePin(r.libraryShowId!, !pinned)}
+            className="rounded-md bg-pitflix-primary/20 px-2 py-1 text-[11px] font-semibold text-pitflix-primary hover:bg-pitflix-primary/30"
+          >
+            {pinned ? "Unpin" : "Pin"}
+          </button>
+        ) : null}
       </div>
     </div>
-  );
-  if (!lib) {
-    return (
-      <a href={href} target="_blank" rel="noreferrer" className={className}>
-        {inner}
-      </a>
-    );
-  }
-  return (
-    <Link to={href} className={className}>
-      {inner}
-    </Link>
   );
 }
 
@@ -99,8 +125,8 @@ export function NextEpisodesPage() {
   });
 
   const scheduleQ = useQuery({
-    queryKey: ["home-next-episodes"],
-    queryFn: getNextEpisodesAir,
+    queryKey: ["home-next-episodes", "all"],
+    queryFn: () => getNextEpisodesAirScoped({ view: "all", limit: 200 }),
     staleTime: 60_000,
   });
 
@@ -475,7 +501,12 @@ export function NextEpisodesPage() {
                 </p>
                 <div className="space-y-2">
                   {pinnedSchedule.map((r) => (
-                    <ScheduleRow key={`${r.libraryShowId}-${r.airDate}`} r={r} pinned />
+                    <ScheduleRow
+                      key={`${r.libraryShowId}-${r.airDate}`}
+                      r={r}
+                      pinned
+                      onTogglePin={(id, pin) => (pin ? addPin(id) : removePin(id))}
+                    />
                   ))}
                 </div>
               </div>
@@ -492,6 +523,8 @@ export function NextEpisodesPage() {
                     <ScheduleRow
                       key={`${r.kind ?? "lib"}-${r.showTmdbId}-${r.airDate}-${r.season}-${r.episodeNumber}`}
                       r={r}
+                      pinned={!!(r.libraryShowId && pinnedIds.has(r.libraryShowId))}
+                      onTogglePin={(id, pin) => (pin ? addPin(id) : removePin(id))}
                     />
                   ))}
                 </div>

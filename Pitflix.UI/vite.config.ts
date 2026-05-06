@@ -25,15 +25,15 @@ export default defineConfig(async () => ({
   clearScreen: false,
   // 2. tauri expects a fixed port, fail if that port is not available
   server: {
-    // Avoid 1420: it often falls in Windows TCP excluded ranges (Hyper-V/WSL).
-    port: 5173,
+    // Avoid low ports and 5132–5231: Windows often excludes those (Hyper-V/WSL/VPN).
+    port: 4173,
     strictPort: true,
     host: host || "127.0.0.1",
     hmr: host
       ? {
           protocol: "ws",
           host,
-          port: 5174,
+          port: 4174,
         }
       : undefined,
     watch: {

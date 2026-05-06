@@ -86,8 +86,22 @@ public sealed class PinnedFolderScanService : BackgroundService
         if (distinct.Count == 0)
             return;
 
+        var notifyDesktop = await repo.GetLibraryScanDesktopToastsEnabledAsync(cancellationToken).ConfigureAwait(false);
         var pipeline = new ScanPipeline(new FileScanner(), tmdb, repo);
-        await pipeline.RunScanOnFilesAsync(distinct, new Progress<ScanProgress>(_ => { }), cancellationToken)
+        var progress = new Progress<ScanProgress>(p =>
+        {
+            if (!p.EmitLibraryNotification || string.IsNullOrWhiteSpace(p.LibraryNotificationTitle))
+                return;
+            _ = _scanRuntime.BroadcastAsync(new
+            {
+                type = "libraryNotification",
+                source = "pinnedScan",
+                kind = p.LibraryNotificationKind ?? "",
+                title = p.LibraryNotificationTitle,
+                matched = p.LibraryNotificationMatched
+            }, CancellationToken.None);
+        });
+        await pipeline.RunScanOnFilesAsync(distinct, progress, cancellationToken, libraryNotifications: notifyDesktop)
             .ConfigureAwait(false);
         _ratingsRefreshQueue.TryEnqueueStaleSweep();
     }

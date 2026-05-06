@@ -13,6 +13,7 @@ import {
   ChevronLeft,
   ChevronRight,
   ExternalLink,
+  List,
   ListMusic,
   Maximize2,
   Minimize2,
@@ -24,6 +25,7 @@ import {
   VolumeX,
 } from "lucide-react";
 import { cn } from "../utils/cn";
+import { pickReturnToAfterLibraryNavigation } from "../utils/playbackReturnTo";
 import { getStatusInfo, mapPlaybackStatus } from "../utils/playbackStatus";
 import { sanitizeErrorMessage } from "../utils/sanitizeError";
 import { CinematicPlayerShell } from "../components/player/CinematicPlayerShell";
@@ -51,6 +53,33 @@ import {
   playbackGetSnapshot,
 } from "../playback/playbackApi";
 import { navigateFromPlayer } from "../utils/playerExitNavigation";
+
+type DeviceFsEntry = {
+  name: string;
+  path: string;
+  is_directory: boolean;
+  media_kind?: string | null;
+};
+
+const PLAYER_PLAYLIST_PIN_KEY = "pitflix.player.playlist.pinned.v1";
+
+function fileDisplayTitle(fileName: string): string {
+  return fileName.replace(/\.[^/.]+$/, "").trim() || fileName;
+}
+
+function parentDirectory(filePath: string): string {
+  const s = filePath.trim().replace(/[/\\]+$/, "");
+  const i = Math.max(s.lastIndexOf("\\"), s.lastIndexOf("/"));
+  if (i <= 0) return "";
+  return s.slice(0, i);
+}
+
+function isPlayableSibling(e: DeviceFsEntry): boolean {
+  if (e.is_directory) return false;
+  if (e.media_kind === "video") return true;
+  const n = e.name.toLowerCase();
+  return /\.(mp3|m4a|aac|flac|wav|ogg|opus|wma|mka)$/i.test(n);
+}
 import { isNativeBackendEmbeddedLibmpv, isNativeBackendExternal } from "../utils/playerNativeBackend";
 
 type Player2Event =
@@ -87,9 +116,17 @@ type MpvTrack = {
   selected?: boolean;
 };
 
+type Player2IpcMirror = {
+  time_pos?: number;
+  time_pos_full?: number;
+  duration?: number;
+};
+
 type Player2NativeState = {
   session_active: boolean;
   backend: "libmpv" | "external_mpv" | "none" | string;
+  ipc_mirror?: Player2IpcMirror | null;
+  session_id?: number | null;
   render_frame_count?: number;
   last_render_error?: string | null;
   window_thread_id?: number | null;
@@ -157,6 +194,45 @@ function parseSubtitlePrefs(raw: string | null): PlayerSubtitlePrefs {
   }
 }
 
+const PLAYER_VOLUME_STORAGE_KEY = "pitflix.player.lastVolume.v1";
+const EPISODE_SUB_PICK_STORAGE_KEY = "pitflix.player.episodeSubtitlePick.v1";
+const MAX_EPISODE_SUB_PICKS = 200;
+
+function loadEpSubPickMap(): Record<string, string> {
+  if (typeof localStorage === "undefined") return {};
+  try {
+    const raw = localStorage.getItem(EPISODE_SUB_PICK_STORAGE_KEY);
+    if (!raw) return {};
+    const o = JSON.parse(raw) as Record<string, unknown>;
+    const out: Record<string, string> = {};
+    if (o && typeof o === "object") {
+      for (const [k, v] of Object.entries(o)) {
+        if (typeof v === "string" && v.length > 0) out[k] = v;
+      }
+    }
+    return out;
+  } catch {
+    return {};
+  }
+}
+
+function persistEpSubPick(epKey: string, subVal: string) {
+  if (typeof localStorage === "undefined" || !epKey.startsWith("ep:")) return;
+  const prev = loadEpSubPickMap();
+  delete prev[epKey];
+  const merged: Record<string, string> = { [epKey]: subVal, ...prev };
+  const keys = Object.keys(merged);
+  if (keys.length <= MAX_EPISODE_SUB_PICKS) {
+    localStorage.setItem(EPISODE_SUB_PICK_STORAGE_KEY, JSON.stringify(merged));
+    return;
+  }
+  const trimmed: Record<string, string> = {};
+  for (const k of keys.slice(0, MAX_EPISODE_SUB_PICKS)) {
+    trimmed[k] = merged[k]!;
+  }
+  localStorage.setItem(EPISODE_SUB_PICK_STORAGE_KEY, JSON.stringify(trimmed));
+}
+
 /** Fullscreen auto-hide: idle before fading chrome (ms). Slightly longer while paused. */
 const FS_HIDE_IDLE_MS = 1750;
 const FS_HIDE_PAUSED_MS = 2500;
@@ -165,6 +241,8 @@ const FS_HIDE_PAUSED_MS = 2500;
 const HISTORY_PROGRESS_HEARTBEAT_MS = 5000;
 /** Coalesce rapid seeks / scrub drags before POST /history/…/progress. */
 const SEEK_PROGRESS_FLUSH_DEBOUNCE_MS = 400;
+/** Volume nudge for mouse wheel and Arrow Up/Down (matches footer slider / `SetVolume` steps). */
+const VOLUME_WHEEL_STEP = 5;
 
 /** Appends a line to `%LOCALAPPDATA%\\Pitflix\\pitflix-player-debug.log` (or the OS app log dir). */
 function playerDebugLog(line: string) {
@@ -216,6 +294,25 @@ export function PlayerPage() {
     parseSubtitlePrefs(typeof localStorage !== "undefined" ? localStorage.getItem(SUBTITLE_PREFS_STORAGE_KEY) : null),
   );
   const [externalSubFiles, setExternalSubFiles] = useState<string[]>([]);
+  const [arabicSubtitleGenerating, setArabicSubtitleGenerating] = useState(false);
+  const [arabicSubtitleProgress, setArabicSubtitleProgress] = useState<{ current: number; total: number } | null>(null);
+  const [arabicSubtitleError, setArabicSubtitleError] = useState<string | null>(null);
+  const [folderPlaylistPinned, setFolderPlaylistPinned] = useState<boolean>(() => {
+    try {
+      return localStorage.getItem(PLAYER_PLAYLIST_PIN_KEY) === "true";
+    } catch {
+      return false;
+    }
+  });
+  const [folderPlaylistOpen, setFolderPlaylistOpen] = useState<boolean>(() => {
+    try {
+      return localStorage.getItem(PLAYER_PLAYLIST_PIN_KEY) === "true";
+    } catch {
+      return false;
+    }
+  });
+  const [folderPlaylistEntries, setFolderPlaylistEntries] = useState<DeviceFsEntry[]>([]);
+  const [folderPlaylistBusy, setFolderPlaylistBusy] = useState(false);
   /** True after failed `player2_send` / dead IPC — Play must reopen the session. */
   const [sessionDead, setSessionDead] = useState(false);
   const [isFullscreen, setIsFullscreen] = useState(false);
@@ -239,6 +336,11 @@ export function PlayerPage() {
   const adoptCanonicalPlaybackFromPathRef = useRef<(mediaPath: string) => void>(() => {});
   /** User pressed Back / Escape — skip post-close recovery UI and duplicate navigation. */
   const userInitiatedExitRef = useRef(false);
+  /** External mpv: leaving `/player` to browse should not call `historyStopped` (playback continues). */
+  const skipHistoryStopOnPlayerUnmountRef = useRef(false);
+  const subtitlePickAppliedForEpKeyRef = useRef<string | null>(null);
+  const volumePersistTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const volumeHydratedForHistoryRef = useRef<number | null>(null);
   /** Latest launch state for IPC handlers (avoid stale closures). */
   const launchStateRef = useRef(state);
   // Companion-only bridge: receives mpv-originated shortcut events from Rust and updates app state/route.
@@ -266,6 +368,28 @@ export function PlayerPage() {
     console.info("[pitflix-player]", msg);
     playerDebugLog(msg);
   }, [state, currentEpisodeKey]);
+
+  const currentFolderForPlaylist = useMemo(() => {
+    if (!state?.filePath) return "";
+    return parentDirectory(state.filePath);
+  }, [state?.filePath]);
+
+  useEffect(() => {
+    if (!isTauri()) return;
+    if (!folderPlaylistOpen && !folderPlaylistPinned) return;
+    const dir = currentFolderForPlaylist;
+    if (!dir) return;
+    setFolderPlaylistBusy(true);
+    invoke<DeviceFsEntry[]>("device_read_dir", { path: dir })
+      .then((rows) => setFolderPlaylistEntries((rows ?? []).filter(isPlayableSibling)))
+      .catch(() => setFolderPlaylistEntries([]))
+      .finally(() => setFolderPlaylistBusy(false));
+  }, [currentFolderForPlaylist, folderPlaylistOpen, folderPlaylistPinned]);
+
+  useEffect(() => {
+    if (!folderPlaylistPinned) return;
+    setFolderPlaylistOpen(true);
+  }, [folderPlaylistPinned]);
   /** Throttle state updates in external mode to reduce rerender churn */
   const lastStateUpdateTimeRef = useRef<number>(0);
   const STATE_UPDATE_THROTTLE_MS = 1000; // Only update UI once per second in external mode
@@ -411,10 +535,80 @@ export function PlayerPage() {
     volumeRef.current = volume;
   }, [volume]);
 
-  const flushHistoryProgressNow = useCallback(() => {
+  /** Snap `timePosRef` / `durationRef` from native host mirror or POL before persisting (avoids stale UI-throttled values). */
+  const refreshPlayheadIntoRefs = useCallback(async () => {
+    if (!isTauri()) return;
+    let mirrorTimeSet = false;
+    try {
+      const ns = await invoke<Player2NativeState>("player2_get_state");
+      if (ns.session_active && ns.ipc_mirror) {
+        const m = ns.ipc_mirror;
+        const tf = typeof m.time_pos_full === "number" && Number.isFinite(m.time_pos_full) ? m.time_pos_full : Number.NaN;
+        const tp = num(m.time_pos);
+        const t = Number.isFinite(tf) && tf > 0 ? tf : tp;
+        if (Number.isFinite(t) && t >= 0) {
+          timePosRef.current = t;
+          mirrorTimeSet = true;
+        }
+        const d = num(m.duration);
+        if (d > 0) {
+          durationRef.current = d;
+        }
+      }
+    } catch {
+      /* Host snapshot optional during teardown. */
+    }
+    if (mirrorTimeSet) return;
+    try {
+      const snap = await playbackGetSnapshot();
+      if (Number.isFinite(snap.currentTime) && snap.currentTime >= 0) {
+        timePosRef.current = snap.currentTime;
+      }
+      if (Number.isFinite(snap.duration) && snap.duration > 0) {
+        durationRef.current = snap.duration;
+      }
+    } catch {
+      /* POL optional when idle. */
+    }
+  }, []);
+
+  const flushHistoryProgressNow = useCallback(async () => {
     const hid = historyIdRef.current;
     if (hid == null) return;
     if (historyServerFinalizedRef.current) return;
+    if (sessionDeadRef.current || endedRef.current) return;
+    await refreshPlayheadIntoRefs();
+    const pos = Math.floor(timePosRef.current);
+    const dur = durationRef.current;
+    if (pos < 0) return;
+    lastProgressRef.current = pos;
+    trackProgressSave();
+    void postHistoryProgress(hid, {
+      positionSeconds: pos,
+      durationSeconds: dur > 0 ? Math.floor(dur) : undefined,
+      markWatching: true,
+    });
+    void playbackPersistProgress({ historyId: hid }).catch(() => {});
+    trackQueryInvalidation();
+    void qc.invalidateQueries({ queryKey: ["history"] });
+  }, [qc, refreshPlayheadIntoRefs]);
+
+  const scheduleSeekProgressFlush = useCallback(() => {
+    if (seekProgressFlushTimerRef.current) {
+      clearTimeout(seekProgressFlushTimerRef.current);
+    }
+    seekProgressFlushTimerRef.current = window.setTimeout(() => {
+      seekProgressFlushTimerRef.current = null;
+      void flushHistoryProgressNow().catch(() => {});
+    }, SEEK_PROGRESS_FLUSH_DEBOUNCE_MS);
+  }, [flushHistoryProgressNow]);
+
+  /** Progress checkpoint without ending the watch row — used when leaving `/player` while external mpv keeps playing. */
+  const checkpointWatchProgressNoStop = useCallback(async () => {
+    if (historyServerFinalizedRef.current) return;
+    await refreshPlayheadIntoRefs();
+    const hid = historyIdRef.current;
+    if (hid == null) return;
     if (sessionDeadRef.current || endedRef.current) return;
     const pos = Math.floor(timePosRef.current);
     const dur = durationRef.current;
@@ -429,17 +623,20 @@ export function PlayerPage() {
     void playbackPersistProgress({ historyId: hid }).catch(() => {});
     trackQueryInvalidation();
     void qc.invalidateQueries({ queryKey: ["history"] });
-  }, [qc]);
+  }, [qc, refreshPlayheadIntoRefs]);
 
-  const scheduleSeekProgressFlush = useCallback(() => {
-    if (seekProgressFlushTimerRef.current) {
-      clearTimeout(seekProgressFlushTimerRef.current);
+  const browseWhilePlaying = useCallback(async () => {
+    if (!isTauri()) return;
+    if (!isNativeBackendExternal(nativeStateRef.current?.backend)) return;
+    skipHistoryStopOnPlayerUnmountRef.current = true;
+    await checkpointWatchProgressNoStop();
+    const rt = launchStateRef.current?.returnTo;
+    if (rt?.pathname) {
+      navigate({ pathname: rt.pathname, search: rt.search ?? "", hash: rt.hash ?? "" });
+    } else {
+      navigate("/");
     }
-    seekProgressFlushTimerRef.current = window.setTimeout(() => {
-      seekProgressFlushTimerRef.current = null;
-      flushHistoryProgressNow();
-    }, SEEK_PROGRESS_FLUSH_DEBOUNCE_MS);
-  }, [flushHistoryProgressNow]);
+  }, [navigate, checkpointWatchProgressNoStop]);
 
   useEffect(() => {
     return () => {
@@ -812,9 +1009,7 @@ export function PlayerPage() {
     void openPlayer();
   }, [state, resumeChoice, openPlayer]);
 
-  const flushProgressAndStopRef = useRef<(historyId: number, tPos: number, dur: number) => Promise<void>>(
-    async () => {},
-  );
+  const flushProgressAndStopRef = useRef<(historyId: number) => Promise<void>>(async () => {});
 
   useEffect(() => {
     if (!state) return;
@@ -962,17 +1157,29 @@ export function PlayerPage() {
               dur,
             )}`,
           );
-          navigateFromPlayer(navigate, launch?.returnTo, true);
 
           if (nearFinished && launch?.historyId) {
             setEpisodeFinished(true);
             void dismissHistoryEntry(launch.historyId, true)
               .then(() => qc.invalidateQueries({ queryKey: ["history"] }))
               .catch((e) => console.error("[player] dismiss completed episode", e));
-          } else if (launch?.historyId) {
-            void flushProgressAndStopRef.current(launch.historyId, t, dur).catch(() => {});
-            void playbackPersistProgress({ historyId: launch.historyId }).catch(() => {});
+            navigateFromPlayer(navigate, launch?.returnTo, true);
+            return;
           }
+
+          if (launch?.historyId) {
+            void (async () => {
+              try {
+                await flushProgressAndStopRef.current(launch.historyId);
+                void playbackPersistProgress({ historyId: launch.historyId }).catch(() => {});
+              } finally {
+                navigateFromPlayer(navigate, launch?.returnTo, true);
+              }
+            })();
+            return;
+          }
+
+          navigateFromPlayer(navigate, launch?.returnTo, true);
           return;
         }
 
@@ -1041,17 +1248,20 @@ export function PlayerPage() {
     };
   }, [state, resumeChoice, onFullscreenPointerActivity, navigate, qc]);
 
-  const flushProgressAndStop = useCallback(async (historyId: number, tPos: number, dur: number) => {
+  const flushProgressAndStop = useCallback(async (historyId: number) => {
     if (historyServerFinalizedRef.current) {
       historyStopHandledRef.current = true;
       return;
     }
+    await refreshPlayheadIntoRefs();
+    const tPos = timePosRef.current;
+    const dur = durationRef.current;
     const launch = launchStateRef.current;
     const key = launch ? playbackEpisodeKey(launch) : "none";
     playerDebugLog(`persist_target start key=${key} historyId=${historyId} t=${Math.floor(tPos)} d=${Math.floor(dur)}`);
     const flushStart = performance.now();
     console.log("[close-lag] progress save start");
-    
+
     const pos = Math.floor(tPos);
     if (pos > 0) {
       try {
@@ -1085,7 +1295,7 @@ export function PlayerPage() {
     playerDebugLog(`persist_target done key=${key} historyId=${historyId} t=${Math.floor(tPos)} d=${Math.floor(dur)}`);
     
     historyStopHandledRef.current = true;
-  }, []);
+  }, [refreshPlayheadIntoRefs]);
 
   useEffect(() => {
     flushProgressAndStopRef.current = flushProgressAndStop;
@@ -1098,6 +1308,9 @@ export function PlayerPage() {
     externalClosedHandledRef.current = false;
     episodeSwitchInProgressRef.current = false;
     openedHistoryIdRef.current = null;
+    skipHistoryStopOnPlayerUnmountRef.current = false;
+    subtitlePickAppliedForEpKeyRef.current = null;
+    volumeHydratedForHistoryRef.current = null;
   }, [state?.historyId]);
 
   useEffect(() => {
@@ -1121,6 +1334,7 @@ export function PlayerPage() {
 
   const exitAndClose = useCallback(async () => {
     userInitiatedExitRef.current = true;
+    skipHistoryStopOnPlayerUnmountRef.current = false;
     const launch = launchStateRef.current;
     playerDebugLog(
       `close_request activeKey=${launch ? playbackEpisodeKey(launch) : "none"} t=${Math.floor(timePosRef.current)} d=${Math.floor(
@@ -1128,7 +1342,7 @@ export function PlayerPage() {
       )}`,
     );
     if (launch?.historyId) {
-      await flushProgressAndStop(launch.historyId, timePosRef.current, durationRef.current).catch(() => {});
+      await flushProgressAndStop(launch.historyId).catch(() => {});
     }
     void playbackPersistProgress({ historyId: launch?.historyId ?? undefined }).catch(() => {});
     void playbackCancelNextCountdown().catch(() => {});
@@ -1139,7 +1353,7 @@ export function PlayerPage() {
   useEffect(() => {
     if (!state || resumeChoice === "pending") return;
     if (!ended) return;
-    void flushProgressAndStop(state.historyId, timePosRef.current, durationRef.current);
+    void flushProgressAndStop(state.historyId);
   }, [ended, state, resumeChoice, flushProgressAndStop]);
 
   useEffect(() => {
@@ -1190,14 +1404,25 @@ export function PlayerPage() {
   useEffect(() => {
     const hid = state?.historyId;
     return () => {
-      if (hid != null && !historyStopHandledRef.current) {
-        const pos = Math.floor(timePosRef.current);
-        void historyStopped(hid, {
-          stoppedAt: new Date().toISOString(),
-          positionSeconds: pos > 0 ? pos : undefined,
-        });
+      if (hid == null || historyStopHandledRef.current) return;
+      if (skipHistoryStopOnPlayerUnmountRef.current && isNativeBackendExternal(nativeStateRef.current?.backend)) {
+        skipHistoryStopOnPlayerUnmountRef.current = false;
+        void checkpointWatchProgressNoStop().catch(() => {});
+        return;
       }
+      void flushProgressAndStopRef.current(hid).catch(() => {});
     };
+  }, [state?.historyId, checkpointWatchProgressNoStop]);
+
+  useEffect(() => {
+    const hid = state?.historyId;
+    if (hid == null) return;
+    const onPageHide = () => {
+      if (historyStopHandledRef.current) return;
+      void flushProgressAndStopRef.current(hid).catch(() => {});
+    };
+    window.addEventListener("pagehide", onPageHide);
+    return () => window.removeEventListener("pagehide", onPageHide);
   }, [state?.historyId]);
 
   const send = useCallback(async (cmd: unknown) => {
@@ -1347,6 +1572,42 @@ export function PlayerPage() {
     if (ended || sessionDead) return;
     void send({ type: "SetSubVisibility", payload: !subVisible });
   }, [send, subVisible, ended, sessionDead]);
+  
+  // Arabic Subtitle Generation Handler
+  const generateArabicSubtitle = useCallback(async () => {
+    if (!state?.filePath) {
+      setArabicSubtitleError("No video file path available");
+      return;
+    }
+    
+    setArabicSubtitleGenerating(true);
+    setArabicSubtitleProgress(null);
+    setArabicSubtitleError(null);
+
+    const unlisten = await listen<{ current: number; total: number }>("arabic-subtitle-progress", (event) => {
+      setArabicSubtitleProgress(event.payload);
+    });
+    
+    try {
+      const outputPath = await invoke<string>("generate_arabic_subtitle", {
+        videoPath: state.filePath,
+      });
+      
+      await send({ type: "SubAddSelect", payload: outputPath });
+      
+      setTimeout(() => {
+        setArabicSubtitleGenerating(false);
+        setArabicSubtitleProgress(null);
+      }, 500);
+    } catch (err) {
+      const errorMsg = err instanceof Error ? err.message : String(err);
+      setArabicSubtitleError(errorMsg);
+      setArabicSubtitleGenerating(false);
+      setArabicSubtitleProgress(null);
+    } finally {
+      unlisten();
+    }
+  }, [state?.filePath, send]);
   const setVolumePct = useCallback(
     (v: number) => {
       if (ended || sessionDead) return;
@@ -1369,7 +1630,7 @@ export function PlayerPage() {
       if (blocks) return;
       e.preventDefault();
       e.stopPropagation();
-      const step = e.deltaY < 0 ? 5 : -5;
+      const step = e.deltaY < 0 ? VOLUME_WHEEL_STEP : -VOLUME_WHEEL_STEP;
       setVolumePct(volumeRef.current + step);
     };
     el.addEventListener("wheel", onWheel, { passive: false });
@@ -1385,14 +1646,17 @@ export function PlayerPage() {
       if (blocks) return;
       e.preventDefault();
       e.stopPropagation();
-      const step = e.deltaY < 0 ? 5 : -5;
+      const step = e.deltaY < 0 ? VOLUME_WHEEL_STEP : -VOLUME_WHEEL_STEP;
       setVolumePct(volumeRef.current + step);
     };
     el.addEventListener("wheel", onWheel, { passive: false });
     return () => el.removeEventListener("wheel", onWheel);
   }, [embedReady, ended, sessionDead, setVolumePct]);
 
-  const subTracks = useMemo(() => tracks.filter((t) => t.type === "sub"), [tracks]);
+  const subTracks = useMemo(
+    () => tracks.filter((t) => t.type === "sub" || t.type === "subtitle"),
+    [tracks],
+  );
   const audioTracks = useMemo(() => tracks.filter((t) => t.type === "audio"), [tracks]);
 
   const subMenuValue = useMemo(() => {
@@ -1408,6 +1672,79 @@ export function PlayerPage() {
     }
     return `e:${sid}`;
   }, [sid, subTracks, externalSubFiles]);
+
+  useEffect(() => {
+    if ((!embedReady && !externalReady) || sessionDead || !state) return;
+    const epKey = playbackEpisodeKey(state);
+    if (!epKey.startsWith("ep:")) return;
+    const saved = loadEpSubPickMap()[epKey];
+    if (!saved) return;
+    if (subtitlePickAppliedForEpKeyRef.current === epKey) return;
+    if (subTracks.length === 0 && externalSubFiles.length === 0) return;
+    const matchExt = (val: string) =>
+      val.startsWith("x:") && externalSubFiles.some((p) => `x:${encodeURIComponent(p)}` === val);
+    const matchEmb = (val: string) =>
+      val.startsWith("e:") && subTracks.some((t) => t.id != null && `e:${t.id}` === val);
+    const ok = saved === "" || matchEmb(saved) || matchExt(saved);
+    if (!ok) return;
+    subtitlePickAppliedForEpKeyRef.current = epKey;
+    void (async () => {
+      try {
+        if (saved === "") await send({ type: "SetSid", payload: -1 });
+        else if (saved.startsWith("x:")) {
+          const path = decodeURIComponent(saved.slice(2));
+          await send({ type: "SubAddSelect", payload: path });
+        } else if (saved.startsWith("e:")) {
+          await send({ type: "SetSid", payload: Number(saved.slice(2)) });
+        }
+      } catch {
+        /* send() already surfaced transport failures */
+      }
+    })();
+  }, [embedReady, externalReady, sessionDead, state, subTracks, externalSubFiles, send]);
+
+  useEffect(() => {
+    if (typeof localStorage === "undefined") return;
+    if (!embedReady && !externalReady) return;
+    if (sessionDead) return;
+    if (volumePersistTimerRef.current) clearTimeout(volumePersistTimerRef.current);
+    volumePersistTimerRef.current = window.setTimeout(() => {
+      volumePersistTimerRef.current = null;
+      try {
+        localStorage.setItem(PLAYER_VOLUME_STORAGE_KEY, String(Math.round(volume)));
+      } catch {
+        /* ignore */
+      }
+    }, 400);
+    return () => {
+      if (volumePersistTimerRef.current) {
+        clearTimeout(volumePersistTimerRef.current);
+        volumePersistTimerRef.current = null;
+      }
+    };
+  }, [volume, embedReady, externalReady, sessionDead]);
+
+  useEffect(() => {
+    if (!isTauri()) return;
+    if (!embedReady && !externalReady) return;
+    if (sessionDead || !state) return;
+    if (volumeHydratedForHistoryRef.current === state.historyId) return;
+    volumeHydratedForHistoryRef.current = state.historyId;
+    let parsed = 100;
+    try {
+      const raw = localStorage.getItem(PLAYER_VOLUME_STORAGE_KEY);
+      if (raw != null) {
+        const n = Number(raw);
+        if (Number.isFinite(n)) parsed = Math.min(200, Math.max(0, Math.round(n)));
+      }
+    } catch {
+      /* ignore */
+    }
+    const cur = volumeRef.current;
+    if (Math.abs(parsed - cur) >= 1) {
+      setVolumePct(parsed);
+    }
+  }, [embedReady, externalReady, sessionDead, state?.historyId, setVolumePct]);
 
   const ctxLabel = useMemo(() => {
     if (!state) return "";
@@ -1445,7 +1782,7 @@ export function PlayerPage() {
         const switchMsg = `episode_switch initiated from=${fromKey} to=${toKey} historyId=${state.historyId}`;
         console.info("[pitflix-player]", switchMsg);
         playerDebugLog(switchMsg);
-        await flushProgressAndStop(state.historyId, timePosRef.current, durationRef.current);
+        await flushProgressAndStop(state.historyId);
         if (isTauri()) {
           await invoke("player2_close").catch((e) => logPlayer2InvokeFailure("player2_close", e));
         }
@@ -1472,7 +1809,13 @@ export function PlayerPage() {
             libraryEpisodeId: ep.id,
             season: ep.season,
             episodeNumber: ep.episodeNumber,
-            returnTo: state.returnTo,
+            returnTo: pickReturnToAfterLibraryNavigation(
+              state.returnTo,
+              "Series",
+              undefined,
+              state.libraryShowId,
+              ep.season,
+            ),
           },
         });
       } catch (err) {
@@ -1481,6 +1824,52 @@ export function PlayerPage() {
       }
     },
     [state, navigate, flushProgressAndStop],
+  );
+
+  const navigateToSiblingFile = useCallback(
+    async (entry: DeviceFsEntry) => {
+      if (!state) return;
+      if (!entry?.path || entry.path === state.filePath) return;
+      const fromKey = normalizeMediaPathKey(state.filePath);
+      const toKey = normalizeMediaPathKey(entry.path);
+      episodeSwitchInProgressRef.current = true;
+      try {
+        const switchMsg = `folder_playlist_switch initiated from=${fromKey} to=${toKey} historyId=${state.historyId}`;
+        console.info("[pitflix-player]", switchMsg);
+        playerDebugLog(switchMsg);
+        await flushProgressAndStop(state.historyId);
+        if (isTauri()) {
+          await invoke("player2_close").catch((e) => logPlayer2InvokeFailure("player2_close", e));
+        }
+        const title = fileDisplayTitle(entry.name);
+        const { id: newId } = (await addHistory({
+          filePath: entry.path,
+          title,
+          posterPath: state.posterPath ?? undefined,
+          mediaType: state.mediaType,
+          durationSeconds: 0,
+        })) as { id: number };
+        navigate("/player", {
+          replace: true,
+          state: {
+            historyId: newId,
+            filePath: entry.path,
+            title,
+            posterPath: state.posterPath,
+            mediaType: state.mediaType,
+            durationSeconds: 0,
+            returnTo: state.returnTo,
+          },
+        });
+        if (!folderPlaylistPinned) {
+          setFolderPlaylistOpen(false);
+        }
+      } catch (err) {
+        episodeSwitchInProgressRef.current = false;
+        throw err;
+      }
+    },
+    [state, navigate, flushProgressAndStop, folderPlaylistPinned],
   );
 
   const resolveEpisodeTarget = useCallback(
@@ -1540,7 +1929,7 @@ export function PlayerPage() {
         console.info("[pitflix-player]", startMsg);
         playerDebugLog(startMsg);
 
-        await flushProgressAndStop(state.historyId, timePosRef.current, durationRef.current);
+        await flushProgressAndStop(state.historyId);
         const created = (await addHistory({
           filePath: resolved.filePath,
           title: resolved.title,
@@ -1561,7 +1950,13 @@ export function PlayerPage() {
           libraryEpisodeId: resolved.libraryEpisodeId,
           season: resolved.season,
           episodeNumber: resolved.episodeNumber,
-          returnTo: state.returnTo,
+          returnTo: pickReturnToAfterLibraryNavigation(
+            state.returnTo,
+            resolved.mediaType,
+            resolved.libraryMovieId,
+            resolved.libraryShowId,
+            resolved.season,
+          ),
         };
 
         skipNextOpenForCanonicalSyncRef.current = true;
@@ -1608,6 +2003,13 @@ export function PlayerPage() {
           libraryEpisodeId: resolved.libraryEpisodeId,
           season: resolved.season ?? state.season,
           episodeNumber: resolved.episodeNumber ?? state.episodeNumber,
+          returnTo: pickReturnToAfterLibraryNavigation(
+            state.returnTo,
+            "Series",
+            undefined,
+            resolved.libraryShowId,
+            resolved.season ?? state.season,
+          ),
         };
         skipNextOpenForCanonicalSyncRef.current = true;
         navigate("/player", { replace: true, state: upgraded });
@@ -1680,10 +2082,17 @@ export function PlayerPage() {
             void playPrevious();
             break;
           case "escape":
-            void exitAndClose();
+            if (isNativeBackendExternal(nativeStateRef.current?.backend ?? "")) {
+              void browseWhilePlaying();
+            } else {
+              void exitAndClose();
+            }
             break;
           case "toggle-fullscreen":
             void onFullscreen();
+            break;
+          case "generate_arabic_subtitle":
+            void generateArabicSubtitle();
             break;
           default:
             break;
@@ -1694,7 +2103,7 @@ export function PlayerPage() {
       console.info("[pitflix-player] player2-shortcut listener unmounted");
       void un?.();
     };
-  }, [state, nextEp, prevEp, navigate, onFullscreen, playNext, playPrevious, exitAndClose]);
+  }, [state, nextEp, prevEp, navigate, onFullscreen, playNext, playPrevious, exitAndClose, browseWhilePlaying]);
 
   useEffect(() => {
     console.info("[pitflix-player] web keydown handler mounted (capture)");
@@ -1739,11 +2148,13 @@ export function PlayerPage() {
           break;
         case "ArrowUp":
           e.preventDefault();
-          seekRel(60);
+          e.stopPropagation();
+          setVolumePct(volumeRef.current + VOLUME_WHEEL_STEP);
           break;
         case "ArrowDown":
           e.preventDefault();
-          seekRel(-60);
+          e.stopPropagation();
+          setVolumePct(volumeRef.current - VOLUME_WHEEL_STEP);
           break;
         case "KeyF":
           e.preventDefault();
@@ -1759,6 +2170,13 @@ export function PlayerPage() {
           e.preventDefault();
           e.stopPropagation();
           toggleSub();
+          break;
+        case "KeyB":
+          if (!e.ctrlKey || e.shiftKey || e.altKey) break;
+          e.preventDefault();
+          e.stopPropagation();
+          setSubtitlePref("borderColor", "#000000");
+          setSubtitlePref("borderSize", 3);
           break;
         case "KeyN":
           if (!e.shiftKey) break;
@@ -1777,7 +2195,9 @@ export function PlayerPage() {
           void (async () => {
             const w = getCurrentWindow();
             if (await w.isFullscreen()) await w.setFullscreen(false);
-            else {
+            else if (isNativeBackendExternal(nativeStateRef.current?.backend ?? "")) {
+              void browseWhilePlaying();
+            } else {
               void exitAndClose();
             }
           })();
@@ -1794,6 +2214,7 @@ export function PlayerPage() {
   }, [
     handlePrimaryTransport,
     seekRel,
+    setVolumePct,
     toggleMute,
     toggleSub,
     onFullscreen,
@@ -1803,6 +2224,8 @@ export function PlayerPage() {
     playNext,
     playPrevious,
     exitAndClose,
+    browseWhilePlaying,
+    setSubtitlePref,
   ]);
 
   if (!state) {
@@ -1918,7 +2341,13 @@ export function PlayerPage() {
             <button
               type="button"
               className="rounded-lg px-3 py-1.5 text-sm text-pitflix-text-muted ring-1 ring-white/10 transition-colors hover:bg-white/5 hover:text-pitflix-text-primary"
-              onClick={() => void exitAndClose()}
+              onClick={() => {
+                if (isNativeBackendExternal(nativeStateRef.current?.backend ?? "")) {
+                  void browseWhilePlaying();
+                } else {
+                  void exitAndClose();
+                }
+              }}
             >
               ← Back
             </button>
@@ -1943,16 +2372,48 @@ export function PlayerPage() {
                 !transportError &&
                 (polSeq > 0 ? polSnap.phase !== "ended" && polSnap.phase !== "error" : !effectiveEnded && !effectiveSessionDead);
               return live ? (
-                <PlayerActionButton
-                  variant="primary"
-                  onClick={() => {
-                    void getCurrentWindow().setFocus().catch(() => {});
-                    playerRootRef.current?.focus({ preventScroll: true });
-                  }}
-                >
-                  <ExternalLink className="h-4 w-4" />
-                  Bring mpv to front
-                </PlayerActionButton>
+                <div className="flex flex-wrap items-center justify-center gap-2">
+                  <PlayerActionButton
+                    variant="primary"
+                    onClick={() => {
+                      void getCurrentWindow().setFocus().catch(() => {});
+                      playerRootRef.current?.focus({ preventScroll: true });
+                    }}
+                  >
+                    <ExternalLink className="h-4 w-4" />
+                    Bring mpv to front
+                  </PlayerActionButton>
+                  {isNativeBackendExternal(nativeState?.backend ?? "") ? (
+                    <PlayerActionButton variant="secondary" onClick={() => void browseWhilePlaying()}>
+                      Browse app
+                    </PlayerActionButton>
+                  ) : null}
+                  <PlayerActionButton 
+                    variant="secondary" 
+                    onClick={() => void generateArabicSubtitle()}
+                    disabled={arabicSubtitleGenerating}
+                  >
+                    {arabicSubtitleGenerating ? (
+                      <>
+                        <span className="inline-block animate-spin mr-2">⟳</span>
+                        {arabicSubtitleProgress 
+                          ? `Generating (${arabicSubtitleProgress.current}/${arabicSubtitleProgress.total})...`
+                          : "Generating Arabic..."
+                        }
+                      </>
+                    ) : (
+                      <>
+                        <Captions className="h-4 w-4" />
+                        Generate Arabic Subtitle
+                      </>
+                    )}
+                  </PlayerActionButton>
+                  {arabicSubtitleError && (
+                    <div className="text-sm text-red-400 px-2 py-1 rounded bg-red-500/10 border border-red-500/20">
+                      {arabicSubtitleError}
+                    </div>
+                  )}
+                </div>
               ) : null;
             })()}
           </MediaHeroCard>
@@ -1988,7 +2449,7 @@ export function PlayerPage() {
             </div>
           )}
 
-          {/* Companion page stays metadata/sync only; next/previous live in mpv controls. */}
+          {/* Companion: metadata + sync. External mpv: episode + transport on the mpv bar; use Browse app to use Pitflix while playback continues. */}
         </CinematicPlayerShell>
       ) : (
         /* Legacy Embedded Mode: Original full-screen video layout */
@@ -2028,6 +2489,93 @@ export function PlayerPage() {
             />
           </div>
 
+          {currentFolderForPlaylist && (folderPlaylistOpen || folderPlaylistPinned) ? (
+            <aside
+              className={cn(
+                "absolute bottom-0 right-0 top-0 z-[55] w-[min(22rem,85vw)] border-l border-white/10 bg-black/80 backdrop-blur-md",
+                !isFullscreen || fsControlsVisible ? "opacity-100" : "pointer-events-none opacity-0",
+              )}
+              aria-label="Folder playlist"
+            >
+              <div className="flex items-center justify-between gap-2 border-b border-white/10 px-3 py-2">
+                <div className="min-w-0">
+                  <p className="truncate text-[11px] font-semibold text-white">Folder playlist</p>
+                  <p className="truncate text-[10px] text-pitflix-muted" title={currentFolderForPlaylist}>
+                    {currentFolderForPlaylist}
+                  </p>
+                </div>
+                <div className="flex items-center gap-2">
+                  <label className="flex cursor-pointer items-center gap-1.5 text-[10px] text-pitflix-muted hover:text-white">
+                    <input
+                      type="checkbox"
+                      checked={folderPlaylistPinned}
+                      onChange={(e) => {
+                        const next = e.target.checked;
+                        setFolderPlaylistPinned(next);
+                        try {
+                          localStorage.setItem(PLAYER_PLAYLIST_PIN_KEY, next ? "true" : "false");
+                        } catch {
+                          /* ignore */
+                        }
+                      }}
+                      className="h-3.5 w-3.5 rounded border-white/20"
+                    />
+                    Pin
+                  </label>
+                  <button
+                    type="button"
+                    className="rounded-md border border-white/15 bg-white/5 px-2 py-1 text-[10px] text-white/90 hover:bg-white/10"
+                    onClick={() => {
+                      setFolderPlaylistOpen(false);
+                      if (folderPlaylistPinned) {
+                        setFolderPlaylistPinned(false);
+                        try {
+                          localStorage.setItem(PLAYER_PLAYLIST_PIN_KEY, "false");
+                        } catch {
+                          /* ignore */
+                        }
+                      }
+                    }}
+                  >
+                    Close
+                  </button>
+                </div>
+              </div>
+              <div className="max-h-full overflow-auto p-2">
+                {folderPlaylistBusy ? (
+                  <p className="px-2 py-3 text-xs text-pitflix-muted">Loading…</p>
+                ) : folderPlaylistEntries.length === 0 ? (
+                  <p className="px-2 py-3 text-xs text-pitflix-muted">No playable files found in this folder.</p>
+                ) : (
+                  <div className="space-y-1">
+                    {folderPlaylistEntries.map((e) => {
+                      const active = e.path === state.filePath;
+                      return (
+                        <button
+                          key={e.path}
+                          type="button"
+                          disabled={active}
+                          onClick={() => void navigateToSiblingFile(e)}
+                          className={cn(
+                            "flex w-full items-center justify-between gap-2 rounded-lg border px-2.5 py-2 text-left text-xs transition-colors",
+                            active
+                              ? "border-pitflix-primary/60 bg-pitflix-primary/15 text-white"
+                              : "border-white/10 bg-white/5 text-white/90 hover:bg-white/10",
+                            "disabled:cursor-not-allowed disabled:opacity-60",
+                          )}
+                          title={e.path}
+                        >
+                          <span className="min-w-0 flex-1 truncate">{fileDisplayTitle(e.name)}</span>
+                          {active ? <span className="shrink-0 text-[10px] text-pitflix-light">Now</span> : null}
+                        </button>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+            </aside>
+          ) : null}
+
           <header
             ref={playerHeaderChromeRef}
             className={cn(
@@ -2050,9 +2598,27 @@ export function PlayerPage() {
               <p className="truncate text-sm font-semibold text-white">{state.title}</p>
               <p className="truncate text-[11px] text-pitflix-muted">{ctxLabel}</p>
             </div>
-            <span className="w-[4.5rem] shrink-0 text-right text-[10px] text-pitflix-muted">
-              {getStatusInfo(playbackStatusMapped).label}
-            </span>
+            <div className="flex w-[8.5rem] shrink-0 items-center justify-end gap-2">
+              {currentFolderForPlaylist ? (
+                <button
+                  type="button"
+                  title="Folder playlist"
+                  className={cn(
+                    "inline-flex h-7 items-center gap-1.5 rounded-md border px-2 text-[10px] font-semibold",
+                    folderPlaylistOpen || folderPlaylistPinned
+                      ? "border-pitflix-primary/50 bg-pitflix-primary/15 text-white"
+                      : "border-white/15 bg-white/5 text-pitflix-muted hover:bg-white/10 hover:text-white",
+                  )}
+                  onClick={() => setFolderPlaylistOpen((v) => !v)}
+                >
+                  <List className="h-3.5 w-3.5" />
+                  List
+                </button>
+              ) : null}
+              <span className="shrink-0 text-right text-[10px] text-pitflix-muted">
+                {getStatusInfo(playbackStatusMapped).label}
+              </span>
+            </div>
           </header>
 
           <div
@@ -2138,6 +2704,17 @@ export function PlayerPage() {
               </div>
             ) : null}
             <div className="flex flex-wrap items-center justify-center gap-1">
+              {state.libraryShowId && prevEp !== undefined ? (
+                <button
+                  type="button"
+                  title="Previous episode"
+                  disabled={!prevEp}
+                  className="flex h-8 w-8 items-center justify-center rounded-md bg-white/10 text-white enabled:hover:bg-white/20 disabled:opacity-40"
+                  onClick={() => void playPrevious()}
+                >
+                  <ChevronLeft className="h-4 w-4" strokeWidth={2} />
+                </button>
+              ) : null}
               <button
                 type="button"
                 title={ended || sessionDead ? "Replay" : displayPaused ? "Play" : "Pause"}
@@ -2153,17 +2730,6 @@ export function PlayerPage() {
                   <PauseIcon className="h-4 w-4" fill="currentColor" />
                 )}
               </button>
-              {state.libraryShowId && prevEp !== undefined ? (
-                <button
-                  type="button"
-                  title="Previous episode"
-                  disabled={!prevEp}
-                  className="flex h-8 w-8 items-center justify-center rounded-md bg-white/10 text-white enabled:hover:bg-white/20 disabled:opacity-40"
-                  onClick={() => void playPrevious()}
-                >
-                  <ChevronLeft className="h-4 w-4" strokeWidth={2} />
-                </button>
-              ) : null}
               {state.libraryShowId && nextEp !== undefined ? (
                 <button
                   type="button"
@@ -2175,43 +2741,25 @@ export function PlayerPage() {
                   <ChevronRight className="h-4 w-4" strokeWidth={2} />
                 </button>
               ) : null}
-              <button
-                type="button"
-                title={mute ? "Unmute" : "Mute"}
-                className="flex h-8 w-8 items-center justify-center rounded-md bg-white/10 text-white hover:bg-white/20 disabled:opacity-40"
-                disabled={sessionBlocksTransport}
-                onClick={() => toggleMute()}
-              >
-                {mute ? <VolumeX className="h-4 w-4" /> : <Volume2 className="h-4 w-4" />}
-              </button>
-              <div
-                ref={volumeWheelRef}
-                className="flex min-w-[100px] max-w-[160px] flex-1 items-center gap-1.5 px-1"
-                title="Volume — scroll to adjust"
-              >
-                <input
-                  type="range"
-                  min={0}
-                  max={200}
-                  step={1}
-                  value={Math.round(volume)}
-                  disabled={sessionBlocksTransport}
-                  onPointerDown={() => {
-                    volumeDraggingRef.current = true;
-                  }}
-                  onInput={(e) => setVolumePct(Number(e.currentTarget.value))}
-                  onChange={(e) => setVolumePct(Number(e.currentTarget.value))}
-                  className="h-1.5 w-full cursor-pointer accent-pitflix-primary disabled:opacity-40"
-                />
-              </div>
+
 
               <details className="group relative">
                 <summary
-                  className="flex h-8 cursor-pointer list-none items-center justify-center rounded-md bg-white/10 px-2 text-white marker:content-none hover:bg-white/20 [&::-webkit-details-marker]:hidden"
+                  className="flex cursor-pointer list-none flex-col items-center gap-0.5 marker:content-none outline-none [&::-webkit-details-marker]:hidden"
                   title="Subtitles"
                   onClick={() => onFullscreenPointerActivity()}
                 >
-                  <Captions className={`h-4 w-4 ${subVisible ? "text-pitflix-primary" : "opacity-60"}`} />
+                  <span className="select-none text-[10px] font-medium leading-none text-sky-100/95">Subtitles</span>
+                  <span className="relative inline-flex h-9 w-9 items-center justify-center rounded-lg bg-[#c4b5fd]/40 text-white shadow-[inset_0_1px_0_rgba(255,255,255,0.14)] ring-1 ring-white/25">
+                    <Captions className={`h-4 w-4 ${subVisible ? "text-white" : "text-white/75"}`} strokeWidth={2} />
+                    {subTracks.length + externalSubFiles.length > 0 ? (
+                      <span className="absolute -bottom-1 -right-1 flex h-[18px] min-w-[18px] items-center justify-center rounded-full bg-zinc-950 px-1 text-[10px] font-semibold tabular-nums text-white ring-2 ring-violet-400/55">
+                        {subTracks.length + externalSubFiles.length > 99
+                          ? "99+"
+                          : subTracks.length + externalSubFiles.length}
+                      </span>
+                    ) : null}
+                  </span>
                 </summary>
                 <div className="absolute bottom-0 left-1/2 z-[60] min-w-[240px] -translate-x-1/2 rounded-lg border border-white/10 bg-black/95 p-2 shadow-xl backdrop-blur">
                   <label className="mb-2 flex cursor-pointer items-center gap-2 text-[10px] text-pitflix-muted">
@@ -2232,6 +2780,10 @@ export function PlayerPage() {
                       disabled={sessionBlocksTransport}
                       onChange={(e) => {
                         const v = e.target.value;
+                        const launch = launchStateRef.current;
+                        if (launch && launch.libraryEpisodeId != null && launch.libraryEpisodeId > 0) {
+                          persistEpSubPick(playbackEpisodeKey(launch), v);
+                        }
                         if (v === "") void send({ type: "SetSid", payload: -1 });
                         else if (v.startsWith("x:")) {
                           const path = decodeURIComponent(v.slice(2));
@@ -2258,8 +2810,35 @@ export function PlayerPage() {
                       })}
                     </select>
                   </label>
-                  <div className="mt-2 space-y-2 border-t border-white/10 pt-2">
+                    <div className="mt-2 space-y-2 border-t border-white/10 pt-2">
                     <p className="text-[9px] uppercase tracking-wide text-pitflix-muted">Appearance (live)</p>
+                    <button
+                      type="button"
+                      disabled={sessionBlocksTransport}
+                      className="w-full rounded-md border border-white/15 bg-white/5 px-2 py-1.5 text-[10px] text-white hover:bg-white/10 disabled:opacity-40"
+                      title="Black stroke around text for readability on bright scenes"
+                      onClick={() => {
+                        setSubtitlePref("borderColor", "#000000");
+                        setSubtitlePref("borderSize", 3);
+                      }}
+                    >
+                      Strong subtitle outline
+                    </button>
+                    <div className="border-t border-white/10 pt-2 mt-2">
+                      <p className="text-[9px] uppercase tracking-wide text-pitflix-muted mb-2">Generate Arabic Subtitle</p>
+                      <button
+                        type="button"
+                        disabled={sessionBlocksTransport || arabicSubtitleGenerating}
+                        className="w-full rounded-md border border-pitflix-primary/50 bg-pitflix-primary/10 px-2 py-1.5 text-[10px] text-pitflix-primary hover:bg-pitflix-primary/20 disabled:opacity-40"
+                        title="Extract English subtitle and translate to Arabic using Argos Translate"
+                        onClick={() => void generateArabicSubtitle()}
+                      >
+                        {arabicSubtitleGenerating ? "Generating..." : "Generate Arabic Subtitle"}
+                      </button>
+                      {arabicSubtitleError && (
+                        <p className="mt-1 text-[9px] text-red-400">{arabicSubtitleError}</p>
+                      )}
+                    </div>
                     <div className="grid grid-cols-2 gap-2">
                       <label className="block text-[10px] text-pitflix-muted">
                         Size
@@ -2385,6 +2964,36 @@ export function PlayerPage() {
                   </div>
                 </div>
               </details>
+
+              <button
+                type="button"
+                title={mute ? "Unmute" : "Mute"}
+                className="flex h-8 w-8 items-center justify-center rounded-md bg-white/10 text-white hover:bg-white/20 disabled:opacity-40"
+                disabled={sessionBlocksTransport}
+                onClick={() => toggleMute()}
+              >
+                {mute ? <VolumeX className="h-4 w-4" /> : <Volume2 className="h-4 w-4" />}
+              </button>
+              <div
+                ref={volumeWheelRef}
+                className="flex min-w-[100px] max-w-[160px] flex-1 items-center gap-1.5 px-1"
+                title="Volume — scroll to adjust"
+              >
+                <input
+                  type="range"
+                  min={0}
+                  max={200}
+                  step={1}
+                  value={Math.round(volume)}
+                  disabled={sessionBlocksTransport}
+                  onPointerDown={() => {
+                    volumeDraggingRef.current = true;
+                  }}
+                  onInput={(e) => setVolumePct(Number(e.currentTarget.value))}
+                  onChange={(e) => setVolumePct(Number(e.currentTarget.value))}
+                  className="h-1.5 w-full cursor-pointer accent-pitflix-primary disabled:opacity-40"
+                />
+              </div>
 
               {import.meta.env.DEV && embedReady ? (
                 <details className="group relative">

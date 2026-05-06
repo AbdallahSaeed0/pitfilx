@@ -1,0 +1,13 @@
+{
+  "default": null,
+  "permission": [
+    {
+      "identifier": "allow-my-device",
+      "description": "Read local directories for the My device page",
+      "commands": {
+        "allow": ["device_read_dir"],
+        "deny": []
+      }
+    }
+  ]
+}

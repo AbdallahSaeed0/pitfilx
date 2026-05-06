@@ -8,6 +8,10 @@ public sealed class PrefetchMetadataProgress
     public int MoviesTotal { get; set; }
     public int SeriesTotal { get; set; }
 
+    /// <summary>Titles with <c>MetadataRefreshedAt</c> already set — skipped by this run.</summary>
+    public int MoviesAlreadyCached { get; set; }
+    public int SeriesAlreadyCached { get; set; }
+
     public int Index { get; set; }
     public int ItemTotal { get; set; }
 

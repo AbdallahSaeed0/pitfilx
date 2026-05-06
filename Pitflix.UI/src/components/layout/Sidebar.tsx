@@ -7,6 +7,8 @@ import {
   CirclePlay,
   Clapperboard,
   Film,
+  Globe,
+  HardDrive,
   Home,
   ListVideo,
   PanelLeftClose,
@@ -65,10 +67,12 @@ export function Sidebar() {
     { to: "/series", label: "Series", icon: <Tv className="h-4 w-4 shrink-0" /> },
     { to: "/recommendations", label: "Recommendations", icon: <Sparkles className="h-4 w-4 shrink-0" /> },
     { to: "/trailers", label: "Trailers", icon: <CirclePlay className="h-4 w-4 shrink-0" /> },
+    { to: "/online-stream", label: "Online Streaming (Beta)", icon: <Globe className="h-4 w-4 shrink-0" /> },
     { to: "/next-episodes", label: "Next episodes", icon: <CalendarClock className="h-4 w-4 shrink-0" /> },
     { to: "/awards", label: "Awards", icon: <Trophy className="h-4 w-4 shrink-0" /> },
     { to: "/unmatched", label: "Unmatched", icon: <Clapperboard className="h-4 w-4 shrink-0" /> },
     { to: "/lists", label: "My Lists", icon: <ListVideo className="h-4 w-4 shrink-0" /> },
+    { to: "/my-device", label: "My device", icon: <HardDrive className="h-4 w-4 shrink-0" /> },
     { to: "/stats", label: "Statistics", icon: <BarChart3 className="h-4 w-4 shrink-0" /> },
     { to: "/settings", label: "Settings", icon: <Settings className="h-4 w-4 shrink-0" /> },
   ];
@@ -81,13 +85,26 @@ export function Sidebar() {
       className="flex h-full shrink-0 flex-col overflow-hidden border-r border-pitflix-card bg-pitflix-surface px-2 py-4"
     >
       <div className={cn("mb-4 flex items-center gap-2 px-1", collapsed && "flex-col")}>
-        <span className="truncate text-lg font-bold text-pitflix-primary">Pitflix</span>
+        <AnimatePresence initial={false}>
+          {!collapsed ? (
+            <motion.span
+              key="brand"
+              initial={{ opacity: 0, x: -6 }}
+              animate={{ opacity: 1, x: 0 }}
+              exit={{ opacity: 0, x: -6 }}
+              transition={{ duration: 0.15 }}
+              className="min-w-0 flex-1 truncate text-lg font-semibold tracking-tight text-pitflix-primary"
+            >
+              Pitflix
+            </motion.span>
+          ) : null}
+        </AnimatePresence>
         <button
           type="button"
           onClick={toggleSidebar}
           className={cn(
-            "ml-auto rounded-lg p-1.5 text-pitflix-muted transition-colors hover:bg-pitflix-card hover:text-white",
-            collapsed && "ml-0",
+            "rounded-lg p-1.5 text-pitflix-muted transition-colors hover:bg-pitflix-card hover:text-white",
+            collapsed ? "ml-0" : "ml-auto shrink-0",
           )}
           title={collapsed ? "Expand sidebar" : "Collapse sidebar"}
           aria-expanded={!collapsed}

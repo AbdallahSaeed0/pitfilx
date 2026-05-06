@@ -1,12 +1,9 @@
-import { useEffect, useRef, useState } from "react";
-import { AnimatePresence, motion } from "framer-motion";
 import { Heart } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 import type { MediaCard } from "../../types/media";
 import { cn } from "../../utils/cn";
 import { formatRating, formatYear } from "../../utils/format";
 import { toPosterSrc } from "../../utils/posterSrc";
-import { usePlayback } from "../../hooks/usePlayback";
 import { MediaImage } from "./MediaImage";
 
 export type PosterCardMetaHints = {
@@ -45,53 +42,15 @@ export function PosterCard({
   metaHints,
 }: PosterCardProps) {
   const navigate = useNavigate();
-  const { play } = usePlayback();
   const primary = item.selectedPosterPath || item.posterLocalPath;
   const remote = item.posterRemoteUrl;
   const src = toPosterSrc((primary ?? remote) ?? undefined);
   const fallbackSrc =
     primary && remote && remote !== primary ? toPosterSrc(remote) : undefined;
-  const backdropSrc = toPosterSrc(item.selectedBackdropPath || item.backdropLocalPath || undefined);
-  const playPath = item.mediaFilePath || item.filePath;
-
-  const [hovered, setHovered] = useState(false);
-  const [position, setPosition] = useState<"above" | "below">("above");
-  const cardRef = useRef<HTMLDivElement>(null);
-  const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-
-  useEffect(
-    () => () => {
-      if (timerRef.current) clearTimeout(timerRef.current);
-    },
-    [],
-  );
-
-  const handleMouseEnter = () => {
-    timerRef.current = setTimeout(() => {
-      if (cardRef.current) {
-        const rect = cardRef.current.getBoundingClientRect();
-        // Pick the direction that leaves more room for the popover.
-        // This prevents the hover card from going outside the viewport near top/bottom edges.
-        const estimatedPopoverHeight = 260;
-        const canPlaceBelow = rect.bottom + 8 + estimatedPopoverHeight < window.innerHeight;
-        setPosition(canPlaceBelow ? "below" : "above");
-      }
-      setHovered(true);
-    }, 500);
-  };
-
-  const handleMouseLeave = () => {
-    if (timerRef.current) {
-      clearTimeout(timerRef.current);
-      timerRef.current = null;
-    }
-    setHovered(false);
-  };
 
   const detailPath = mediaType === "Movie" ? `/movie/${item.id}` : `/series/${item.id}`;
   const rating = item.voteAverage ?? 0;
   const yearLabel = formatYear(item.year);
-  const genres = item.genresCsv?.split(",").map((g) => g.trim()).filter(Boolean) ?? [];
 
   const openDetail = () => navigate(detailPath);
 
@@ -106,17 +65,12 @@ export function PosterCard({
 
   return (
     <div
-      ref={cardRef}
       className={cn(
         "group relative shrink-0 cursor-pointer text-left",
         size === "sm" ? "w-[136px]" : "w-[160px]",
         "rounded-xl transition-[transform,filter] duration-200 hover:-translate-y-1",
-        // Popover must paint above cards in following grid rows (stacking order).
-        hovered ? "z-[400]" : "z-0",
         className,
       )}
-      onMouseEnter={handleMouseEnter}
-      onMouseLeave={handleMouseLeave}
     >
       <div
         role="button"
@@ -217,92 +171,6 @@ export function PosterCard({
           Open details
         </button>
       ) : null}
-
-      <AnimatePresence>
-        {hovered ? (
-          <motion.div
-            initial={{ opacity: 0, y: position === "above" ? 8 : -8, scale: 0.96 }}
-            animate={{ opacity: 1, y: 0, scale: 1 }}
-            exit={{ opacity: 0, scale: 0.96 }}
-            transition={{ duration: 0.15 }}
-            className={cn(
-              "absolute z-[410] w-64 max-w-[calc(100vw-32px)] overflow-hidden rounded-xl border border-white/10 bg-pitflix-surface shadow-2xl shadow-black/90",
-              "left-1/2 -translate-x-1/2",
-              position === "above" ? "bottom-[calc(100%+8px)]" : "top-[calc(100%+8px)]",
-              "max-h-[70vh] overflow-y-auto",
-            )}
-            style={{ isolation: "isolate" }}
-            // If the hover card is on top, the underlying PosterCard click won't fire.
-            // Make clicks on the hover card navigate to the selected title.
-            onClick={() => navigate(detailPath)}
-          >
-            <div className="relative h-32 bg-pitflix-card">
-              {backdropSrc ? (
-                <img src={backdropSrc} alt="" className="h-full w-full object-cover" />
-              ) : src ? (
-                <img src={src} alt="" className="h-full w-full object-cover object-top" />
-              ) : null}
-              <div className="absolute inset-0 bg-gradient-to-t from-pitflix-surface to-transparent" />
-              {rating > 0 ? (
-                <div className="absolute right-2 top-2 rounded-md bg-black/70 px-2 py-0.5 text-xs font-medium text-white backdrop-blur-sm">
-                  ⭐ {formatRating(rating)}
-                </div>
-              ) : null}
-            </div>
-
-            <div className="p-3">
-              <h3 className="mb-1 text-sm font-bold leading-tight text-white">{item.title}</h3>
-              <div className="mb-2 flex flex-wrap items-center gap-2 text-xs text-pitflix-muted">
-                <span>{yearLabel}</span>
-                {genres.slice(0, 2).map((g) => (
-                  <span key={g} className="rounded bg-pitflix-card px-1.5 py-0.5 text-pitflix-subtle">
-                    {g}
-                  </span>
-                ))}
-              </div>
-              {item.overview ? (
-                <p className="mb-3 line-clamp-2 text-xs leading-relaxed text-pitflix-muted">{item.overview}</p>
-              ) : null}
-              <div className="flex gap-2">
-                {playPath ? (
-                  <button
-                    type="button"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      void play(
-                        playPath,
-                        item.title,
-                        item.selectedPosterPath || item.posterLocalPath || null,
-                        mediaType,
-                        0,
-                        mediaType === "Movie"
-                          ? { libraryMovieId: item.id }
-                          : { libraryShowId: item.id },
-                      );
-                    }}
-                    className="flex flex-1 items-center justify-center gap-1.5 rounded-lg bg-pitflix-primary py-2 text-xs font-medium text-white transition-colors hover:bg-pitflix-light"
-                  >
-                    ▶ Play
-                  </button>
-                ) : null}
-                <button
-                  type="button"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    navigate(detailPath);
-                  }}
-                  className={cn(
-                    "rounded-lg border border-white/20 px-3 py-2 text-xs text-white transition-colors hover:border-white/40",
-                    playPath ? "" : "flex-1",
-                  )}
-                >
-                  Info
-                </button>
-              </div>
-            </div>
-          </motion.div>
-        ) : null}
-      </AnimatePresence>
     </div>
   );
 }

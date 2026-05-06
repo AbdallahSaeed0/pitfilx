@@ -6,8 +6,7 @@ import api from "../api/client";
 import { addHistory, getHistory, historyStopped } from "../api/history";
 import { getSettings } from "../api/settings";
 import { playbackResumeHintsForKey } from "../playback/playbackApi";
-import type { PlaybackLaunchState } from "../types/playback";
-import type { PlayerReturnTo } from "../types/playback";
+import type { PlaybackLaunchState, PlayerReturnTo } from "../types/playback";
 import { trustedResumeHeadFromRow, type HistoryResumeFields } from "../utils/trustedResume";
 
 let currentHistoryId: number | null = null;
@@ -42,6 +41,8 @@ export type PlayContext = {
   season?: number;
   episodeNumber?: number;
   returnTo?: PlayerReturnTo;
+  /** Omit from Continue watching strip; playback still resumes using full history fetch. */
+  suppressContinueWatching?: boolean;
 };
 
 export function usePlayback() {
@@ -64,7 +65,7 @@ export function usePlayback() {
       clearPlaybackFocusListener();
       currentHistoryId = null;
 
-      const historyRows = (await getHistory(200)) as HistoryResumeFields[];
+      const historyRows = (await getHistory(200, { includeSuppressed: true })) as HistoryResumeFields[];
       const inferredResume = findResumeSeconds(historyRows, filePath);
       const preferred = Number.isFinite(preferredResumeSeconds ?? NaN) ? Math.max(0, preferredResumeSeconds ?? 0) : 0;
 
@@ -102,6 +103,7 @@ export function usePlayback() {
         posterPath: posterPath ?? undefined,
         mediaType,
         durationSeconds,
+        ...(context.suppressContinueWatching === true ? { suppressContinueWatching: true } : {}),
       })) as { id: number };
 
       currentHistoryId = id;
@@ -109,7 +111,19 @@ export function usePlayback() {
       const settings = await getSettings();
       const useBuiltin = isTauri() && settings.useBuiltinPlayer !== false;
 
+      const captureScrollForReturn = (): Pick<PlayerReturnTo, "scrollY" | "mainScrollTop"> => {
+        if (typeof window === "undefined" || typeof document === "undefined") return {};
+        const main = document.querySelector("main");
+        const mainScrollTop =
+          main instanceof HTMLElement && Number.isFinite(main.scrollTop) ? main.scrollTop : undefined;
+        return {
+          scrollY: window.scrollY,
+          mainScrollTop,
+        };
+      };
+
       if (useBuiltin) {
+        const scrollCapture = captureScrollForReturn();
         const state: PlaybackLaunchState = {
           historyId: id,
           filePath,
@@ -127,7 +141,7 @@ export function usePlayback() {
             pathname: location.pathname,
             search: location.search || undefined,
             hash: location.hash || undefined,
-            scrollY: typeof window !== "undefined" ? window.scrollY : undefined,
+            ...scrollCapture,
           },
         };
         navigate("/player", { state });

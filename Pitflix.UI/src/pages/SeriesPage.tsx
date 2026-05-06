@@ -13,9 +13,12 @@ import { useSeriesList } from "../hooks/useSeries";
 import { useDebounce } from "../hooks/useDebounce";
 import { PosterCard } from "../components/ui/PosterCard";
 import { Pagination } from "../components/ui/Pagination";
-import { Spinner } from "../components/ui/Spinner";
+import { LibraryGridSkeleton } from "../components/ui/LibraryGridSkeleton";
+import { LibrarySearchField } from "../components/ui/LibrarySearchField";
+import { ScrollReveal } from "../components/ui/ScrollReveal";
 import type { MediaCard } from "../types/media";
 import { cn } from "../utils/cn";
+import { isFavoritesListName } from "../utils/listMarks";
 import { COMMON_GENRES } from "../data/commonGenres";
 
 export function SeriesPage() {
@@ -47,9 +50,21 @@ export function SeriesPage() {
   const [selectedIds, setSelectedIds] = useState<Set<number>>(() => new Set());
   const [markBusy, setMarkBusy] = useState(false);
 
-  const { data: stats } = useQuery({ queryKey: ["stats"], queryFn: getStats });
-  const { data: lists } = useQuery({ queryKey: ["lists"], queryFn: getLists, staleTime: 60_000 });
-  const favoritesList = lists?.find((l) => l.name.includes("Favorites"));
+  const { data: stats } = useQuery({
+    queryKey: ["stats"],
+    queryFn: getStats,
+    staleTime: 900_000,
+    refetchOnMount: false,
+    refetchOnWindowFocus: false,
+  });
+  const { data: lists } = useQuery({
+    queryKey: ["lists"],
+    queryFn: getLists,
+    staleTime: 900_000,
+    refetchOnMount: false,
+    refetchOnWindowFocus: false,
+  });
+  const favoritesList = lists?.find((l) => isFavoritesListName(l.name));
   const { data: favoriteTmdbIds = [] } = useQuery({
     queryKey: ["list-tmdb-ids", favoritesList?.id, "Series"],
     queryFn: () => getListTmdbIds(favoritesList!.id, "Series"),
@@ -59,7 +74,7 @@ export function SeriesPage() {
   const englishCount = stats?.englishSeries ?? 0;
   const arabicCount = stats?.arabicSeries ?? 0;
 
-  const { data, isLoading } = useSeriesList({
+  const { data, isPending, isPlaceholderData } = useSeriesList({
     page,
     pageSize,
     lang,
@@ -295,20 +310,14 @@ export function SeriesPage() {
       </div>
 
       <div className="mb-6 flex flex-wrap gap-3">
-        <div className="relative min-w-48 flex-1">
-          <span className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-sm text-pitflix-subtle">
-            🔍
-          </span>
-          <input
-            value={search}
-            onChange={(e) => {
-              setSearch(e.target.value);
-              setPage(1);
-            }}
-            placeholder="Search titles..."
-            className="w-full rounded-xl border border-pitflix-card bg-pitflix-card py-2.5 pl-9 pr-4 text-sm text-white placeholder:text-pitflix-subtle transition-colors focus:border-pitflix-primary focus:outline-none"
-          />
-        </div>
+        <LibrarySearchField
+          value={search}
+          onChange={(v) => {
+            setSearch(v);
+            setPage(1);
+          }}
+          placeholder="Search series…"
+        />
         <select
           value={sort}
           onChange={(e) => {
@@ -352,27 +361,27 @@ export function SeriesPage() {
         </select>
       </div>
 
-      {isLoading ? (
-        <div className="flex justify-center py-20">
-          <Spinner />
-        </div>
+      {isPending && !isPlaceholderData ? (
+        <LibraryGridSkeleton />
       ) : (
         <>
-          <div className="grid grid-cols-2 gap-x-6 gap-y-10 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 2xl:grid-cols-7">
-            {((data?.items ?? []) as MediaCard[]).map((s) => (
-              <PosterCard
-                key={s.id}
-                item={s}
-                mediaType="Series"
-                className="justify-self-center"
-                isFavorite={favoriteSet.has(s.tmdbId)}
-                selectionMode={selectionMode}
-                selected={selectedIds.has(s.id)}
-                onToggleSelect={() => toggleSelect(s.id)}
-              />
-            ))}
-          </div>
-          <div className="mt-8">
+          <ScrollReveal>
+            <div className="grid grid-cols-2 gap-x-6 gap-y-10 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 2xl:grid-cols-7">
+              {((data?.items ?? []) as MediaCard[]).map((s) => (
+                <PosterCard
+                  key={s.id}
+                  item={s}
+                  mediaType="Series"
+                  className="justify-self-center"
+                  isFavorite={favoriteSet.has(s.tmdbId)}
+                  selectionMode={selectionMode}
+                  selected={selectedIds.has(s.id)}
+                  onToggleSelect={() => toggleSelect(s.id)}
+                />
+              ))}
+            </div>
+          </ScrollReveal>
+          <ScrollReveal className="mt-8">
             <Pagination
               currentPage={data?.currentPage ?? page}
               totalPages={data?.totalPages ?? 1}
@@ -380,7 +389,7 @@ export function SeriesPage() {
               pageSize={pageSize}
               onPageChange={setPage}
             />
-          </div>
+          </ScrollReveal>
         </>
       )}
     </div>

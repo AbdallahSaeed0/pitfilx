@@ -1,11 +1,14 @@
 import type { AwardCategory } from "../../api/awards";
+import type { LibraryTmdbIndex } from "../../hooks/useLibraryTmdbIndex";
 import { AwardNomineeCard } from "./AwardNomineeCard";
 
 export type AwardCategorySectionProps = {
   category: AwardCategory;
+  ceremonyYear: number;
+  libraryIndex?: LibraryTmdbIndex | null;
 };
 
-export function AwardCategorySection({ category }: AwardCategorySectionProps) {
+export function AwardCategorySection({ category, ceremonyYear, libraryIndex }: AwardCategorySectionProps) {
   const winners = category.nominees.filter((n) => n.winner).length;
 
   return (
@@ -23,13 +26,28 @@ export function AwardCategorySection({ category }: AwardCategorySectionProps) {
               {winners} winner{winners === 1 ? "" : "s"}
             </span>
           ) : null}
+          {category.completeness === "winner_only" ? (
+            <span className="rounded-md border border-sky-400/25 bg-sky-500/10 px-2 py-0.5 font-semibold text-sky-100/90">
+              Winner only
+            </span>
+          ) : null}
+          {category.completeness === "incomplete" || category.completeness === "empty" ? (
+            <span className="rounded-md border border-rose-400/25 bg-rose-500/10 px-2 py-0.5 font-semibold text-rose-100/90">
+              {category.completeness === "empty" ? "No nominees" : "Incomplete data"}
+            </span>
+          ) : null}
         </div>
       </header>
 
       <ul className="flex flex-col gap-2">
         {category.nominees.map((n, i) => (
-          <li key={`${n.title}-${i}`}>
-            <AwardNomineeCard nominee={n} listIndex={i} />
+          <li key={`${category.id}-${n.title}-${i}`}>
+            <AwardNomineeCard
+              nominee={n}
+              listIndex={i}
+              ceremonyYear={ceremonyYear}
+              libraryIndex={libraryIndex}
+            />
           </li>
         ))}
       </ul>

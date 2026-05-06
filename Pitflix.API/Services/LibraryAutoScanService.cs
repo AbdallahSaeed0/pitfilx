@@ -86,9 +86,23 @@ public sealed class LibraryAutoScanService : BackgroundService
         if (distinct.Count == 0)
             return;
 
+        var notifyDesktop = await repo.GetLibraryScanDesktopToastsEnabledAsync(cancellationToken).ConfigureAwait(false);
         var pipeline = new ScanPipeline(new FileScanner(), tmdb, repo);
-        var progress = new Progress<ScanProgress>(_ => { });
-        await pipeline.RunScanOnFilesAsync(distinct, progress, cancellationToken).ConfigureAwait(false);
+        var progress = new Progress<ScanProgress>(p =>
+        {
+            if (!p.EmitLibraryNotification || string.IsNullOrWhiteSpace(p.LibraryNotificationTitle))
+                return;
+            _ = _scanRuntime.BroadcastAsync(new
+            {
+                type = "libraryNotification",
+                source = "libraryScan",
+                kind = p.LibraryNotificationKind ?? "",
+                title = p.LibraryNotificationTitle,
+                matched = p.LibraryNotificationMatched
+            }, CancellationToken.None);
+        });
+        await pipeline.RunScanOnFilesAsync(distinct, progress, cancellationToken, libraryNotifications: notifyDesktop)
+            .ConfigureAwait(false);
         _ratingsRefreshQueue.TryEnqueueStaleSweep();
     }
 }

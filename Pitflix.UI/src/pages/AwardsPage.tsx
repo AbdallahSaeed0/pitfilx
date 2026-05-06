@@ -5,7 +5,7 @@ import { getAwardsCatalog } from "../api/awards";
 import { MediaImage } from "../components/ui/MediaImage";
 import { Spinner } from "../components/ui/Spinner";
 import { cn } from "../utils/cn";
-import { getAwardBrandingImageSrc } from "../utils/awardBranding";
+import { getAwardBrandingFallbackSrc, getAwardBrandingImageSrc } from "../utils/awardBranding";
 import { toPosterSrc } from "../utils/posterSrc";
 
 export function AwardsPage() {
@@ -29,48 +29,48 @@ export function AwardsPage() {
   const list = q.data ?? [];
 
   return (
-    <div className="mx-auto max-w-5xl space-y-8 pb-12">
+    <div className="mx-auto max-w-3xl space-y-8 pb-12">
       <div>
-        <h1 className="flex items-center gap-2 text-3xl font-bold text-white">
-          <Trophy className="h-8 w-8 text-amber-300/90" />
+        <h1 className="flex items-center gap-2 text-2xl font-bold text-white sm:text-3xl">
+          <Trophy className="h-7 w-7 text-amber-300/90 sm:h-8 sm:w-8" />
           Awards
         </h1>
-        <p className="mt-2 max-w-2xl text-sm text-pitflix-subtle">
-          Edition rosters ship as local JSON. Nominee posters use curated TMDB ids or strict title-and-year matching —
-          weak matches show a neutral placeholder instead of wrong art. Hub cards use ceremony branding, not random film
-          posters.
+        <p className="mt-2 max-w-xl text-sm text-pitflix-subtle">
+          Jump into a ceremony, pick a year, then open trailers, streaming, library details, and lists from each nominee.
         </p>
       </div>
 
-      <div className="grid gap-5 sm:grid-cols-2">
+      <div className="flex flex-col gap-3">
         {list.map((a) => {
           const branding = getAwardBrandingImageSrc(a.id);
+          const brandFallback = toPosterSrc(getAwardBrandingFallbackSrc(a.id));
           const poster = toPosterSrc(branding ?? a.eventPosterUrl ?? undefined);
           return (
             <Link
               key={a.id}
               to={`/awards/${encodeURIComponent(a.id)}`}
               className={cn(
-                "group relative flex min-h-[168px] overflow-hidden rounded-2xl border border-white/10 shadow-lg transition-all hover:border-pitflix-primary/45 hover:shadow-pitflix-primary/10",
+                "group relative flex min-h-[72px] overflow-hidden rounded-xl border border-white/10 shadow-md transition-all hover:border-pitflix-primary/45 hover:shadow-lg hover:shadow-pitflix-primary/10 sm:min-h-[88px]",
               )}
               style={{
                 borderLeftWidth: 4,
                 borderLeftColor: a.accent ?? "#c9a227",
               }}
             >
-              <div className="absolute inset-0 bg-gradient-to-br from-pitflix-surface to-pitflix-bg" />
-              <div className="relative z-[1] flex w-full items-stretch gap-4 p-5">
+              <div className="absolute inset-0 bg-gradient-to-r from-pitflix-surface to-pitflix-bg" />
+              <div className="relative z-[1] flex w-full items-center gap-4 px-4 py-3 sm:px-5">
                 <MediaImage
                   src={poster}
+                  fallbackSrc={brandFallback}
                   alt=""
-                  className="hidden w-[88px] shrink-0 overflow-hidden rounded-lg border border-white/10 bg-black/40 object-cover shadow-md sm:block sm:h-[124px]"
+                  className="hidden h-[52px] w-[52px] shrink-0 overflow-hidden rounded-lg border border-white/10 bg-zinc-950 object-cover shadow sm:block sm:h-14 sm:w-14"
                   fallbackText={a.name.slice(0, 2)}
                 />
-                <div className="flex min-w-0 flex-1 flex-col justify-center gap-1">
-                  <h2 className="text-lg font-semibold text-white group-hover:text-pitflix-primary">{a.name}</h2>
-                  {a.subtitle ? <p className="text-xs text-pitflix-muted/95">{a.subtitle}</p> : null}
+                <div className="flex min-w-0 flex-1 flex-col justify-center gap-0.5">
+                  <h2 className="text-base font-semibold text-white group-hover:text-pitflix-primary sm:text-lg">{a.name}</h2>
+                  {a.subtitle ? <p className="line-clamp-2 text-xs text-pitflix-muted">{a.subtitle}</p> : null}
                 </div>
-                <ChevronRight className="mt-1 h-5 w-5 shrink-0 self-center text-white/70 transition-transform group-hover:translate-x-0.5 group-hover:text-white" />
+                <ChevronRight className="h-5 w-5 shrink-0 self-center text-white/60 transition-transform group-hover:translate-x-0.5 group-hover:text-white" />
               </div>
             </Link>
           );

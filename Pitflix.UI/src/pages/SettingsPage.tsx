@@ -2,13 +2,12 @@ import { isTauri } from "@tauri-apps/api/core";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import axios from "axios";
 import { Eye, EyeOff } from "lucide-react";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { open } from "@tauri-apps/plugin-dialog";
 import {
   cleanupLibrary,
   cleanupMissingFiles,
   type LibraryTitleRow,
-  prefetchLibraryMetadataStream,
   refreshLibraryArtwork,
   removeLibraryMovie,
   removeLibraryShow,
@@ -43,6 +42,7 @@ import { ConfirmDialog } from "../components/ui/ConfirmDialog";
 import { getDesktopAutostartState, isWindowsHost, setDesktopAutostart } from "../utils/autostart";
 import { AppUpdateSection } from "../components/updater/AppUpdateSection";
 import { cn } from "../utils/cn";
+import { useBackgroundTasks } from "../context/BackgroundTasksContext";
 
 type SettingsTab = "library" | "stats" | "providers" | "playback" | "app" | "maintenance";
 
@@ -68,6 +68,14 @@ function formatScanOrApiError(err: unknown): string {
 
 export function SettingsPage() {
   const qc = useQueryClient();
+  const {
+    awardsStatus,
+    libraryPrefetch,
+    requestAwardsPreload,
+    requestAwardsClear,
+    startLibraryMetadataPrefetch,
+    stopLibraryMetadataPrefetch,
+  } = useBackgroundTasks();
   const { data, isLoading } = useQuery({ queryKey: ["settings"], queryFn: getSettings });
   const { data: watchStats } = useQuery({ queryKey: ["stats"], queryFn: getStats });
   const { data: playerCandidates } = useQuery({
@@ -98,12 +106,6 @@ export function SettingsPage() {
   const [scanMessage, setScanMessage] = useState<string | null>(null);
   const [artworkBusy, setArtworkBusy] = useState(false);
   const [artworkMessage, setArtworkMessage] = useState<string | null>(null);
-  const [prefetchBusy, setPrefetchBusy] = useState(false);
-  const [prefetchMessage, setPrefetchMessage] = useState<string | null>(null);
-  const [prefetchPct, setPrefetchPct] = useState(0);
-  const [prefetchLiveLine, setPrefetchLiveLine] = useState("");
-  const [prefetchLog, setPrefetchLog] = useState<string[]>([]);
-  const prefetchAbortRef = useRef<AbortController | null>(null);
   const [maintMessage, setMaintMessage] = useState<string | null>(null);
   const [ratingsMaintKey, setRatingsMaintKey] = useState("");
   const [ratingsBackfillBusy, setRatingsBackfillBusy] = useState(false);
@@ -119,10 +121,13 @@ export function SettingsPage() {
   const [playerMessage, setPlayerMessage] = useState<string | null>(null);
   const [useBuiltinPlayer, setUseBuiltinPlayer] = useState(true);
   const [builtinBusy, setBuiltinBusy] = useState(false);
+  const [libraryScanDesktopToasts, setLibraryScanDesktopToasts] = useState(true);
+  const [scanToastsBusy, setScanToastsBusy] = useState(false);
   const [removeOpen, setRemoveOpen] = useState(false);
   const [removeBrowseKind, setRemoveBrowseKind] = useState<null | "movies" | "series">(null);
   const [pendingRemove, setPendingRemove] = useState<RemoveTitlePick | null>(null);
   const [resetDbInfoOpen, setResetDbInfoOpen] = useState(false);
+  const [awardsClearConfirmOpen, setAwardsClearConfirmOpen] = useState(false);
   const [removeQuery, setRemoveQuery] = useState("");
   const removeQ = useDebounce(removeQuery, 300);
   const [searchHits, setSearchHits] = useState<{ movies: LibraryTitleRow[]; shows: LibraryTitleRow[] } | null>(
@@ -155,6 +160,12 @@ export function SettingsPage() {
     if (!data) return;
     const u = (data as { useBuiltinPlayer?: boolean }).useBuiltinPlayer;
     setUseBuiltinPlayer(u !== false);
+  }, [data]);
+
+  useEffect(() => {
+    if (!data) return;
+    const t = (data as { libraryScanDesktopToasts?: boolean }).libraryScanDesktopToasts;
+    setLibraryScanDesktopToasts(t !== false);
   }, [data]);
 
   useEffect(() => {
@@ -681,6 +692,33 @@ export function SettingsPage() {
           </section>
 
           <section className="rounded-xl border border-white/8 bg-pitflix-surface/35 p-4 shadow-md shadow-black/20">
+            <h2 className="text-sm font-semibold text-white">Scan desktop toasts</h2>
+            <p className="mt-1 text-[10px] leading-relaxed text-pitflix-subtle">
+              When pinned folders or the hourly library pass indexes something, Pitflix can show a small notification
+              (matched vs needs review). Turn this off if you don’t want those popups; scans still run in the background.
+              Toasts show at most once per file path once it’s already in the scan log.
+            </p>
+            <label className="mt-3 flex cursor-pointer items-center gap-2 text-xs text-white">
+              <input
+                type="checkbox"
+                checked={libraryScanDesktopToasts}
+                disabled={scanToastsBusy}
+                onChange={(e) => {
+                  const next = e.target.checked;
+                  setLibraryScanDesktopToasts(next);
+                  setScanToastsBusy(true);
+                  void saveSettings({ libraryScanDesktopToasts: next })
+                    .then(() => refetchSettings())
+                    .catch(() => setLibraryScanDesktopToasts(!next))
+                    .finally(() => setScanToastsBusy(false));
+                }}
+                className="h-4 w-4 rounded border-pitflix-card"
+              />
+              Notify when background scan adds or updates a discovery
+            </label>
+          </section>
+
+          <section className="rounded-xl border border-white/8 bg-pitflix-surface/35 p-4 shadow-md shadow-black/20">
             <div className="flex items-center justify-between gap-2">
               <h2 className="text-sm font-semibold text-white">Excluded folders</h2>
               <button
@@ -1179,6 +1217,10 @@ export function SettingsPage() {
                 <p className="mb-1.5 text-[10px] font-semibold uppercase tracking-wide text-pitflix-muted">
                   Trailers
                 </p>
+                <p className="mb-2 text-[11px] leading-snug text-pitflix-muted">
+                  Ingestion runs automatically on a schedule while the API is running. Use the button below when you
+                  want an immediate refresh.
+                </p>
                 <button
                   type="button"
                   disabled={trailerIngestionBusy}
@@ -1203,6 +1245,75 @@ export function SettingsPage() {
                 </button>
                 {trailerIngestionMsg ? (
                   <p className="mt-2 text-[11px] leading-snug text-blue-100">{trailerIngestionMsg}</p>
+                ) : null}
+              </div>
+              <div className="col-span-2 rounded-lg border border-amber-500/25 bg-amber-950/10 px-3 py-2.5">
+                <p className="mb-1.5 text-[10px] font-semibold uppercase tracking-wide text-pitflix-muted">
+                  Awards data cache
+                </p>
+                <p className="mb-2 text-[11px] leading-snug text-pitflix-muted">
+                  Starts a background job that fills missing nominee rows and refreshes stored details from TMDB (new
+                  editions and updates are picked up from the awards catalog). Existing rows are merged in place — nothing
+                  is wiped unless you clear the cache. Full runs can take several minutes and need a valid TMDB key. While a
+                  job runs, progress appears in the floating panel at the bottom of the app (visible on every page).
+                </p>
+                <div className="flex flex-wrap gap-2">
+                  <button
+                    type="button"
+                    className="h-9 rounded-lg border border-amber-500/40 bg-pitflix-bg px-2.5 text-xs font-medium text-amber-100 hover:bg-amber-500/10"
+                    onClick={() => {
+                      setMaintMessage(null);
+                      void requestAwardsPreload()
+                        .then((r) => {
+                          setMaintMessage(
+                            r.started
+                              ? "Awards cache update started — watch the bottom progress panel."
+                              : "An update is already running — progress is in the bottom panel.",
+                          );
+                        })
+                        .catch((err) => setMaintMessage(formatScanOrApiError(err)));
+                    }}
+                  >
+                    Update awards cache
+                  </button>
+                  <button
+                    type="button"
+                    className="h-9 rounded-lg border border-zinc-600/50 bg-pitflix-bg px-2.5 text-xs font-medium text-zinc-200 hover:bg-zinc-800/80"
+                    onClick={() => {
+                      setMaintMessage(null);
+                      setAwardsClearConfirmOpen(true);
+                    }}
+                  >
+                    Clear Awards Cache
+                  </button>
+                </div>
+                {awardsStatus ? (
+                  <div className="mt-2 space-y-1 rounded-md border border-white/5 bg-black/20 px-2 py-1.5 text-[10px] text-pitflix-subtle">
+                    <p>
+                      <span className="text-pitflix-muted">Phase:</span> {awardsStatus.phase}
+                      {awardsStatus.running ? " (running)" : ""}
+                    </p>
+                    <p>
+                      <span className="text-pitflix-muted">Progress:</span> {awardsStatus.processedNominees} /{" "}
+                      {awardsStatus.totalNominees} nominees
+                    </p>
+                    <p>
+                      <span className="text-pitflix-muted">Rows written:</span> {awardsStatus.successCount} ·{" "}
+                      <span className="text-pitflix-muted">Failed (nominees):</span> {awardsStatus.failedCount}
+                    </p>
+                    <p>
+                      <span className="text-pitflix-muted">DB rows:</span> {awardsStatus.cachedRowCount}
+                    </p>
+                    {awardsStatus.awardId ? (
+                      <p>
+                        <span className="text-pitflix-muted">Current:</span> {awardsStatus.awardId} · {awardsStatus.year}{" "}
+                        {awardsStatus.categoryId ? ` · ${awardsStatus.categoryId}` : ""}
+                      </p>
+                    ) : null}
+                    {awardsStatus.lastError ? (
+                      <p className="text-rose-200/90">Last error: {awardsStatus.lastError}</p>
+                    ) : null}
+                  </div>
                 ) : null}
               </div>
               <div className="col-span-2 rounded-lg border border-violet-500/20 bg-violet-950/15 px-3 py-2.5">
@@ -1380,112 +1491,48 @@ export function SettingsPage() {
                 🔁 Reset DB
               </button>
               <div className="col-span-2 flex flex-col gap-2">
+                <p className="text-[11px] leading-snug text-pitflix-muted">
+                  Only downloads metadata for titles that have never completed a prefetch (empty{" "}
+                  <span className="font-mono text-[10px]">MetadataRefreshedAt</span> in the library DB). Titles already
+                  prefetched are skipped and shown as counts. Progress stays in the floating panel at the bottom if you
+                  navigate away.
+                </p>
                 <div className="flex gap-2">
                   <button
                     type="button"
-                    disabled={prefetchBusy}
+                    disabled={libraryPrefetch.running}
                     className="h-10 min-w-0 flex-1 rounded-lg border border-emerald-600/35 bg-pitflix-bg text-xs font-medium text-emerald-100 hover:bg-emerald-600/10 disabled:opacity-50"
-                    onClick={() => {
-                      prefetchAbortRef.current?.abort();
-                      const ac = new AbortController();
-                      prefetchAbortRef.current = ac;
-                      setPrefetchMessage(null);
-                      setPrefetchPct(0);
-                      setPrefetchLiveLine("");
-                      setPrefetchLog([]);
-                      setPrefetchBusy(true);
-                      let moviesTotal = 0;
-                      let seriesTotal = 0;
-                      const pushLog = (s: string) =>
-                        setPrefetchLog((prev) => [...prev.slice(-60), s].slice(-60));
-                      void prefetchLibraryMetadataStream(
-                        (ev) => {
-                          if (ev.phase === "start") {
-                            moviesTotal = ev.moviesTotal;
-                            seriesTotal = ev.seriesTotal;
-                            setPrefetchLiveLine(
-                              `Starting: ${ev.moviesTotal} movies, ${ev.seriesTotal} series…`,
-                            );
-                            return;
-                          }
-                          if (ev.phase === "movie") {
-                            const tot = moviesTotal + seriesTotal;
-                            setPrefetchPct(tot > 0 ? Math.min(100, (ev.index / tot) * 100) : 0);
-                            const st = `${ev.ok ? "OK" : "Failed"} — ${ev.title ?? `#${ev.libraryId}`}`;
-                            setPrefetchLiveLine(`Movie ${ev.index}/${ev.itemTotal}: ${st}`);
-                            pushLog(`Movie ${ev.index}/${ev.itemTotal}: ${ev.title ?? ev.libraryId} — ${ev.ok ? "OK" : ev.error ?? "fail"}`);
-                            return;
-                          }
-                          if (ev.phase === "series") {
-                            const tot = moviesTotal + seriesTotal;
-                            setPrefetchPct(
-                              tot > 0
-                                ? Math.min(100, ((moviesTotal + ev.index) / tot) * 100)
-                                : 0,
-                            );
-                            const st = `${ev.ok ? "OK" : "Failed"} — ${ev.title ?? `#${ev.libraryId}`}`;
-                            setPrefetchLiveLine(`Series ${ev.index}/${ev.itemTotal}: ${st}`);
-                            pushLog(`Series ${ev.index}/${ev.itemTotal}: ${ev.title ?? ev.libraryId} — ${ev.ok ? "OK" : ev.error ?? "fail"}`);
-                            return;
-                          }
-                          if (ev.phase === "done") {
-                            setPrefetchPct(100);
-                            const nErr = ev.errors?.length ?? 0;
-                            setPrefetchMessage(
-                              `Finished: ${ev.moviesOk} movies, ${ev.seriesOk} series cached.${nErr > 0 ? ` ${nErr} title(s) had errors.` : ""}`,
-                            );
-                            setPrefetchLiveLine("");
-                            void qc.invalidateQueries({ queryKey: ["movie"] });
-                            void qc.invalidateQueries({ queryKey: ["show"] });
-                            void qc.invalidateQueries({ queryKey: ["movies"] });
-                            void qc.invalidateQueries({ queryKey: ["series"] });
-                          }
-                        },
-                        { signal: ac.signal },
-                      )
-                        .catch((err: unknown) => {
-                          if (err instanceof Error && err.name === "AbortError") {
-                            setPrefetchMessage("Pre-download cancelled.");
-                            setPrefetchLiveLine("");
-                            return;
-                          }
-                          setPrefetchMessage(
-                            err instanceof Error ? err.message : "Pre-download failed (network or API).",
-                          );
-                        })
-                        .finally(() => {
-                          setPrefetchBusy(false);
-                          prefetchAbortRef.current = null;
-                        });
-                    }}
+                    onClick={() => startLibraryMetadataPrefetch()}
                   >
-                    {prefetchBusy ? "Downloading metadata…" : "📥 Pre-download metadata (entire library)"}
+                    {libraryPrefetch.running
+                      ? "Downloading metadata…"
+                      : "📥 Pre-download metadata (pending titles only)"}
                   </button>
-                  {prefetchBusy ? (
+                  {libraryPrefetch.running ? (
                     <button
                       type="button"
                       className="h-10 shrink-0 rounded-lg border border-zinc-600 px-3 text-xs font-medium text-zinc-200 hover:bg-zinc-800"
-                      onClick={() => prefetchAbortRef.current?.abort()}
+                      onClick={() => stopLibraryMetadataPrefetch()}
                     >
                       Stop
                     </button>
                   ) : null}
                 </div>
-                {prefetchBusy ? (
+                {libraryPrefetch.running ? (
                   <div className="rounded-lg border border-pitflix-card/60 bg-pitflix-bg/80 p-2">
                     <div className="h-1.5 w-full overflow-hidden rounded-full bg-zinc-800">
                       <div
                         className="h-full rounded-full bg-emerald-600 transition-[width] duration-200"
-                        style={{ width: `${Math.round(prefetchPct)}%` }}
+                        style={{ width: `${Math.round(libraryPrefetch.pct)}%` }}
                       />
                     </div>
-                    {prefetchLiveLine ? (
-                      <p className="mt-2 text-[11px] leading-snug text-pitflix-muted">{prefetchLiveLine}</p>
+                    {libraryPrefetch.liveLine ? (
+                      <p className="mt-2 text-[11px] leading-snug text-pitflix-muted">{libraryPrefetch.liveLine}</p>
                     ) : null}
-                    {prefetchLog.length > 0 ? (
+                    {libraryPrefetch.log.length > 0 ? (
                       <div className="mt-2 max-h-28 overflow-y-auto rounded border border-pitflix-card/40 bg-black/20 px-2 py-1 font-mono text-[10px] text-zinc-400">
-                        {prefetchLog.slice(-12).map((line, i) => (
-                          <div key={`${prefetchLog.length}-${i}`} className="truncate">
+                        {libraryPrefetch.log.slice(-12).map((line, i) => (
+                          <div key={`${libraryPrefetch.log.length}-${i}`} className="truncate">
                             {line}
                           </div>
                         ))}
@@ -1501,7 +1548,9 @@ export function SettingsPage() {
             </p>
             {scanMessage ? <p className="mt-2 text-[11px] text-pitflix-muted">{scanMessage}</p> : null}
             {artworkMessage ? <p className="mt-2 text-[11px] text-pitflix-muted">{artworkMessage}</p> : null}
-            {prefetchMessage ? <p className="mt-2 text-[11px] text-pitflix-muted">{prefetchMessage}</p> : null}
+            {libraryPrefetch.message ? (
+              <p className="mt-2 text-[11px] text-pitflix-muted">{libraryPrefetch.message}</p>
+            ) : null}
             {cleanupMessage ? <p className="mt-2 text-[11px] text-pitflix-muted">{cleanupMessage}</p> : null}
             {maintMessage ? <p className="mt-2 text-[11px] text-pitflix-muted">{maintMessage}</p> : null}
           </section>
@@ -1593,6 +1642,27 @@ export function SettingsPage() {
         onClose={() => setRemoveBrowseKind(null)}
         onRequestRemove={(row) => setPendingRemove(row)}
         refreshToken={removeBrowseRefresh}
+      />
+
+      <ConfirmDialog
+        open={awardsClearConfirmOpen}
+        title="Clear awards cache?"
+        description="This removes all precomputed awards nominee rows from your library database. Award pages will load more slowly until you run “Update awards cache” again."
+        confirmLabel="Clear cache"
+        cancelLabel="Cancel"
+        variant="danger"
+        onConfirm={() => {
+          void requestAwardsClear()
+            .then(() => {
+              setMaintMessage("Awards cache cleared.");
+              setAwardsClearConfirmOpen(false);
+            })
+            .catch((err) => {
+              setMaintMessage(formatScanOrApiError(err));
+              setAwardsClearConfirmOpen(false);
+            });
+        }}
+        onCancel={() => setAwardsClearConfirmOpen(false)}
       />
 
       <ConfirmDialog

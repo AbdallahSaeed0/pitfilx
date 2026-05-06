@@ -89,6 +89,26 @@ public sealed class TmdbClient
         }
     }
 
+    /// <summary>TMDB <c>number_of_seasons</c> from <c>tv/{{id}}</c>.</summary>
+    public async Task<int?> TryGetTvNumberOfSeasonsAsync(int tvTmdbId, CancellationToken cancellationToken = default)
+    {
+        if (tvTmdbId <= 0)
+            return null;
+
+        var url = AbsoluteApiUrl($"tv/{tvTmdbId}?api_key={Uri.EscapeDataString(_apiKey)}&language=en-US");
+        try
+        {
+            var json = await _http.GetStringAsync(url, cancellationToken).ConfigureAwait(false);
+            var root = JObject.Parse(json);
+            var n = (int?)root["number_of_seasons"];
+            return n is > 0 ? n : null;
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
     /// <summary>Season poster, title, air date, and counts from <c>tv/{{id}}/season/{{n}}</c>.</summary>
     public async Task<(string Name, string? PosterPath, string? AirDate, int EpisodeCount)?> TryGetTvSeasonHeaderAsync(
         int tvTmdbId, int seasonNumber, CancellationToken cancellationToken = default)

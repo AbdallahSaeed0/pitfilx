@@ -27,6 +27,9 @@ public class Show
     /// <summary>JSON array of <see cref="TmdbCrewMember"/> from last metadata refresh (speeds detail page).</summary>
     public string? CrewCacheJson { get; set; }
 
+    /// <summary>Timestamp of last successful metadata refresh from TMDB (used to skip re-downloading already prefetched items).</summary>
+    public DateTime? MetadataRefreshedAt { get; set; }
+
     public ICollection<Episode> Episodes { get; set; } = new List<Episode>();
 
     /// <summary>API-only JSON: TMDB poster when cache paths are empty.</summary>

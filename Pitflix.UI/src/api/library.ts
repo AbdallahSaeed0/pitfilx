@@ -108,7 +108,14 @@ export const rematchEpisodeFromFile = (episodeId: number) =>
 
 /** One NDJSON line from <c>POST /api/library/prefetch-metadata</c>. */
 export type PrefetchProgressLine =
-  | { phase: "start"; moviesTotal: number; seriesTotal: number }
+  | {
+      phase: "start";
+      moviesTotal: number;
+      seriesTotal: number;
+      /** Server-side counts with MetadataRefreshedAt already set (skipped this run). */
+      moviesAlreadyCached?: number;
+      seriesAlreadyCached?: number;
+    }
   | {
       phase: "movie" | "series";
       index: number;
@@ -183,3 +190,13 @@ export const refreshMovieMetadata = (libraryId: number) =>
 
 export const refreshShowMetadata = (libraryId: number) =>
   api.post<RefreshMetadataResult>(`/library/series/${libraryId}/refresh-metadata`).then((r) => r.data);
+
+export type LibraryWatchTargetResponse = { matched: boolean; movieId?: number; episodeId?: number };
+
+/** Resolve TMDB id (+ S/E for TV) to a matched library row for updating watch status from online streaming. */
+export const getLibraryWatchTarget = (params: {
+  tmdbId: number;
+  mediaType: "Movie" | "Series";
+  season?: number;
+  episode?: number;
+}) => api.get<LibraryWatchTargetResponse>("/library/watch-target", { params }).then((r) => r.data);

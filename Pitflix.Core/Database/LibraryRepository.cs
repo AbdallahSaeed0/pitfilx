@@ -349,13 +349,25 @@ public sealed class LibraryRepository
         string? shelfFilter,
         int page,
         int pageSize,
+        string? sortBy = null,
+        string? sortDir = null,
         CancellationToken cancellationToken = default)
     {
         var q = _db.ScanLogs.AsNoTracking().Where(x => x.Status == "Unmatched");
         if (!string.IsNullOrWhiteSpace(search))
         {
-            var term = search.Trim();
-            q = q.Where(x => x.CleanName.Contains(term) || x.FilePath.Contains(term));
+            var terms = search
+                .Trim()
+                .Split(' ', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+                .Select(t => t.ToLower())
+                .Distinct()
+                .ToList();
+            foreach (var term in terms)
+            {
+                q = q.Where(x =>
+                    x.CleanName.ToLower().Contains(term) ||
+                    x.FilePath.ToLower().Contains(term));
+            }
         }
 
         if (!string.IsNullOrWhiteSpace(shelfFilter) && !string.Equals(shelfFilter, "All", StringComparison.OrdinalIgnoreCase))
@@ -369,7 +381,19 @@ public sealed class LibraryRepository
 
         var total = await q.CountAsync(cancellationToken).ConfigureAwait(false);
         var skip = Math.Max(0, (Math.Max(1, page) - 1) * Math.Max(1, pageSize));
-        var rows = await q.OrderBy(x => x.CleanName)
+        var key = (sortBy ?? "date").Trim().ToLowerInvariant();
+        var desc = !string.Equals(sortDir, "asc", StringComparison.OrdinalIgnoreCase);
+        IOrderedQueryable<ScanLog> ordered;
+        ordered = key switch
+        {
+            "name" => desc ? q.OrderByDescending(x => x.CleanName) : q.OrderBy(x => x.CleanName),
+            "path" => desc ? q.OrderByDescending(x => x.FilePath) : q.OrderBy(x => x.FilePath),
+            "media" => desc
+                ? q.OrderByDescending(x => x.FilePath.ToLower().Contains("series") ? 1 : 0)
+                : q.OrderBy(x => x.FilePath.ToLower().Contains("series") ? 1 : 0),
+            "date" or _ => desc ? q.OrderByDescending(x => x.ScannedAt) : q.OrderBy(x => x.ScannedAt),
+        };
+        var rows = await ordered
             .Skip(skip)
             .Take(Math.Max(1, pageSize))
             .ToListAsync(cancellationToken)
@@ -540,10 +564,15 @@ public sealed class LibraryRepository
 
     public async Task<ScanLog> SaveScanLogAsync(ScanLog log, CancellationToken cancellationToken = default)
     {
-        var existing = await _db.ScanLogs.FirstOrDefaultAsync(x => x.FilePath == log.FilePath, cancellationToken)
-            .ConfigureAwait(false);
+        log.FilePath = MediaPathNormalizer.PreferredPhysicalPath(log.FilePath);
+        var variants = MediaPathNormalizer.EquivalenceVariants(log.FilePath);
+        var existing = variants.Count == 0
+            ? null
+            : await _db.ScanLogs.FirstOrDefaultAsync(x => variants.Contains(x.FilePath), cancellationToken)
+                .ConfigureAwait(false);
         if (existing != null)
         {
+            existing.FilePath = log.FilePath;
             existing.CleanName = log.CleanName;
             existing.Status = log.Status;
             existing.MatchedTitle = log.MatchedTitle;
@@ -563,14 +592,79 @@ public sealed class LibraryRepository
     public async Task<bool> IsFileAlreadyMatchedAsync(string filePath,
         CancellationToken cancellationToken = default)
     {
+        filePath = MediaPathNormalizer.PreferredPhysicalPath(filePath);
+        var variants = MediaPathNormalizer.EquivalenceVariants(filePath);
+        if (variants.Count == 0)
+            return false;
+        var variantsLower = variants.Select(v => v.ToLowerInvariant()).Distinct().ToList();
         var isMovie = await _db.Movies.AsNoTracking()
-            .AnyAsync(m => m.FilePath == filePath, cancellationToken).ConfigureAwait(false);
+            .AnyAsync(m =>
+                    m.FilePath != null &&
+                    (variants.Contains(m.FilePath) || variantsLower.Contains(m.FilePath.ToLower())),
+                cancellationToken)
+            .ConfigureAwait(false);
         if (isMovie)
             return true;
 
-        var isEpisode = await _db.Episodes.AsNoTracking()
-            .AnyAsync(e => e.FilePath == filePath, cancellationToken).ConfigureAwait(false);
-        return isEpisode;
+        return await _db.Episodes.AsNoTracking()
+            .AnyAsync(e => variants.Contains(e.FilePath) || variantsLower.Contains(e.FilePath.ToLower()), cancellationToken)
+            .ConfigureAwait(false);
+    }
+
+    /// <summary>True if this path already has an Unmatched scan log (auto-scans re-hit the same file often).</summary>
+    public async Task<bool> HasUnmatchedScanLogAsync(string filePath,
+        CancellationToken cancellationToken = default)
+    {
+        filePath = MediaPathNormalizer.PreferredPhysicalPath(filePath);
+        var variants = MediaPathNormalizer.EquivalenceVariants(filePath);
+        if (variants.Count == 0)
+            return false;
+        var variantsLower = variants.Select(v => v.ToLowerInvariant()).Distinct().ToList();
+        return await _db.ScanLogs.AsNoTracking()
+            .AnyAsync(x =>
+                    x.Status == "Unmatched" &&
+                    (variants.Contains(x.FilePath) || variantsLower.Contains(x.FilePath.ToLower())),
+                cancellationToken)
+            .ConfigureAwait(false);
+    }
+
+    /// <summary>Any scan log row for equivalent paths (avoids duplicate auto-scan desktop toasts).</summary>
+    public async Task<bool> HasAnyScanLogForPathVariantsAsync(string filePath,
+        CancellationToken cancellationToken = default)
+    {
+        filePath = MediaPathNormalizer.PreferredPhysicalPath(filePath);
+        var variants = MediaPathNormalizer.EquivalenceVariants(filePath);
+        if (variants.Count == 0)
+            return false;
+        var variantsLower = variants.Select(v => v.ToLowerInvariant()).Distinct().ToList();
+        return await _db.ScanLogs.AsNoTracking()
+            .AnyAsync(x => variants.Contains(x.FilePath) || variantsLower.Contains(x.FilePath.ToLower()), cancellationToken)
+            .ConfigureAwait(false);
+    }
+
+    /// <summary>True if this file was already recorded as Matched in scan logs (repeat rescans should not re-toast).</summary>
+    public async Task<bool> HasMatchedScanLogForPathVariantsAsync(string filePath,
+        CancellationToken cancellationToken = default)
+    {
+        filePath = MediaPathNormalizer.PreferredPhysicalPath(filePath);
+        var variants = MediaPathNormalizer.EquivalenceVariants(filePath);
+        if (variants.Count == 0)
+            return false;
+        var variantsLower = variants.Select(v => v.ToLowerInvariant()).Distinct().ToList();
+        return await _db.ScanLogs.AsNoTracking()
+            .AnyAsync(
+                x =>
+                    (variants.Contains(x.FilePath) || variantsLower.Contains(x.FilePath.ToLower())) &&
+                    string.Equals(x.Status, "Matched", StringComparison.OrdinalIgnoreCase),
+                cancellationToken).ConfigureAwait(false);
+    }
+
+    /// <summary>Settings: desktop toasts when background scan indexes a path (default on).</summary>
+    public async Task<bool> GetLibraryScanDesktopToastsEnabledAsync(CancellationToken cancellationToken = default)
+    {
+        var raw = await GetSettingAsync("LibraryScanDesktopToasts", cancellationToken).ConfigureAwait(false);
+        return string.IsNullOrWhiteSpace(raw) ||
+               string.Equals(raw, "true", StringComparison.OrdinalIgnoreCase);
     }
 
     public async Task<IReadOnlyList<ScanLog>> GetAllScanLogsAsync(CancellationToken cancellationToken = default)
@@ -608,7 +702,8 @@ public sealed class LibraryRepository
 
     /// <summary>Adds a history row when playback starts. Returns the new row id.</summary>
     public async Task<int> AddToHistoryAsync(string filePath, string title, string? posterPath, string mediaType,
-        int fileDurationSeconds = 0, CancellationToken cancellationToken = default)
+        int fileDurationSeconds = 0, CancellationToken cancellationToken = default,
+        bool suppressContinueWatching = false)
     {
         var now = DateTime.UtcNow;
         var h = new WatchHistory
@@ -625,7 +720,8 @@ public sealed class LibraryRepository
             MaxKnownPositionSeconds = 0,
             LastExplicitPositionSeconds = 0,
             LastHeartbeatAtUtc = null,
-            IsStopFinalized = false
+            IsStopFinalized = false,
+            SuppressContinueWatching = suppressContinueWatching
         };
         _db.WatchHistories.Add(h);
         await _db.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
@@ -634,23 +730,27 @@ public sealed class LibraryRepository
 
     /// <summary>Recent plays, one entry per distinct file path (latest first).</summary>
     public async Task<IReadOnlyList<WatchHistory>> GetRecentHistoryDistinctByFileAsync(int count = 20,
-        CancellationToken cancellationToken = default)
+        bool includeSuppressedForContinueWatching = false, CancellationToken cancellationToken = default)
     {
-        var batch = await _db.WatchHistories.AsNoTracking()
-            .OrderByDescending(h => h.OpenedAt)
+        var q = _db.WatchHistories.AsNoTracking();
+        if (!includeSuppressedForContinueWatching)
+            q = q.Where(h => !h.SuppressContinueWatching);
+        var batch = await q.OrderByDescending(h => h.OpenedAt)
             .Take(Math.Max(count * 5, 50))
             .ToListAsync(cancellationToken).ConfigureAwait(false);
         return CollapseRecentHistoryRows(batch, count);
     }
 
     public async Task<IReadOnlyList<WatchHistory>> GetRecentHistoryAsync(int count = 10,
-        CancellationToken cancellationToken = default)
+        bool includeSuppressedForContinueWatching = false, CancellationToken cancellationToken = default)
     {
         // In-memory dedupe: SQLite + GroupBy(...).First() translation has been flaky.
         // Keep latest row per file path but carry forward max saved resume so reopening never regresses to 0
         // when a fresh "opened" row is created before progress is persisted.
-        var batch = await _db.WatchHistories.AsNoTracking()
-            .OrderByDescending(h => h.OpenedAt)
+        var q = _db.WatchHistories.AsNoTracking();
+        if (!includeSuppressedForContinueWatching)
+            q = q.Where(h => !h.SuppressContinueWatching);
+        var batch = await q.OrderByDescending(h => h.OpenedAt)
             .Take(Math.Max(count * 10, 100))
             .ToListAsync(cancellationToken).ConfigureAwait(false);
         return CollapseRecentHistoryRows(batch, count);
@@ -1139,6 +1239,9 @@ public sealed class LibraryRepository
             .ConfigureAwait(false);
         await AddIfMissingAsync("IsStopFinalized",
                 "ALTER TABLE WatchHistories ADD COLUMN IsStopFinalized INTEGER NOT NULL DEFAULT 0")
+            .ConfigureAwait(false);
+        await AddIfMissingAsync("SuppressContinueWatching",
+                "ALTER TABLE WatchHistories ADD COLUMN SuppressContinueWatching INTEGER NOT NULL DEFAULT 0")
             .ConfigureAwait(false);
 
         await _db.Database.ExecuteSqlRawAsync(
@@ -2683,7 +2786,7 @@ public sealed class LibraryRepository
             return false;
 
         var list = await _db.UserLists.FirstOrDefaultAsync(x => x.Id == listId, cancellationToken).ConfigureAwait(false);
-        if (list == null)
+        if (list == null || list.IsDefault)
             return false;
 
         var exists = await _db.UserLists.AnyAsync(
@@ -2923,6 +3026,8 @@ public sealed class LibraryRepository
             });
 
             await ReplaceCastMembersAsync(m.TmdbId, "Movie", castRows, cancellationToken).ConfigureAwait(false);
+            m.MetadataRefreshedAt = DateTime.UtcNow;
+            await _db.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
             return (true, null);
         }
         catch (Exception ex)
@@ -2974,6 +3079,8 @@ public sealed class LibraryRepository
 
             await SyncEpisodesArtworkFromTmdbAsync(s.Id, s.TmdbId, tmdb, cancellationToken, episodeStillDownloadBudget)
                 .ConfigureAwait(false);
+            s.MetadataRefreshedAt = DateTime.UtcNow;
+            await _db.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
             return (true, null);
         }
         catch (Exception ex)
@@ -2988,7 +3095,7 @@ public sealed class LibraryRepository
     {
         var errors = new List<string>();
         var movieIds = await _db.Movies.AsNoTracking()
-            .Where(m => m.TmdbId > 0)
+            .Where(m => m.TmdbId > 0 && m.MetadataRefreshedAt == null)
             .OrderBy(m => m.Id)
             .Select(m => m.Id)
             .ToListAsync(cancellationToken).ConfigureAwait(false);
@@ -3005,7 +3112,7 @@ public sealed class LibraryRepository
         }
 
         var showIds = await _db.Shows.AsNoTracking()
-            .Where(s => s.TmdbId > 0)
+            .Where(s => s.TmdbId > 0 && s.MetadataRefreshedAt == null)
             .OrderBy(s => s.Id)
             .Select(s => s.Id)
             .ToListAsync(cancellationToken).ConfigureAwait(false);
@@ -3032,22 +3139,29 @@ public sealed class LibraryRepository
         var errors = new List<string>();
 
         var movies = await _db.Movies.AsNoTracking()
-            .Where(m => m.TmdbId > 0)
+            .Where(m => m.TmdbId > 0 && m.MetadataRefreshedAt == null)
             .OrderBy(m => m.Id)
             .Select(m => new { m.Id, m.Title })
             .ToListAsync(cancellationToken).ConfigureAwait(false);
 
         var shows = await _db.Shows.AsNoTracking()
-            .Where(s => s.TmdbId > 0)
+            .Where(s => s.TmdbId > 0 && s.MetadataRefreshedAt == null)
             .OrderBy(s => s.Id)
             .Select(s => new { s.Id, s.Title })
             .ToListAsync(cancellationToken).ConfigureAwait(false);
+
+        var moviesAlreadyCached = await _db.Movies.AsNoTracking()
+            .CountAsync(m => m.TmdbId > 0 && m.MetadataRefreshedAt != null, cancellationToken).ConfigureAwait(false);
+        var seriesAlreadyCached = await _db.Shows.AsNoTracking()
+            .CountAsync(s => s.TmdbId > 0 && s.MetadataRefreshedAt != null, cancellationToken).ConfigureAwait(false);
 
         yield return new PrefetchMetadataProgress
         {
             Phase = "start",
             MoviesTotal = movies.Count,
-            SeriesTotal = shows.Count
+            SeriesTotal = shows.Count,
+            MoviesAlreadyCached = moviesAlreadyCached,
+            SeriesAlreadyCached = seriesAlreadyCached
         };
 
         var moviesOk = 0;

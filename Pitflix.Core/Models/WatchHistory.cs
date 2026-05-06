@@ -40,6 +40,9 @@ public class WatchHistory
     /// <summary>True once an end-of-session path ran (explicit stop / return) so resume can trust the row.</summary>
     public bool IsStopFinalized { get; set; }
 
+    /// <summary>When true, row is omitted from Continue watching / home history API (e.g. My Device stray files).</summary>
+    public bool SuppressContinueWatching { get; set; }
+
     /// <summary>API-only: merged best resume head (seconds) from MaxKnown / LastExplicit / Estimated, capped by duration.</summary>
     [NotMapped]
     public int TrustedResumeSeconds { get; set; }

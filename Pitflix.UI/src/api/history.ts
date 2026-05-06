@@ -1,7 +1,14 @@
 import api from "./client";
 
-export const getHistory = (limit = 10) =>
-  api.get("/history", { params: { limit } }).then((r) => r.data);
+export const getHistory = (limit = 10, opts?: { includeSuppressed?: boolean }) =>
+  api
+    .get("/history", {
+      params: {
+        limit,
+        ...(opts?.includeSuppressed ? { includeSuppressed: true } : {}),
+      },
+    })
+    .then((r) => r.data);
 
 export const getHistory10 = () => getHistory(10);
 
@@ -11,6 +18,8 @@ export const addHistory = (body: {
   posterPath?: string;
   mediaType: string;
   durationSeconds: number;
+  /** Hide from Continue watching (home history); playback resume still sees the row when requested. */
+  suppressContinueWatching?: boolean;
 }) => api.post("/history", body).then((r) => r.data);
 
 export const historyStopped = (id: number, body: { stoppedAt: string; positionSeconds?: number }) =>

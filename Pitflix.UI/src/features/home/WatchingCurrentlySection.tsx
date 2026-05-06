@@ -50,7 +50,7 @@ export function WatchingCurrentlySection({ embedded = false }: Props) {
   return (
     <div
       className={cn(
-        embedded ? "" : "rounded-2xl border border-violet-500/25 bg-gradient-to-br from-violet-950/45 via-pitflix-bg/30 to-pitflix-surface/25 p-6 shadow-xl shadow-black/35",
+        embedded ? "" : "rounded-2xl border border-violet-500/25 bg-gradient-to-br from-violet-950/45 via-pitflix-bg/30 to-zinc-950/40 p-6 shadow-xl shadow-black/35",
       )}
     >
       {embedded ? null : (
@@ -83,9 +83,20 @@ export function WatchingCurrentlySection({ embedded = false }: Props) {
   );
 }
 
+function continueSeasonRoute(card: WatchingCurrentlyCard): string {
+  let s = card.nextSeason;
+  if (!Number.isFinite(s) || s <= 0) {
+    const m = /^S(\d+)/i.exec((card.nextLabel ?? "").trim());
+    if (m) s = parseInt(m[1]!, 10);
+  }
+  if (Number.isFinite(s) && s > 0) return `/series/${card.libraryShowId}/season/${s}`;
+  return `/series/${card.libraryShowId}`;
+}
+
 function WatchingCard({ card }: { card: WatchingCurrentlyCard }) {
   const pct = Math.round(Math.min(100, Math.max(0, (card.progressFraction ?? 0) * 100)));
   const poster = toPosterSrc(card.posterUrl ?? undefined);
+  const continueTo = continueSeasonRoute(card);
 
   return (
     <div className="group flex w-[min(100%,248px)] shrink-0 flex-row gap-3 overflow-hidden rounded-xl border border-violet-500/25 bg-black/40 shadow-md ring-1 ring-white/5 transition-transform hover:-translate-y-0.5 hover:border-violet-400/40 sm:w-[240px]">
@@ -132,7 +143,7 @@ function WatchingCard({ card }: { card: WatchingCurrentlyCard }) {
           </p>
         </div>
         <Link
-          to={`/series/${card.libraryShowId}`}
+          to={continueTo}
           className="inline-flex w-full items-center justify-center rounded-md bg-violet-600/90 py-1.5 text-[10px] font-semibold text-white transition-colors hover:bg-violet-500"
         >
           Continue

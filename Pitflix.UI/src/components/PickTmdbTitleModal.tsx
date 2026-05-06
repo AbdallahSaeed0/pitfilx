@@ -13,7 +13,8 @@ import { Spinner } from "./ui/Spinner";
 export type PickTmdbMatchTarget =
   | { kind: "movie"; libraryId: number }
   | { kind: "series"; libraryId: number }
-  | { kind: "episode"; episodeId: number };
+  | { kind: "episode"; episodeId: number }
+  | { kind: "episode-bulk"; episodeIds: number[] };
 
 type SearchHit = {
   id: number;
@@ -64,7 +65,9 @@ export function PickTmdbTitleModal({ open, onClose, target, hintTitle, onMatched
     if (!target) return "";
     if (target.kind === "movie") return "Pick the correct movie";
     if (target.kind === "series") return "Pick the correct series";
-    return "Attach this episode to the right series";
+    return target.kind === "episode-bulk"
+      ? "Attach selected episodes to the right series"
+      : "Attach this episode to the right series";
   }, [target]);
 
   const placeholder = target?.kind === "movie" ? "Search movies on TMDB…" : "Search TV shows on TMDB…";
@@ -126,6 +129,28 @@ export function PickTmdbTitleModal({ open, onClose, target, hintTitle, onMatched
             return;
           }
           onMatched({ libraryId: r.libraryId ?? target.libraryId });
+          onClose();
+        })
+        .catch(() => setError("Could not reach the API."))
+        .finally(done);
+      return;
+    }
+
+    if (target.kind === "episode-bulk") {
+      const episodeIds = [...new Set(target.episodeIds.filter((x) => Number.isFinite(x) && x > 0))];
+      if (episodeIds.length === 0) {
+        setError("No episodes selected.");
+        done();
+        return;
+      }
+      void Promise.all(episodeIds.map((id) => matchLibraryEpisodeTmdb(id, tmdbId)))
+        .then((rows) => {
+          const failed = rows.filter((r) => !r.success);
+          if (failed.length > 0) {
+            setError(`Could not re-link ${failed.length} episode(s).`);
+            return;
+          }
+          onMatched({ showId: rows[0]?.showId });
           onClose();
         })
         .catch(() => setError("Could not reach the API."))

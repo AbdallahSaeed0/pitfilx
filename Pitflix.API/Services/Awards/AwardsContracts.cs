@@ -141,6 +141,8 @@ public sealed class AwardCategoryResponseDto
 {
     public string Id { get; set; } = "";
     public string Name { get; set; } = "";
+    /// <summary><c>full</c> = multi-title slate; <c>winner_only</c> = single winner row only; <c>empty</c>; <c>incomplete</c> = QA/backfill flags.</summary>
+    public string Completeness { get; set; } = "full";
     public List<AwardNomineeResponseDto> Nominees { get; set; } = new();
 }
 
@@ -152,4 +154,23 @@ public sealed class AwardNomineeResponseDto
     public bool Winner { get; set; }
     public string? PosterUrl { get; set; }
     public string? BackdropUrl { get; set; }
+    public string? ImdbId { get; set; }
+    public bool InLibrary { get; set; }
+    public bool StreamEligible { get; set; }
+}
+
+/// <summary>Preload / refresh status for the Settings UI (poll <c>GET /api/awards/cache/status</c>).</summary>
+public sealed class AwardsPreloadStatusDto
+{
+    public bool Running { get; set; }
+    public string Phase { get; set; } = "idle";
+    public string? AwardId { get; set; }
+    public int? Year { get; set; }
+    public string? CategoryId { get; set; }
+    public int ProcessedNominees { get; set; }
+    public int TotalNominees { get; set; }
+    public int SuccessCount { get; set; }
+    public int FailedCount { get; set; }
+    public int CachedRowCount { get; set; }
+    public string? LastError { get; set; }
 }

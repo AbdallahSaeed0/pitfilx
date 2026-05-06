@@ -241,10 +241,13 @@ public sealed class TrailersRepository
             byVideoId[r.VideoId] = r;
         }
 
+        var nowUtc = DateTime.UtcNow;
         var rows = byVideoId.Values
-            .OrderByDescending(x => x.QualityScore)
-            .ThenByDescending(x => x.MatchConfidence)
+            // Keep latest official trailer/teaser picks sticky without blindly replacing with low-signal uploads.
+            .OrderByDescending(x => ComputeActivationScore(x, nowUtc))
             .ThenByDescending(x => x.PublishedAtUtc)
+            .ThenByDescending(x => x.QualityScore)
+            .ThenByDescending(x => x.MatchConfidence)
             .ToList();
         if (rows.Count == 0)
             return;
@@ -254,6 +257,41 @@ public sealed class TrailersRepository
             : rows[0];
         foreach (var row in rows)
             row.IsActive = string.Equals(row.VideoId, winner.VideoId, StringComparison.Ordinal);
+    }
+
+    private static double ComputeActivationScore(TrailerItem row, DateTime nowUtc)
+    {
+        var ageDays = Math.Max(0.0, (nowUtc - row.PublishedAtUtc).TotalDays);
+        var recencyBoost = ageDays <= 21 ? 0.90
+            : ageDays <= 60 ? 0.55
+            : ageDays <= 120 ? 0.25
+            : 0.0;
+
+        var t = row.Title.Trim().ToLowerInvariant();
+        var hasOfficial = t.Contains("official", StringComparison.Ordinal);
+        var hasTrailer = t.Contains("trailer", StringComparison.Ordinal);
+        var hasTeaser = t.Contains("teaser", StringComparison.Ordinal);
+        var likelyLowSignal = t.Contains("clip", StringComparison.Ordinal) ||
+                              t.Contains("featurette", StringComparison.Ordinal) ||
+                              t.Contains("tv spot", StringComparison.Ordinal) ||
+                              t.Contains("reaction", StringComparison.Ordinal);
+
+        var intentBoost = 0.0;
+        if (hasOfficial && hasTrailer)
+            intentBoost += 0.42;
+        else if (hasOfficial && hasTeaser)
+            intentBoost += 0.34;
+        else if (hasTrailer)
+            intentBoost += 0.26;
+        else if (hasTeaser)
+            intentBoost += 0.20;
+
+        if (likelyLowSignal)
+            intentBoost -= 0.45;
+
+        var trustBoost = row.TrustTier <= 1 ? 0.22 : row.TrustTier == 2 ? 0.12 : 0.0;
+
+        return row.QualityScore + (row.MatchConfidence * 0.70) + recencyBoost + intentBoost + trustBoost;
     }
 
     public async Task<IReadOnlyList<TrailerItem>> GetLatestTrailersAsync(

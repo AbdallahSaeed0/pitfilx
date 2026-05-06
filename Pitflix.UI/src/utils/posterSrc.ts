@@ -31,6 +31,12 @@ export function toPosterSrc(path: string | null | undefined): string | undefined
   }
   if (path.startsWith("/images/")) return `${API_ORIGIN}${path}`;
 
+  // Vite production bundles imported images as `/assets/<hash>.ext` (same origin as the SPA).
+  if (path.startsWith("/assets/")) {
+    const base = (import.meta.env.BASE_URL ?? "/").replace(/\/$/, "");
+    return `${base}${path}`;
+  }
+
   // Vite `public/` files (same origin as the UI). Must run before Tauri `convertFileSrc` — `/awards/...` is not a disk path.
   if (path.startsWith("/awards/")) {
     const base = import.meta.env.BASE_URL ?? "/";

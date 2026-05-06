@@ -47,6 +47,7 @@ type UnmatchedRowItem = {
   filePath: string;
   suggestions?: unknown;
   mediaType: string;
+  scannedAt?: string;
 };
 
 export type BulkConfirmState = {
@@ -356,11 +357,20 @@ export function UnmatchedPage() {
   const { data: stats } = useQuery({ queryKey: ["stats"], queryFn: getStats });
   const globalUnmatched = stats?.totalUnmatched ?? 0;
   const [search, setSearch] = useState("");
-  const q = useDebounce(search, 300);
+  const q = useDebounce(search, 220);
   const [type, setType] = useState("all");
+  const [sortBy, setSortBy] = useState("date");
+  const [sortDir, setSortDir] = useState("desc");
   const [page, setPage] = useState(1);
   const pageSize = 30;
-  const { data, isLoading } = useUnmatchedPage({ page, pageSize, search: q || undefined, type });
+  const { data, isLoading } = useUnmatchedPage({
+    page,
+    pageSize,
+    search: q || undefined,
+    type,
+    sortBy,
+    sortDir,
+  });
   const [bulkConfirm, setBulkConfirm] = useState<BulkConfirmState | null>(null);
   const [bulkWorking, setBulkWorking] = useState(false);
   const [bulkProgress, setBulkProgress] = useState<{ current: number; total: number } | null>(null);
@@ -478,7 +488,7 @@ export function UnmatchedPage() {
             setSearch(e.target.value);
             setPage(1);
           }}
-          placeholder="Search…"
+          placeholder="Search title, folder, or file name…"
           className="min-w-[200px] flex-1 rounded-lg border border-pitflix-card bg-pitflix-surface px-3 py-2 text-sm text-white"
         />
         <select
@@ -492,6 +502,30 @@ export function UnmatchedPage() {
           <option value="all">All</option>
           <option value="movie">Movies</option>
           <option value="series">Series</option>
+        </select>
+        <select
+          value={sortBy}
+          onChange={(e) => {
+            setSortBy(e.target.value);
+            setPage(1);
+          }}
+          className="rounded-lg border border-pitflix-card bg-pitflix-surface px-3 py-2 text-sm text-white"
+        >
+          <option value="date">Date</option>
+          <option value="name">Name</option>
+          <option value="path">Path</option>
+          <option value="media">Media type</option>
+        </select>
+        <select
+          value={sortDir}
+          onChange={(e) => {
+            setSortDir(e.target.value);
+            setPage(1);
+          }}
+          className="rounded-lg border border-pitflix-card bg-pitflix-surface px-3 py-2 text-sm text-white"
+        >
+          <option value="desc">Desc</option>
+          <option value="asc">Asc</option>
         </select>
       </div>
 

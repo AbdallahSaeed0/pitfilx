@@ -13,6 +13,7 @@ import { MovieDetailPage, ShowDetailPage } from "./pages/DetailPage";
 import { UnmatchedPage } from "./pages/UnmatchedPage";
 import { SettingsPage } from "./pages/SettingsPage";
 import { MyListsPage } from "./pages/MyListsPage";
+import { MyDevicePage } from "./pages/MyDevicePage";
 import { ListDetailPage } from "./pages/ListDetailPage";
 import { PersonPage } from "./pages/PersonPage";
 import { StatsPage } from "./pages/StatsPage";
@@ -24,6 +25,9 @@ import { SeasonDetailPage } from "./pages/SeasonDetailPage";
 import { TrailersPage } from "./pages/TrailersPage";
 import { NextEpisodesPage } from "./pages/NextEpisodesPage";
 import { PlayerPage } from "./pages/PlayerPage";
+import { OnlineStreamPage } from "./pages/OnlineStreamPage";
+import { StreamPlayerPage } from "./pages/StreamPlayerPage";
+import { BackgroundTasksProvider } from "./context/BackgroundTasksContext";
 
 function PlaybackPolListenerHost() {
   useEffect(() => startPlaybackPolEventListener(), []);
@@ -40,7 +44,7 @@ function App() {
   const { data, isLoading, isError } = useQuery({
     queryKey: ["settings"],
     queryFn: getSettings,
-    staleTime: 15_000,
+    staleTime: 120_000,
     retry: 2,
   });
 
@@ -66,8 +70,10 @@ function App() {
   return (
     <BrowserRouter>
       <PlaybackPolListenerHost />
-      <Routes>
+      <BackgroundTasksProvider>
+        <Routes>
         <Route path="/player" element={<PlayerPage />} />
+        <Route path="/stream-player" element={<StreamPlayerPage />} />
         <Route element={<MainLayout />}>
           <Route index element={<HomePage />} />
           <Route path="movies" element={<MoviesPage />} />
@@ -78,19 +84,22 @@ function App() {
           <Route path="show/:id" element={<LegacyShowRedirect />} />
           <Route path="recommendations" element={<RecommendationsPage />} />
           <Route path="trailers" element={<TrailersPage />} />
+          <Route path="online-stream" element={<OnlineStreamPage />} />
           <Route path="next-episodes" element={<NextEpisodesPage />} />
           <Route path="awards" element={<AwardsPage />} />
           <Route path="awards/:awardId/:year" element={<AwardEditionPage />} />
           <Route path="awards/:awardId" element={<AwardHubPage />} />
           <Route path="unmatched" element={<UnmatchedPage />} />
           <Route path="lists" element={<MyListsPage />} />
+          <Route path="my-device" element={<MyDevicePage />} />
           <Route path="lists/:id" element={<ListDetailPage />} />
           <Route path="stats" element={<StatsPage />} />
           <Route path="settings" element={<SettingsPage />} />
           <Route path="person/:tmdbId" element={<PersonPage />} />
           <Route path="*" element={<Navigate to="/" replace />} />
         </Route>
-      </Routes>
+        </Routes>
+      </BackgroundTasksProvider>
     </BrowserRouter>
   );
 }

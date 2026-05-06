@@ -1,9 +1,11 @@
 use std::fs::OpenOptions;
 use std::io::Write;
 use std::path::PathBuf;
+use std::process::Command;
 use std::sync::Mutex;
 
 use serde::Deserialize;
+use tauri::Emitter;
 use tauri::Manager;
 use tauri::State;
 
@@ -13,6 +15,7 @@ use super::{
   playback_orchestrator::{
     self, LoadEpisodePolRequest, PlaybackOrchestratorState, PlaybackStoreSnapshot, ResumeHints,
   },
+  subtitle_generator,
   PlayerHostState,
 };
 use super::windows_host::MpvExitReport;
@@ -383,5 +386,191 @@ pub fn playback_pol_set_extension_skip_intro(
   drop(g);
   playback_orchestrator::emit_snapshot_manual(&app);
   Ok(())
+}
+
+#[tauri::command]
+pub fn get_subtitle_tracks(video_path: String) -> Result<Vec<subtitle_generator::SubtitleTrack>, String> {
+  subtitle_generator::get_subtitle_tracks(&video_path)
+}
+
+#[tauri::command]
+pub fn extract_subtitle(
+  video_path: String,
+  track_index: i32,
+  output_path: String,
+) -> Result<(), String> {
+  subtitle_generator::extract_subtitle_to_srt(&video_path, track_index, &output_path)
+}
+
+#[tauri::command]
+pub fn translate_srt_to_arabic(
+  srt_path: String,
+  output_path: String,
+) -> Result<(), String> {
+  let cues = subtitle_generator::parse_srt_file(&srt_path)?;
+  
+  // Join all text into one big block with a unique separator to translate in one go
+  // This is MUCH faster than line-by-line
+  let mut full_text = String::new();
+  for cue in &cues {
+    full_text.push_str(&cue.text.replace("\n", " [BR] "));
+    full_text.push_str("\n[CUE]\n");
+  }
+
+  let translated_full = translate_batch_with_argos(&full_text)?;
+  let translated_lines: Vec<&str> = translated_full.split("\n[CUE]\n").collect();
+
+  let mut translated_cues = Vec::new();
+  for (i, cue) in cues.iter().enumerate() {
+    if let Some(text) = translated_lines.get(i) {
+        translated_cues.push(subtitle_generator::SubtitleCue {
+          index: cue.index,
+          start: cue.start.clone(),
+          end: cue.end.clone(),
+          text: text.replace(" [BR] ", "\n").trim().to_string(),
+        });
+    }
+  }
+
+  subtitle_generator::write_srt_file(&translated_cues, &output_path)
+}
+
+fn translate_batch_with_argos(text: &str) -> Result<String, String> {
+    // Create a temporary file for the input with UTF-8 encoding
+    let temp_input = std::env::temp_dir().join("pitflix_translate_in.txt");
+    std::fs::write(&temp_input, text).map_err(|e| e.to_string())?;
+
+    // Use a more robust Python script that explicitly handles UTF-8 for both input and output
+    let output = Command::new("python")
+        .args(&[
+            "-c",
+            "import argostranslate.translate, sys, io; \
+             sys.stdin = io.TextIOWrapper(sys.stdin.buffer, encoding='utf-8'); \
+             sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8'); \
+             print(argostranslate.translate.translate(sys.stdin.read(), 'en', 'ar'))"
+        ])
+        .stdin(std::fs::File::open(&temp_input).map_err(|e| e.to_string())?)
+        .output()
+        .map_err(|e| format!("Argos batch translate error: {}", e))?;
+
+    let _ = std::fs::remove_file(&temp_input);
+
+    if !output.status.success() {
+        return Err(format!("Translation failed: {}", String::from_utf8_lossy(&output.stderr)));
+    }
+
+    Ok(String::from_utf8_lossy(&output.stdout).to_string())
+}
+
+#[tauri::command]
+pub async fn generate_arabic_subtitle(
+  app: tauri::AppHandle,
+  video_path: String,
+) -> Result<String, String> {
+  eprintln!("[generate-arabic-subtitle] Starting with video_path: {}", video_path);
+  
+  if subtitle_generator::is_subtitle_cached(&video_path) {
+    let cached = subtitle_generator::get_subtitle_output_path(&video_path)
+      .to_string_lossy()
+      .to_string();
+    eprintln!("[generate-arabic-subtitle] Returning cached: {}", cached);
+    return Ok(cached);
+  }
+
+  // Run the heavy work in a separate thread to avoid blocking the main Tauri event loop
+  let video_path_clone = video_path.clone();
+  std::thread::spawn(move || {
+    eprintln!("[generate-arabic-subtitle] Getting subtitle tracks...");
+    let tracks = subtitle_generator::get_subtitle_tracks(&video_path_clone)
+      .map_err(|e| {
+        eprintln!("[generate-arabic-subtitle] Error getting tracks: {}", e);
+        format!("Failed to detect subtitles: {}", e)
+      })?;
+    
+    eprintln!("[generate-arabic-subtitle] Found {} tracks", tracks.len());
+    let english_track = subtitle_generator::find_english_subtitle_track(&tracks)
+      .ok_or_else(|| {
+        eprintln!("[generate-arabic-subtitle] No English track found");
+        "No English subtitle track found".to_string()
+      })?;
+
+    eprintln!("[generate-arabic-subtitle] Extracting English track {}...", english_track.index);
+    let temp_srt = subtitle_generator::get_subtitle_output_path(&video_path_clone)
+      .with_extension("temp.srt")
+      .to_string_lossy()
+      .to_string();
+
+    subtitle_generator::extract_subtitle_to_srt(&video_path_clone, english_track.index, &temp_srt)
+      .map_err(|e| {
+        eprintln!("[generate-arabic-subtitle] Extraction failed: {}", e);
+        format!("Failed to extract subtitle: {}", e)
+      })?;
+
+    eprintln!("[generate-arabic-subtitle] Translating to Arabic...");
+    let output_srt = subtitle_generator::get_subtitle_output_path(&video_path_clone)
+      .to_string_lossy()
+      .to_string();
+
+    // Heavy translation work happens here
+    let cues = subtitle_generator::parse_srt_file(&temp_srt)?;
+    
+    eprintln!("[generate-arabic-subtitle] Sending {} cues to Python for translation...", cues.len());
+    
+    let mut translated_cues = Vec::new();
+    
+    // Process in smaller chunks to avoid overwhelming Python/Argos and to provide progress
+    const CHUNK_SIZE: usize = 50;
+    for chunk in cues.chunks(CHUNK_SIZE) {
+        let mut batch_text = String::new();
+        for cue in chunk {
+            let escaped_text = cue.text.replace("\n", " [BR] ");
+            batch_text.push_str(&escaped_text);
+            batch_text.push_str("\n[CUE]\n");
+        }
+
+        let translated_batch = translate_batch_with_argos(&batch_text)?;
+        
+        // Split by the [CUE] marker and clean up
+        let translated_lines: Vec<String> = translated_batch
+            .split("[CUE]")
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty())
+            .collect();
+
+        for (i, cue) in chunk.iter().enumerate() {
+            if let Some(text) = translated_lines.get(i) {
+                // Remove any residual [BR] markers and unescape newlines
+                let unescaped_text = text.replace("[BR]", "\n").replace(" [BR] ", "\n").trim().to_string();
+                translated_cues.push(subtitle_generator::SubtitleCue {
+                    index: cue.index,
+                    start: cue.start.clone(),
+                    end: cue.end.clone(),
+                    text: unescaped_text,
+                });
+            }
+        }
+        
+        let current_count = translated_cues.len();
+        let total_count = cues.len();
+        eprintln!("[generate-arabic-subtitle] Translated {}/{} cues...", current_count, total_count);
+        
+        // Emit progress event to frontend
+        let _ = app.emit("arabic-subtitle-progress", serde_json::json!({
+            "current": current_count,
+            "total": total_count
+        }));
+    }
+
+    if translated_cues.is_empty() {
+        return Err("Translation resulted in empty cues".to_string());
+    }
+
+    subtitle_generator::write_srt_file(&translated_cues, &output_srt)?;
+
+    let _ = std::fs::remove_file(&temp_srt);
+    eprintln!("[generate-arabic-subtitle] Success! Output: {}", output_srt);
+
+    Ok(output_srt)
+  }).join().map_err(|_| "Thread panicked".to_string())?
 }
 

@@ -50,6 +50,21 @@ export function useScanStream() {
           });
         } else if (type === "cancelled") {
           setProgress({ isRunning: false });
+        } else if (type === "libraryNotification") {
+          const titleRaw = msg.title ?? msg.Title;
+          const title = typeof titleRaw === "string" ? titleRaw.trim() : "";
+          if (!title) {
+            /* skip */
+          } else {
+            const kindRaw = msg.kind ?? msg.Kind;
+            const kind = typeof kindRaw === "string" && kindRaw.trim() ? kindRaw.trim() : "movie";
+            const matched = Boolean(msg.matched ?? msg.Matched);
+            useScanStore.getState().pushLibraryToast({ title, kind, matched });
+            void qc.invalidateQueries({ queryKey: ["stats"] });
+            void qc.invalidateQueries({ queryKey: ["movies"] });
+            void qc.invalidateQueries({ queryKey: ["series"] });
+            void qc.invalidateQueries({ queryKey: ["unmatched"] });
+          }
         }
       } catch {
         /* ignore */

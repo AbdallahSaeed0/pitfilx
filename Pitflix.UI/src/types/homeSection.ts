@@ -16,6 +16,7 @@ export type HomeSourceType =
   | "binge_series"
   | "coming_soon"
   | "next_episodes"
+  | "next_episodes_all"
   | "latest_trailers"
   | "coming_soon_trailers"
   | "upcoming_trending_trailers"

@@ -66,7 +66,7 @@ export function HorizontalDragScroll({ children, className }: Props) {
       ref={ref}
       role="presentation"
       className={cn(
-        "scrollbar-hide cursor-grab overflow-x-auto overflow-y-hidden pb-2",
+        "scroll-row-x cursor-grab overflow-x-auto overflow-y-hidden pb-3",
         grabbing && "cursor-grabbing select-none",
         className,
       )}

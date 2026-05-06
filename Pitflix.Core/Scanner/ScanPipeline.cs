@@ -48,19 +48,32 @@ public sealed class ScanPipeline
 
     /// <summary>Processes an explicit list of media file paths (e.g. demo paths that are not on disk as a folder scan).</summary>
     public async Task<ScanPipelineResult> RunScanOnFilesAsync(IReadOnlyList<string> filePaths,
-        IProgress<ScanProgress>? progress = null, CancellationToken cancellationToken = default)
+        IProgress<ScanProgress>? progress = null, CancellationToken cancellationToken = default,
+        bool libraryNotifications = false)
     {
         var distinct = filePaths.Distinct(StringComparer.OrdinalIgnoreCase).ToList();
         var result = new ScanPipelineResult { TotalFiles = distinct.Count };
         var total = distinct.Count;
         var index = 0;
 
-        foreach (var filePath in distinct)
+        foreach (var rawPath in distinct)
         {
             cancellationToken.ThrowIfCancellationRequested();
             index++;
+            var filePath = MediaPathNormalizer.PreferredPhysicalPath(rawPath);
 
-            void Report(string status) =>
+            static string KindForNotifications(string mt) =>
+                string.Equals(mt, "Series", StringComparison.OrdinalIgnoreCase) ? "episode" : "movie";
+
+            static string UnmatchedLabel(string path, ParseResult pr) =>
+                !string.IsNullOrWhiteSpace(pr.CleanName)
+                    ? pr.CleanName.Trim()
+                    : Path.GetFileNameWithoutExtension(path);
+
+            void ReportScan(string status, bool notify = false, string? notifyTitle = null, string? notifyKind = null,
+                bool notifyMatched = false)
+            {
+                var emit = libraryNotifications && notify;
                 progress?.Report(new ScanProgress
                 {
                     Total = total,
@@ -69,15 +82,20 @@ public sealed class ScanPipeline
                     Status = status,
                     MatchedSoFar = result.Matched,
                     UnmatchedSoFar = result.Unmatched,
-                    SkippedSoFar = result.SkippedAlreadyMatched
+                    SkippedSoFar = result.SkippedAlreadyMatched,
+                    EmitLibraryNotification = emit,
+                    LibraryNotificationTitle = emit ? notifyTitle : null,
+                    LibraryNotificationKind = emit ? notifyKind : null,
+                    LibraryNotificationMatched = emit && notifyMatched
                 });
+            }
 
-            Report("Starting");
+            ReportScan("Starting");
 
             if (await _repo.IsFileAlreadyMatchedAsync(filePath, cancellationToken).ConfigureAwait(false))
             {
                 result.SkippedAlreadyMatched++;
-                Report("Skipped (already matched)");
+                ReportScan("Skipped (already matched)");
                 continue;
             }
 
@@ -88,14 +106,18 @@ public sealed class ScanPipeline
 
             if (mediaType != "Movie" && mediaType != "Series")
             {
+                var toastUnmatched =
+                    libraryNotifications &&
+                    !await _repo.HasAnyScanLogForPathVariantsAsync(filePath, cancellationToken).ConfigureAwait(false);
                 await SaveUnmatchedAsync(filePath, parsed, Array.Empty<TmdbSearchResult>(), cancellationToken)
                     .ConfigureAwait(false);
                 result.Unmatched++;
-                Report("Unmatched (unknown media type)");
+                ReportScan("Unmatched (unknown media type)", toastUnmatched, UnmatchedLabel(filePath, parsed), "file",
+                    false);
                 continue;
             }
 
-            Report("Searching TMDB");
+            ReportScan("Searching TMDB");
 
             List<TmdbSearchResult> searchResults;
             try
@@ -144,10 +166,14 @@ public sealed class ScanPipeline
             }
             catch
             {
+                var toastUnmatched =
+                    libraryNotifications &&
+                    !await _repo.HasAnyScanLogForPathVariantsAsync(filePath, cancellationToken).ConfigureAwait(false);
                 await SaveUnmatchedAsync(filePath, parsed, Array.Empty<TmdbSearchResult>(), cancellationToken)
                     .ConfigureAwait(false);
                 result.Unmatched++;
-                Report("Unmatched (search error)");
+                ReportScan("Unmatched (search error)", toastUnmatched, UnmatchedLabel(filePath, parsed),
+                    KindForNotifications(mediaType), false);
                 continue;
             }
 
@@ -157,9 +183,13 @@ public sealed class ScanPipeline
                     cancellationToken).ConfigureAwait(false);
                 if (!TryPickAutoMatch(parsed, expanded, mediaType, out topPick))
                 {
+                    var toastUnmatched =
+                        libraryNotifications &&
+                        !await _repo.HasAnyScanLogForPathVariantsAsync(filePath, cancellationToken).ConfigureAwait(false);
                     await SaveUnmatchedAsync(filePath, parsed, expanded, cancellationToken).ConfigureAwait(false);
                     result.Unmatched++;
-                    Report("Unmatched (needs review)");
+                    ReportScan("Unmatched (needs review)", toastUnmatched, UnmatchedLabel(filePath, parsed),
+                        KindForNotifications(mediaType), false);
                     continue;
                 }
 
@@ -168,7 +198,7 @@ public sealed class ScanPipeline
 
             var top = topPick;
 
-            Report("Matching");
+            ReportScan("Matching");
             TmdbDetails details;
             try
             {
@@ -176,17 +206,27 @@ public sealed class ScanPipeline
             }
             catch
             {
+                var toastUnmatched =
+                    libraryNotifications &&
+                    !await _repo.HasAnyScanLogForPathVariantsAsync(filePath, cancellationToken).ConfigureAwait(false);
                 await SaveUnmatchedAsync(filePath, parsed, searchResults, cancellationToken).ConfigureAwait(false);
                 result.Unmatched++;
-                Report("Unmatched (details error)");
+                ReportScan("Unmatched (details error)", toastUnmatched, UnmatchedLabel(filePath, parsed),
+                    KindForNotifications(mediaType), false);
                 continue;
             }
 
+            var alreadyHadMatchedScanLog =
+                await _repo.HasMatchedScanLogForPathVariantsAsync(filePath, cancellationToken).ConfigureAwait(false);
             await ApplyMatchFromDetailsAsync(filePath, parsed, details, mediaType, cancellationToken)
                 .ConfigureAwait(false);
 
             result.Matched++;
-            Report("Matched");
+            var matchTitle = mediaType == "Series"
+                ? $"{details.Title}{(parsed.Season is { } ps && parsed.Episode is { } pe ? $" · S{ps:D2}E{pe:D2}" : "")}"
+                : details.Title;
+            var matchKind = KindForNotifications(mediaType);
+            ReportScan("Matched", libraryNotifications && !alreadyHadMatchedScanLog, matchTitle, matchKind, true);
         }
 
         return result;

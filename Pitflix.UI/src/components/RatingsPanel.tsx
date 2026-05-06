@@ -7,8 +7,7 @@ function hasAnyData(r: RatingsPanelData) {
   return (
     r.tmdbVoteAverage != null ||
     (r.imdbRatingDisplay && r.imdbRatingDisplay.trim() !== "") ||
-    (r.rottenTomatoesCritics && r.rottenTomatoesCritics.trim() !== "") ||
-    (r.rottenTomatoesAudience && r.rottenTomatoesAudience.trim() !== "")
+    (r.rottenTomatoesCritics && r.rottenTomatoesCritics.trim() !== "")
   );
 }
 
@@ -91,7 +90,7 @@ export function RatingsPanel({
         subLine={
           r.tmdbVoteCount != null && r.tmdbVoteCount > 0
             ? `${r.tmdbVoteCount.toLocaleString()} votes`
-            : "Audience score"
+            : "TMDB score"
         }
       />,
     );
@@ -129,19 +128,6 @@ export function RatingsPanel({
     );
   }
 
-  if (r.rottenTomatoesAudience && r.rottenTomatoesAudience.trim() !== "") {
-    chips.push(
-      <SourceChip
-        key="aud"
-        brand="Audience"
-        accent="ring-1 ring-violet-500/20"
-        barClass="border-l-2 border-violet-400/70"
-        scoreLine={r.rottenTomatoesAudience}
-        subLine="Verified audience"
-      />,
-    );
-  }
-
   if (chips.length === 0) return null;
 
   return (
@@ -172,16 +158,7 @@ export function RatingsPanel({
           Updated {new Date(r.fetchedAtUtc).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" })}
         </p>
       </div>
-      <div
-        className={cn(
-          "mt-3 max-w-full overflow-x-auto overflow-y-visible pb-1",
-          "[scrollbar-color:rgba(139,92,246,0.4)_rgba(15,15,20,0.85)] [scrollbar-width:thin]",
-          "[&::-webkit-scrollbar]:h-2 [&::-webkit-scrollbar-thumb]:rounded-full [&::-webkit-scrollbar-thumb]:bg-violet-500/40",
-          "[&::-webkit-scrollbar-thumb]:hover:bg-violet-400/50 [&::-webkit-scrollbar-track]:rounded-full [&::-webkit-scrollbar-track]:bg-black/45",
-        )}
-      >
-        <div className="flex w-max flex-nowrap gap-2.5">{chips}</div>
-      </div>
+      <div className="mt-3 flex flex-wrap gap-2.5">{chips}</div>
     </div>
   );
 }

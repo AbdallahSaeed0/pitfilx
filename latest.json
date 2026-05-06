@@ -1,11 +1,11 @@
 {
-  "version": "0.3.8",
+  "version": "0.3.9",
   "notes": "New release for update.",
-  "pub_date": "2026-04-21T12:00:00Z",
+  "pub_date": "2026-05-6T12:00:00Z",
   "platforms": {
     "windows-x86_64": {
-      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVTbzhqUXl3T0s3bnRpeVpZOFYwUDZSK0dGRGRtNklmWEpzR001a1E0VnozSkpDZ3k5NmV3ZkQrckp4cXVFaTYxMGJVOWozaFQvVGdRWTR0SjBkT0d5SkJWcFNyR1V1TEFNPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzc2NzQ3NDQ5CWZpbGU6UGl0ZmxpeF8wLjMuOF94NjQtc2V0dXAuZXhlCmdZRTFkTU5mS09NTFZQZWJEQlJtVmpqU09ESXFkTjlDNldOTzJ3cCthWEhVV0xtYmRmaTRBNU0ydVRLdTdBYkhTVDNxRDZQT0J2WmxaWlcxWkRNUEN3PT0K",
-      "url": "https://github.com/AbdallahSaeed0/pitfilx/releases/download/v0.3.8/Pitflix_0.3.8_x64-setup.exe"
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVTbzhqUXl3T0s3bnJ3Qi9SRGUrVHg0TzJoWUkzV0tSNGQyUW15Rk9RQzBWdy9rZUphTEYyZFBJZkxFempBRVJtcHoxT1NJL01hb002azQ2c1JqaDVwY25LazNBVGFmWFFVPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzc4MDQwMDM3CWZpbGU6UGl0ZmxpeF8wLjMuOV94NjQtc2V0dXAuZXhlCnJLTnF5MHgwcnA4Q2RlM0NSd2dYcWFpbzFiOFluSjQ3QTdHY01RaCtLZWZ4Q0MzRUU4R2NBZkxraXNmMFpZY3ZUVkFOM3IrRE1ZWmRYOWRNSnB4a0NRPT0K",
+      "url": "https://github.com/AbdallahSaeed0/pitfilx/releases/download/v0.3.9/Pitflix_0.3.9_x64-setup.exe"
     }
   }
 }

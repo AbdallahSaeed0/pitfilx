@@ -47,6 +47,15 @@ export const DEFAULT_HOME_SPECIAL_SECTIONS: HomeSectionConfig[] = [
     sourceType: "next_episodes",
     layoutStyle: "poster-row",
   },
+  {
+    id: "home_next_episodes_all",
+    title: "All upcoming episodes",
+    subtitle: "Wider schedule from library and followed shows",
+    enabled: false,
+    order: -2,
+    sourceType: "next_episodes_all",
+    layoutStyle: "poster-row",
+  },
 ];
 
 const DEFAULT_HOME_LIBRARY_SECTIONS: HomeSectionConfig[] = [

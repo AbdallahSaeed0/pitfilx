@@ -18,9 +18,10 @@ public sealed class TrailerIngestionHostedService : BackgroundService
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
+        var startupDelaySeconds = Math.Clamp(_configuration.GetValue("Pitflix:Trailers:StartupDelaySeconds", 45), 0, 600);
         try
         {
-            await Task.Delay(TimeSpan.FromMinutes(2), stoppingToken).ConfigureAwait(false);
+            await Task.Delay(TimeSpan.FromSeconds(startupDelaySeconds), stoppingToken).ConfigureAwait(false);
         }
         catch (OperationCanceledException)
         {

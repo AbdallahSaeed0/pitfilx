@@ -10,6 +10,8 @@ public sealed class WatchingCurrentlyApiRow
     public string? PosterUrl { get; set; }
     public string LastWatchedLabel { get; init; } = "";
     public string NextLabel { get; init; } = "";
+    public int NextSeason { get; init; }
+    public int NextEpisode { get; init; }
     public int EpisodesRemaining { get; init; }
     public int WatchedEpisodes { get; init; }
     public int TotalEpisodes { get; init; }
@@ -24,6 +26,8 @@ public sealed class WatchingCurrentlyApiRow
         PosterUrl = posterUrl,
         LastWatchedLabel = $"S{r.LastWatchedSeason:D2}E{r.LastWatchedEpisode:D2}",
         NextLabel = $"S{r.NextSeason:D2}E{r.NextEpisode:D2}",
+        NextSeason = r.NextSeason,
+        NextEpisode = r.NextEpisode,
         EpisodesRemaining = r.EpisodesRemaining,
         WatchedEpisodes = r.WatchedEpisodes,
         TotalEpisodes = r.TotalEpisodes,

@@ -212,3 +212,6 @@ This project is for personal use. TMDB data is used under their API terms of ser
 
 - Metadata provided by [The Movie Database (TMDB)](https://www.themoviedb.org/)
 - Built with [Tauri](https://tauri.app/), [React](https://react.dev/), and [.NET](https://dotnet.microsoft.com/)
+
+
+AIzaSyCwQnkRZY2Nz45xuP-tt_RjF0d8SCff8oI

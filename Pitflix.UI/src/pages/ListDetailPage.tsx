@@ -4,9 +4,10 @@ import { getListById, getListItems } from "../api/lists";
 import { PosterCard } from "../components/ui/PosterCard";
 import { Spinner } from "../components/ui/Spinner";
 import type { MediaCard } from "../types/media";
+import { decodeListTitle } from "../utils/listMarks";
 
 function formatListTitle(name: string, isDefault: boolean) {
-  const n = name.trim();
+  const n = decodeListTitle(name).title.trim();
   if (isDefault && /^favorites$/i.test(n)) return `❤️ ${n}`;
   return n;
 }
