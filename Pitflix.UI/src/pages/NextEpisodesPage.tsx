@@ -1,8 +1,20 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { CalendarClock, Link as LinkIcon, Search, Tv, X } from "lucide-react";
+import {
+  ArrowLeft,
+  CalendarClock,
+  Globe,
+  Library,
+  Link as LinkIcon,
+  Search,
+  Sparkles,
+  Tv,
+  X,
+} from "lucide-react";
 import { useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import { MediaImage } from "../components/ui/MediaImage";
+import { AirDateCountdown } from "../components/ui/AirDateCountdown";
+import { NextEpisodeAirRowInteractive, SeasonEpisodeBadge } from "../features/nextEpisodes/nextEpisodeAirUi";
 import { toPosterSrc } from "../utils/posterSrc";
 import {
   discoverTvSchedule,
@@ -13,96 +25,22 @@ import {
   putNextEpisodesFollowed,
   putNextEpisodesPins,
   type FollowedExternalShow,
-  type NextEpisodeAir,
 } from "../api/homeDiscover";
 import { getAllSeries } from "../api/series";
 import type { MediaCard } from "../types/media";
 import { useDebounce } from "../hooks/useDebounce";
 import { Spinner } from "../components/ui/Spinner";
 import { cn } from "../utils/cn";
-import { airDateToUtcMs, formatCountdown, useCountdown } from "../hooks/useCountdown";
-
 type SeriesPage = { items?: MediaCard[]; total?: number };
 
-function CountdownLine({ airDate }: { airDate: string }) {
-  const target = airDateToUtcMs(airDate, null);
-  const left = useCountdown(target);
-  const cd = formatCountdown(left);
-  return cd ? <p className="font-mono text-[11px] text-amber-100/90">{cd}</p> : null;
-}
+const sectionCard =
+  "rounded-2xl border border-white/[0.07] bg-gradient-to-b from-pitflix-surface/80 to-pitflix-bg/30 p-5 shadow-[inset_0_1px_0_0_rgba(255,255,255,0.04)] backdrop-blur-sm sm:p-6";
 
-function ScheduleRow({
-  r,
-  pinned,
-  onTogglePin,
-}: {
-  r: NextEpisodeAir;
-  pinned?: boolean;
-  onTogglePin?: (libraryShowId: number, pin: boolean) => void;
-}) {
-  const lib = r.libraryShowId != null;
-  const href = lib ? `/series/${r.libraryShowId}` : `https://www.themoviedb.org/tv/${r.showTmdbId}`;
-  const className = cn(
-    "block rounded-xl border px-4 py-3 transition-colors",
-    pinned
-      ? "border-pitflix-primary/35 bg-pitflix-primary/10 hover:border-pitflix-primary/55"
-      : "border-pitflix-card/50 bg-pitflix-surface/40 hover:border-pitflix-primary/40",
-  );
-  return (
-    <div className={className}>
-      <div className="flex w-full items-center justify-between gap-3">
-        <div className="flex min-w-0 flex-1 items-center gap-3">
-          {r.posterUrl ? (
-            <div className="h-14 w-10 shrink-0 overflow-hidden rounded-md bg-pitflix-card">
-              <img src={r.posterUrl} alt="" className="h-full w-full object-cover" />
-            </div>
-          ) : null}
-          <div className="min-w-0">
-            <p className="truncate font-medium text-white">{r.showTitle}</p>
-            <p className="truncate text-xs text-pitflix-subtle">
-              {r.episodeTitle || "Episode"} · S{r.season ?? "?"}E{r.episodeNumber ?? "?"}
-            </p>
-            {r.kind === "followed" ? (
-              <p className="text-[10px] text-amber-200/80">Followed · TMDB</p>
-            ) : null}
-          </div>
-        </div>
-        <div className="shrink-0 text-right">
-          <p className="text-[11px] text-pitflix-muted">{r.airDate}</p>
-          <CountdownLine airDate={r.airDate} />
-        </div>
-      </div>
-      <div className="mt-2 flex justify-end gap-2">
-        {lib ? (
-          <Link
-            to={href}
-            className="rounded-md border border-pitflix-card/60 px-2 py-1 text-[11px] text-pitflix-muted hover:text-white"
-          >
-            Open
-          </Link>
-        ) : (
-          <a
-            href={href}
-            target="_blank"
-            rel="noreferrer"
-            className="rounded-md border border-pitflix-card/60 px-2 py-1 text-[11px] text-pitflix-muted hover:text-white"
-          >
-            Open
-          </a>
-        )}
-        {lib && onTogglePin && r.libraryShowId ? (
-          <button
-            type="button"
-            onClick={() => onTogglePin(r.libraryShowId!, !pinned)}
-            className="rounded-md bg-pitflix-primary/20 px-2 py-1 text-[11px] font-semibold text-pitflix-primary hover:bg-pitflix-primary/30"
-          >
-            {pinned ? "Unpin" : "Pin"}
-          </button>
-        ) : null}
-      </div>
-    </div>
-  );
-}
+const sectionCardAccent =
+  "rounded-2xl border border-pitflix-primary/25 bg-gradient-to-br from-pitflix-primary/[0.14] via-pitflix-surface/50 to-pitflix-bg/25 p-5 shadow-[inset_0_1px_0_0_rgba(255,255,255,0.06)] backdrop-blur-sm sm:p-6";
+
+const searchInputClass =
+  "w-full rounded-xl border border-white/10 bg-black/25 py-2.5 pl-10 pr-3 text-sm text-white placeholder:text-pitflix-muted shadow-inner backdrop-blur-sm transition-colors focus:border-pitflix-primary/70 focus:outline-none focus:ring-2 focus:ring-pitflix-primary/25";
 
 export function NextEpisodesPage() {
   const qc = useQueryClient();
@@ -225,28 +163,47 @@ export function NextEpisodesPage() {
   }, [rows, searchHits]);
 
   return (
-    <div className="mx-auto max-w-3xl space-y-8 pb-14">
-      <div className="flex flex-wrap items-start justify-between gap-4">
-        <div>
-          <h1 className="flex items-center gap-2 text-2xl font-bold text-white">
-            <CalendarClock className="h-8 w-8 text-pitflix-primary" />
-            Next episodes
-          </h1>
-          <p className="mt-2 max-w-xl text-sm text-pitflix-subtle">
-            Pin series from your library so they are always checked for TMDB air dates (and sorted to the top). Pinned
-            shows still need a valid <code className="text-pitflix-muted">next_episode_to_air</code> from TMDB.
-          </p>
+    <div className="mx-auto max-w-4xl space-y-8 pb-14">
+      <header className="relative overflow-hidden rounded-3xl border border-white/[0.08] bg-gradient-to-br from-pitflix-primary/15 via-pitflix-surface/40 to-pitflix-bg/60 px-5 py-6 sm:px-8 sm:py-8">
+        <div className="pointer-events-none absolute -right-16 -top-16 h-48 w-48 rounded-full bg-pitflix-primary/20 blur-3xl" aria-hidden />
+        <div className="relative flex flex-col gap-5 sm:flex-row sm:items-start sm:justify-between">
+          <div className="min-w-0 space-y-3">
+            <Link
+              to="/"
+              className="inline-flex items-center gap-1.5 text-xs font-medium text-pitflix-muted transition-colors hover:text-white"
+            >
+              <ArrowLeft className="h-3.5 w-3.5" />
+              Home
+            </Link>
+            <div className="flex items-center gap-3">
+              <span className="flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl bg-pitflix-primary/25 ring-1 ring-pitflix-primary/35">
+                <CalendarClock className="h-7 w-7 text-pitflix-primary" aria-hidden />
+              </span>
+              <div>
+                <h1 className="text-2xl font-bold tracking-tight text-white sm:text-3xl">Next episodes</h1>
+                <p className="mt-1 max-w-xl text-sm leading-relaxed text-pitflix-subtle">
+                  Track air dates from TMDB. Pin library shows to keep them at the top of your schedule; each show still
+                  needs a published next air date in TMDB.
+                </p>
+              </div>
+            </div>
+          </div>
         </div>
-        <Link to="/" className="text-sm text-pitflix-primary hover:underline">
-          ← Home
-        </Link>
-      </div>
+      </header>
 
-      <section className="space-y-3 rounded-2xl border border-pitflix-primary/25 bg-gradient-to-br from-pitflix-primary/10 to-pitflix-surface/30 p-5">
-        <p className="text-xs font-semibold uppercase tracking-wide text-pitflix-primary/90">Look up any show (TMDB)</p>
-        <p className="text-xs text-pitflix-subtle">
-          Search titles not in your library — we read the next episode to air from TMDB (same source as library rows).
-        </p>
+      <div className="grid gap-6 lg:grid-cols-2">
+      <section className={`space-y-4 ${sectionCardAccent}`}>
+        <div className="flex items-start gap-3">
+          <span className="mt-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-black/20 ring-1 ring-white/10">
+            <Globe className="h-4 w-4 text-pitflix-primary" aria-hidden />
+          </span>
+          <div>
+            <p className="text-sm font-semibold text-white">Discover on TMDB</p>
+            <p className="mt-1 text-xs leading-relaxed text-pitflix-subtle">
+              Look up any series, see the next scheduled episode, and follow it even when it is not in your library.
+            </p>
+          </div>
+        </div>
         <div className="relative">
           <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-pitflix-muted" />
           <input
@@ -256,8 +213,8 @@ export function NextEpisodesPage() {
               setExternalSearch(e.target.value);
               setExternalPickTmdb(null);
             }}
-            placeholder="Search any TV series (e.g. Severance)…"
-            className="w-full rounded-xl border border-pitflix-card bg-pitflix-bg py-2.5 pl-10 pr-3 text-sm text-white placeholder:text-pitflix-muted focus:border-pitflix-primary focus:outline-none focus:ring-1 focus:ring-pitflix-primary/40"
+            placeholder="Search TV series (e.g. Severance)…"
+            className={searchInputClass}
           />
         </div>
         {debouncedExternal.trim().length > 0 && debouncedExternal.trim().length < 2 ? (
@@ -300,7 +257,7 @@ export function NextEpisodesPage() {
           </ul>
         ) : null}
         {externalPickTmdb != null ? (
-          <div className="rounded-xl border border-pitflix-card/50 bg-black/25 p-4">
+          <div className="rounded-2xl border border-white/10 bg-black/30 p-4 shadow-inner backdrop-blur-sm">
             {externalScheduleQ.isLoading ? (
               <div className="flex items-center gap-2 text-sm text-pitflix-subtle">
                 <Spinner className="h-4 w-4" /> Loading schedule…
@@ -309,14 +266,21 @@ export function NextEpisodesPage() {
               <p className="text-sm text-rose-200/90">Could not load schedule.</p>
             ) : externalScheduleQ.data?.ok ? (
               <div className="space-y-3">
-                <div className="space-y-1">
+                <div className="space-y-2">
                   <p className="font-semibold text-white">{externalScheduleQ.data.showTitle}</p>
-                  <p className="text-sm text-pitflix-subtle">
-                    {externalScheduleQ.data.episodeTitle || "Episode"} · S{externalScheduleQ.data.season ?? "?"}E
-                    {externalScheduleQ.data.episodeNumber ?? "?"}
+                  <p className="flex flex-wrap items-center gap-2 text-sm text-pitflix-subtle">
+                    <span>{externalScheduleQ.data.episodeTitle || "Episode"}</span>
+                    <SeasonEpisodeBadge
+                      season={externalScheduleQ.data.season}
+                      episodeNumber={externalScheduleQ.data.episodeNumber}
+                    />
                   </p>
-                  <p className="text-xs text-pitflix-muted">Airs {externalScheduleQ.data.airDate ?? "—"}</p>
-                  {externalScheduleQ.data.airDate ? <CountdownLine airDate={externalScheduleQ.data.airDate} /> : null}
+                  <div className="flex flex-wrap items-center gap-2">
+                    <p className="text-xs text-pitflix-muted">Airs {externalScheduleQ.data.airDate ?? "—"}</p>
+                    {externalScheduleQ.data.airDate ? (
+                      <AirDateCountdown airDate={externalScheduleQ.data.airDate} layout="segments" size="md" />
+                    ) : null}
+                  </div>
                 </div>
                 {(() => {
                   const hit = externalHitsQ.data?.find((x) => x.tmdbId === externalPickTmdb);
@@ -351,8 +315,18 @@ export function NextEpisodesPage() {
         ) : null}
       </section>
 
-      <section className="space-y-3 rounded-2xl border border-pitflix-card/50 bg-pitflix-surface/40 p-5">
-        <p className="text-xs font-semibold uppercase tracking-wide text-pitflix-muted">Add from library</p>
+      <section className={`space-y-4 ${sectionCard}`}>
+        <div className="flex items-start gap-3">
+          <span className="mt-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-white/5 ring-1 ring-white/10">
+            <Library className="h-4 w-4 text-pitflix-primary" aria-hidden />
+          </span>
+          <div>
+            <p className="text-sm font-semibold text-white">Pin from your library</p>
+            <p className="mt-1 text-xs leading-relaxed text-pitflix-subtle">
+              Search a show you already own and pin it so it is prioritized in the combined schedule.
+            </p>
+          </div>
+        </div>
         <div className="relative">
           <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-pitflix-muted" />
           <input
@@ -360,7 +334,7 @@ export function NextEpisodesPage() {
             value={librarySearch}
             onChange={(e) => setLibrarySearch(e.target.value)}
             placeholder="Search your series (e.g. The Boys)…"
-            className="w-full rounded-xl border border-pitflix-card bg-pitflix-bg py-2.5 pl-10 pr-3 text-sm text-white placeholder:text-pitflix-muted focus:border-pitflix-primary focus:outline-none focus:ring-1 focus:ring-pitflix-primary/40"
+            className={searchInputClass}
           />
         </div>
         {debouncedLib.trim().length >= 1 && searchQ.isFetching ? (
@@ -372,21 +346,23 @@ export function NextEpisodesPage() {
           <p className="text-xs text-pitflix-subtle">No matches in your library for that query.</p>
         ) : null}
         {searchHits.length > 0 ? (
-          <ul className="max-h-56 space-y-1 overflow-y-auto rounded-xl border border-pitflix-card/40 bg-black/20 p-2">
+          <ul className="max-h-56 space-y-1 overflow-y-auto rounded-xl border border-white/10 bg-black/25 p-2 shadow-inner">
             {searchHits.map((s) => (
               <li
                 key={s.id}
-                className="flex items-center justify-between gap-2 rounded-lg px-2 py-1.5 text-sm hover:bg-white/5"
+                className="flex items-center justify-between gap-2 rounded-lg px-2 py-2 text-sm transition-colors hover:bg-white/5"
               >
-                <span className="min-w-0 truncate text-white">{s.title}</span>
+                <span className="min-w-0 truncate font-medium text-white">{s.title}</span>
                 {pinnedIds.has(s.id) ? (
-                  <span className="shrink-0 text-[11px] text-pitflix-muted">Pinned</span>
+                  <span className="shrink-0 rounded-md bg-white/10 px-2 py-0.5 text-[11px] font-medium text-pitflix-muted">
+                    Pinned
+                  </span>
                 ) : (
                   <button
                     type="button"
                     disabled={savePins.isPending}
                     onClick={() => addPin(s.id)}
-                    className="shrink-0 rounded-lg bg-pitflix-primary/25 px-2 py-0.5 text-[11px] font-semibold text-pitflix-primary hover:bg-pitflix-primary/35 disabled:opacity-50"
+                    className="shrink-0 rounded-lg bg-pitflix-primary/25 px-2.5 py-1 text-[11px] font-semibold text-pitflix-primary hover:bg-pitflix-primary/35 disabled:opacity-50"
                   >
                     Pin
                   </button>
@@ -396,11 +372,18 @@ export function NextEpisodesPage() {
           </ul>
         ) : null}
       </section>
+      </div>
 
-      <section className="rounded-2xl border border-pitflix-card/50 bg-pitflix-surface/35 p-5">
-        <div className="mb-3 flex items-center gap-2">
-          <Tv className="h-5 w-5 text-amber-200/90" />
-          <h2 className="font-semibold text-white">Followed (not in library)</h2>
+      <div className="grid gap-6 lg:grid-cols-2">
+      <section className={sectionCard}>
+        <div className="mb-4 flex items-center gap-2.5">
+          <span className="flex h-10 w-10 items-center justify-center rounded-xl bg-violet-500/15 ring-1 ring-violet-400/25">
+            <Tv className="h-5 w-5 text-violet-200/95" aria-hidden />
+          </span>
+          <div>
+            <h2 className="font-semibold text-white">Followed</h2>
+            <p className="text-xs text-pitflix-muted">TMDB-only shows you follow for air dates</p>
+          </div>
         </div>
         {followedQ.isLoading ? (
           <Spinner className="h-5 w-5" />
@@ -414,7 +397,7 @@ export function NextEpisodesPage() {
             {followedQ.data!.map((f) => (
               <li
                 key={f.tmdbId}
-                className="flex items-center justify-between gap-2 rounded-xl border border-pitflix-card/40 bg-black/25 px-3 py-2"
+                className="flex items-center justify-between gap-2 rounded-xl border border-white/[0.07] bg-black/20 px-3 py-2.5 shadow-[inset_0_1px_0_0_rgba(255,255,255,0.04)]"
               >
                 <div className="flex min-w-0 items-center gap-2">
                   <div className="h-10 w-7 shrink-0 overflow-hidden rounded bg-pitflix-card">
@@ -445,10 +428,15 @@ export function NextEpisodesPage() {
         )}
       </section>
 
-      <section className="rounded-2xl border border-pitflix-card/50 bg-pitflix-surface/35 p-5">
-        <div className="mb-3 flex items-center gap-2">
-          <Tv className="h-5 w-5 text-pitflix-primary" />
-          <h2 className="font-semibold text-white">Pinned shows</h2>
+      <section className={sectionCard}>
+        <div className="mb-4 flex items-center gap-2.5">
+          <span className="flex h-10 w-10 items-center justify-center rounded-xl bg-pitflix-primary/20 ring-1 ring-pitflix-primary/35">
+            <Sparkles className="h-5 w-5 text-pitflix-primary" aria-hidden />
+          </span>
+          <div>
+            <h2 className="font-semibold text-white">Pinned shows</h2>
+            <p className="text-xs text-pitflix-muted">Library series boosted in your schedule</p>
+          </div>
         </div>
         {pinsQ.isLoading ? (
           <Spinner className="h-5 w-5" />
@@ -459,7 +447,7 @@ export function NextEpisodesPage() {
             {pinsQ.data!.showIds.map((id) => (
               <li
                 key={id}
-                className="flex items-center justify-between gap-2 rounded-xl border border-pitflix-card/40 bg-black/25 px-3 py-2"
+                className="flex items-center justify-between gap-2 rounded-xl border border-white/[0.07] bg-black/20 px-3 py-2.5 shadow-[inset_0_1px_0_0_rgba(255,255,255,0.04)]"
               >
                 <Link to={`/series/${id}`} className="min-w-0 truncate text-sm text-white hover:underline">
                   {titleByLibraryId.get(id) ?? `Series (library #${id})`}
@@ -479,9 +467,16 @@ export function NextEpisodesPage() {
           </ul>
         )}
       </section>
+      </div>
 
-      <section className="rounded-2xl border border-pitflix-card/40 bg-gradient-to-b from-pitflix-surface/40 to-pitflix-bg/20 p-6">
-        <h2 className="mb-4 text-lg font-bold text-white">Upcoming from TMDB</h2>
+      <section className="rounded-3xl border border-white/[0.08] bg-gradient-to-b from-pitflix-surface/70 via-pitflix-bg/40 to-pitflix-bg/20 p-6 shadow-[inset_0_1px_0_0_rgba(255,255,255,0.05)] backdrop-blur-sm sm:p-8">
+        <div className="mb-6 flex flex-wrap items-end justify-between gap-3">
+          <div>
+            <h2 className="text-xl font-bold tracking-tight text-white">Upcoming schedule</h2>
+            <p className="mt-1 text-sm text-pitflix-subtle">Merged list from your library, pins, and followed shows</p>
+          </div>
+          <p className="text-xs tabular-nums text-pitflix-muted">{rows.length} entr{rows.length === 1 ? "y" : "ies"}</p>
+        </div>
         {scheduleQ.isLoading ? (
           <div className="flex items-center gap-2 text-sm text-pitflix-subtle">
             <Spinner className="h-5 w-5" /> Loading schedule…
@@ -496,15 +491,25 @@ export function NextEpisodesPage() {
           <div className="space-y-4">
             {pinnedSchedule.length > 0 ? (
               <div>
-                <p className="mb-2 text-[11px] font-semibold uppercase tracking-wide text-pitflix-primary/90">
-                  Pinned · priority
+                <p className="mb-3 flex items-center gap-2 text-[11px] font-semibold uppercase tracking-[0.12em] text-pitflix-primary/95">
+                  <span className="h-px flex-1 bg-gradient-to-r from-transparent to-pitflix-primary/35" aria-hidden />
+                  Pinned first
+                  <span className="h-px flex-1 bg-gradient-to-l from-transparent to-pitflix-primary/35" aria-hidden />
                 </p>
-                <div className="space-y-2">
+                <div className="space-y-3">
                   {pinnedSchedule.map((r) => (
-                    <ScheduleRow
-                      key={`${r.libraryShowId}-${r.airDate}`}
-                      r={r}
+                    <NextEpisodeAirRowInteractive
+                      key={`${r.kind ?? "lib"}-${r.showTmdbId}-${r.airDate}-${r.season}-${r.episodeNumber}`}
+                      libraryShowId={r.libraryShowId}
+                      showTmdbId={r.showTmdbId}
+                      showTitle={r.showTitle}
+                      episodeTitle={r.episodeTitle}
+                      season={r.season}
+                      episodeNumber={r.episodeNumber}
+                      airDate={r.airDate}
+                      posterUrl={r.posterUrl}
                       pinned
+                      kind={r.kind === "followed" ? "followed" : undefined}
                       onTogglePin={(id, pin) => (pin ? addPin(id) : removePin(id))}
                     />
                   ))}
@@ -514,16 +519,26 @@ export function NextEpisodesPage() {
             {restSchedule.length > 0 ? (
               <div>
                 {pinnedSchedule.length > 0 ? (
-                  <p className="mb-2 text-[11px] font-semibold uppercase tracking-wide text-pitflix-muted">
-                    Other library shows
+                  <p className="mb-3 mt-6 flex items-center gap-2 text-[11px] font-semibold uppercase tracking-[0.12em] text-pitflix-muted">
+                    <span className="h-px flex-1 bg-gradient-to-r from-transparent to-white/15" aria-hidden />
+                    Everything else
+                    <span className="h-px flex-1 bg-gradient-to-l from-transparent to-white/15" aria-hidden />
                   </p>
                 ) : null}
-                <div className="space-y-2">
+                <div className="space-y-3">
                   {restSchedule.map((r) => (
-                    <ScheduleRow
+                    <NextEpisodeAirRowInteractive
                       key={`${r.kind ?? "lib"}-${r.showTmdbId}-${r.airDate}-${r.season}-${r.episodeNumber}`}
-                      r={r}
+                      libraryShowId={r.libraryShowId}
+                      showTmdbId={r.showTmdbId}
+                      showTitle={r.showTitle}
+                      episodeTitle={r.episodeTitle}
+                      season={r.season}
+                      episodeNumber={r.episodeNumber}
+                      airDate={r.airDate}
+                      posterUrl={r.posterUrl}
                       pinned={!!(r.libraryShowId && pinnedIds.has(r.libraryShowId))}
+                      kind={r.kind === "followed" ? "followed" : undefined}
                       onTogglePin={(id, pin) => (pin ? addPin(id) : removePin(id))}
                     />
                   ))}

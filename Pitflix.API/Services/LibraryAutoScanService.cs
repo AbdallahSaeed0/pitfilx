@@ -1,3 +1,5 @@
+using Microsoft.Extensions.Logging;
+using Pitflix.Core;
 using Pitflix.Core.Api;
 using Pitflix.Core.Database;
 using Pitflix.Core.Models;
@@ -11,19 +13,22 @@ public sealed class LibraryAutoScanService : BackgroundService
     private readonly IServiceScopeFactory _scopes;
     private readonly ScanRuntime _scanRuntime;
     private readonly RatingsRefreshQueue _ratingsRefreshQueue;
+    private readonly ILogger<LibraryAutoScanService> _logger;
 
-    public LibraryAutoScanService(IServiceScopeFactory scopes, ScanRuntime scanRuntime, RatingsRefreshQueue ratingsRefreshQueue)
+    public LibraryAutoScanService(IServiceScopeFactory scopes, ScanRuntime scanRuntime, RatingsRefreshQueue ratingsRefreshQueue,
+        ILogger<LibraryAutoScanService> logger)
     {
         _scopes = scopes;
         _scanRuntime = scanRuntime;
         _ratingsRefreshQueue = ratingsRefreshQueue;
+        _logger = logger;
     }
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
         try
         {
-            await Task.Delay(TimeSpan.FromMinutes(5), stoppingToken).ConfigureAwait(false);
+            await Task.Delay(TimeSpan.FromSeconds(90), stoppingToken).ConfigureAwait(false);
         }
         catch (OperationCanceledException)
         {
@@ -42,9 +47,9 @@ public sealed class LibraryAutoScanService : BackgroundService
                 {
                     break;
                 }
-                catch
+                catch (Exception ex)
                 {
-                    /* avoid crashing host — next hour retry */
+                    _logger.LogError(ex, "Library auto-scan failed with exception: {Message}", ex.Message);
                 }
             }
 
@@ -63,7 +68,10 @@ public sealed class LibraryAutoScanService : BackgroundService
     {
         var tmdb = TmdbClientFactory.Create();
         if (tmdb == null)
+        {
+            _logger.LogWarning("Library auto-scan skipped: TMDB API key is not configured.");
             return;
+        }
 
         await using var scope = _scopes.CreateAsyncScope();
         var repo = scope.ServiceProvider.GetRequiredService<LibraryRepository>();
@@ -78,13 +86,21 @@ public sealed class LibraryAutoScanService : BackgroundService
         {
             if (string.IsNullOrWhiteSpace(root))
                 continue;
-            foreach (var f in scannerFs.ScanDirectory(root, recursive: true, excludedPaths))
+            var norm = MediaPathNormalizer.PreferredPhysicalPath(root.Trim());
+            if (string.IsNullOrEmpty(norm))
+                continue;
+            foreach (var f in scannerFs.ScanDirectory(norm, recursive: true, excludedPaths))
                 fileList.Add(f);
         }
 
         var distinct = fileList.Distinct(StringComparer.OrdinalIgnoreCase).ToList();
         if (distinct.Count == 0)
+        {
+            _logger.LogInformation(
+                "Library auto-scan: 0 video files under {RootCount} library folder(s). Check paths exist, extensions (.mkv/.mp4/.ts/…), and Settings exclusions.",
+                paths.Count);
             return;
+        }
 
         var notifyDesktop = await repo.GetLibraryScanDesktopToastsEnabledAsync(cancellationToken).ConfigureAwait(false);
         var pipeline = new ScanPipeline(new FileScanner(), tmdb, repo);
@@ -101,7 +117,8 @@ public sealed class LibraryAutoScanService : BackgroundService
                 matched = p.LibraryNotificationMatched
             }, CancellationToken.None);
         });
-        await pipeline.RunScanOnFilesAsync(distinct, progress, cancellationToken, libraryNotifications: notifyDesktop)
+        await pipeline.RunScanOnFilesAsync(distinct, progress, cancellationToken, libraryNotifications: notifyDesktop,
+                skipUnchangedUnmatchedScanLogs: true)
             .ConfigureAwait(false);
         _ratingsRefreshQueue.TryEnqueueStaleSweep();
     }

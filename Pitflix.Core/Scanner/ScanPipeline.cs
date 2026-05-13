@@ -34,7 +34,8 @@ public sealed class ScanPipeline
         }
 
         var distinct = files.Distinct(StringComparer.OrdinalIgnoreCase).ToList();
-        return await RunScanOnFilesAsync(distinct, progress, cancellationToken).ConfigureAwait(false);
+        return await RunScanOnFilesAsync(distinct, progress, cancellationToken, libraryNotifications: false,
+            skipUnchangedUnmatchedScanLogs: true).ConfigureAwait(false);
     }
 
     /// <summary>Re-runs matching for every file currently logged as Unmatched (e.g. after parser improvements).</summary>
@@ -49,18 +50,82 @@ public sealed class ScanPipeline
     /// <summary>Processes an explicit list of media file paths (e.g. demo paths that are not on disk as a folder scan).</summary>
     public async Task<ScanPipelineResult> RunScanOnFilesAsync(IReadOnlyList<string> filePaths,
         IProgress<ScanProgress>? progress = null, CancellationToken cancellationToken = default,
-        bool libraryNotifications = false)
+        bool libraryNotifications = false, bool skipUnchangedUnmatchedScanLogs = false)
     {
         var distinct = filePaths.Distinct(StringComparer.OrdinalIgnoreCase).ToList();
-        var result = new ScanPipelineResult { TotalFiles = distinct.Count };
-        var total = distinct.Count;
+
+        LibraryPathPresenceIndex? presenceIndex = null;
+        try
+        {
+            presenceIndex = await _repo.CreateLibraryPathPresenceIndexAsync(cancellationToken).ConfigureAwait(false);
+        }
+        catch
+        {
+            // DB locked, corrupt snapshot, etc. — fall back to per-path lookup so the scan still runs (slower).
+            presenceIndex = null;
+        }
+
+        static DateTime SafeLastWriteUtc(string path)
+        {
+            try
+            {
+                return File.GetLastWriteTimeUtc(path);
+            }
+            catch
+            {
+                return DateTime.MinValue;
+            }
+        }
+
+        // Not-in-library paths first (so matched/unmatched update immediately), then most recently modified,
+        // then alphabetical. Previously everything was A→Z, so new files in "Z…" shows could sit at 0% matched for hours.
+        List<(string Preferred, DateTime Mtime, bool PreAlready)> ordered;
+        if (presenceIndex != null)
+        {
+            ordered = distinct
+                .Select(raw =>
+                {
+                    var preferred = MediaPathNormalizer.PreferredPhysicalPath(raw);
+                    var preAlready = string.IsNullOrEmpty(preferred)
+                        ? false
+                        : presenceIndex.IsPhysicalPathInLibrary(preferred);
+                    return (
+                        Preferred: preferred,
+                        Mtime: string.IsNullOrEmpty(preferred) ? DateTime.MinValue : SafeLastWriteUtc(preferred),
+                        PreAlready: preAlready);
+                })
+                .Where(x => !string.IsNullOrEmpty(x.Preferred))
+                .OrderBy(x => x.PreAlready ? 1 : 0)
+                .ThenByDescending(x => x.Mtime)
+                .ThenBy(x => x.Preferred, StringComparer.OrdinalIgnoreCase)
+                .ToList();
+        }
+        else
+        {
+            ordered = distinct
+                .Select(raw =>
+                {
+                    var preferred = MediaPathNormalizer.PreferredPhysicalPath(raw);
+                    return (
+                        Preferred: preferred,
+                        Mtime: string.IsNullOrEmpty(preferred) ? DateTime.MinValue : SafeLastWriteUtc(preferred),
+                        PreAlready: false);
+                })
+                .Where(x => !string.IsNullOrEmpty(x.Preferred))
+                .OrderByDescending(x => x.Mtime)
+                .ThenBy(x => x.Preferred, StringComparer.OrdinalIgnoreCase)
+                .ToList();
+        }
+
+        var result = new ScanPipelineResult { TotalFiles = ordered.Count };
+        var total = ordered.Count;
         var index = 0;
 
-        foreach (var rawPath in distinct)
+        foreach (var entry in ordered)
         {
             cancellationToken.ThrowIfCancellationRequested();
             index++;
-            var filePath = MediaPathNormalizer.PreferredPhysicalPath(rawPath);
+            var filePath = entry.Preferred;
 
             static string KindForNotifications(string mt) =>
                 string.Equals(mt, "Series", StringComparison.OrdinalIgnoreCase) ? "episode" : "movie";
@@ -69,6 +134,8 @@ public sealed class ScanPipeline
                 !string.IsNullOrWhiteSpace(pr.CleanName)
                     ? pr.CleanName.Trim()
                     : Path.GetFileNameWithoutExtension(path);
+
+            int SkippedCombined() => result.SkippedAlreadyMatched + result.SkippedUnchangedUnmatched;
 
             void ReportScan(string status, bool notify = false, string? notifyTitle = null, string? notifyKind = null,
                 bool notifyMatched = false)
@@ -82,7 +149,7 @@ public sealed class ScanPipeline
                     Status = status,
                     MatchedSoFar = result.Matched,
                     UnmatchedSoFar = result.Unmatched,
-                    SkippedSoFar = result.SkippedAlreadyMatched,
+                    SkippedSoFar = SkippedCombined(),
                     EmitLibraryNotification = emit,
                     LibraryNotificationTitle = emit ? notifyTitle : null,
                     LibraryNotificationKind = emit ? notifyKind : null,
@@ -92,7 +159,11 @@ public sealed class ScanPipeline
 
             ReportScan("Starting");
 
-            if (await _repo.IsFileAlreadyMatchedAsync(filePath, cancellationToken).ConfigureAwait(false))
+            var alreadyInLibrary = presenceIndex != null
+                ? entry.PreAlready
+                : await _repo.IsFileAlreadyMatchedAsync(filePath, cancellationToken).ConfigureAwait(false);
+
+            if (alreadyInLibrary)
             {
                 result.SkippedAlreadyMatched++;
                 ReportScan("Skipped (already matched)");
@@ -100,6 +171,16 @@ public sealed class ScanPipeline
             }
 
             var parsed = NameParser.Parse(filePath);
+            if (skipUnchangedUnmatchedScanLogs &&
+                !string.IsNullOrWhiteSpace(parsed.CleanName) &&
+                await _repo.HasUnchangedUnmatchedScanLogAsync(filePath, parsed.CleanName, cancellationToken)
+                    .ConfigureAwait(false))
+            {
+                result.SkippedUnchangedUnmatched++;
+                ReportScan("Skipped (unmatched unchanged — no TMDB re-query)");
+                continue;
+            }
+
             var mediaType = string.IsNullOrEmpty(parsed.MediaType)
                 ? FileScanner.InferMediaType(filePath)
                 : parsed.MediaType;

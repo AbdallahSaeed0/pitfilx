@@ -3,61 +3,9 @@ import { Link } from "react-router-dom";
 import { CalendarClock, Search, Tv } from "lucide-react";
 import { useMemo, useState } from "react";
 import { getNextEpisodesAirScoped } from "../../api/homeDiscover";
+import { NextEpisodeAirRowLink } from "../nextEpisodes/nextEpisodeAirUi";
 import { Spinner } from "../../components/ui/Spinner";
-import { airDateToUtcMs, formatCountdown, useCountdown } from "../../hooks/useCountdown";
-import { cn } from "../../utils/cn";
 import { useDebounce } from "../../hooks/useDebounce";
-import { MediaImage } from "../../components/ui/MediaImage";
-
-function Row({
-  title,
-  sub,
-  href,
-  external,
-  releaseDate,
-  posterUrl,
-}: {
-  title: string;
-  sub: string;
-  href: string;
-  external?: boolean;
-  releaseDate: string;
-  posterUrl?: string | null;
-}) {
-  const target = airDateToUtcMs(releaseDate, null);
-  const left = useCountdown(target);
-  const cd = formatCountdown(left);
-  const className =
-    "flex items-center justify-between gap-3 rounded-xl border border-pitflix-card/50 bg-pitflix-surface/40 px-4 py-3 transition-colors hover:border-pitflix-primary/40";
-  const inner = (
-    <>
-      <div className="flex min-w-0 items-center gap-3">
-        <div className="h-12 w-8 shrink-0 overflow-hidden rounded-md bg-pitflix-card/70">
-          <MediaImage src={posterUrl ?? undefined} alt="" className="h-full w-full object-cover" fallbackText="TV" />
-        </div>
-        <div className="min-w-0">
-          <p className="truncate font-medium text-white">{title}</p>
-          <p className="truncate text-xs text-pitflix-subtle">{sub}</p>
-        </div>
-      </div>
-      <div className="shrink-0 text-right">
-        <p className="text-[11px] text-pitflix-muted">{releaseDate}</p>
-        {cd ? <p className={cn("font-mono text-[11px] text-amber-100/90")}>{cd}</p> : null}
-      </div>
-    </>
-  );
-  if (external)
-    return (
-      <a href={href} target="_blank" rel="noreferrer" className={className}>
-        {inner}
-      </a>
-    );
-  return (
-    <Link to={href} className={className}>
-      {inner}
-    </Link>
-  );
-}
 
 type NextEpisodesProps = { embedded?: boolean; variant?: "priority" | "all" };
 
@@ -84,11 +32,14 @@ export function NextEpisodesSection({ embedded = false, variant = "priority" }: 
 
   const shell = embedded
     ? "space-y-3"
-    : "rounded-2xl border border-pitflix-card/40 bg-gradient-to-b from-zinc-950/85 to-pitflix-bg/20 p-6";
+    : "rounded-2xl border border-white/[0.07] bg-gradient-to-b from-zinc-950/85 to-pitflix-bg/25 p-6 shadow-[inset_0_1px_0_0_rgba(255,255,255,0.04)] backdrop-blur-sm";
+
+  const filterInput =
+    "w-full rounded-xl border border-white/10 bg-black/25 py-2.5 pl-10 pr-3 text-xs text-white placeholder:text-pitflix-muted shadow-inner backdrop-blur-sm transition-colors focus:border-pitflix-primary/70 focus:outline-none focus:ring-2 focus:ring-pitflix-primary/25";
 
   if (q.isLoading)
     return (
-      <div className={embedded ? "py-2" : "rounded-2xl border border-pitflix-card/40 bg-pitflix-surface/30 p-6"}>
+      <div className={embedded ? "py-2" : "rounded-2xl border border-white/[0.07] bg-pitflix-surface/35 p-6"}>
         <div className="flex items-center gap-2 text-sm text-pitflix-subtle">
           <Spinner className="h-5 w-5" /> Checking your library for air dates…
         </div>
@@ -99,7 +50,9 @@ export function NextEpisodesSection({ embedded = false, variant = "priority" }: 
     return (
       <div
         className={
-          embedded ? "py-2 text-sm text-rose-100/90" : "rounded-2xl border border-rose-500/30 bg-rose-950/20 p-6 text-sm text-rose-100/90"
+          embedded
+            ? "py-2 text-sm text-rose-100/90"
+            : "rounded-2xl border border-rose-500/30 bg-rose-950/25 p-6 text-sm text-rose-100/90"
         }
       >
         Could not load next episodes.
@@ -112,16 +65,16 @@ export function NextEpisodesSection({ embedded = false, variant = "priority" }: 
         className={
           embedded
             ? "py-2 text-sm text-pitflix-subtle"
-            : "rounded-2xl border border-dashed border-pitflix-card/50 bg-pitflix-bg/40 p-6 text-sm text-pitflix-subtle"
+            : "rounded-2xl border border-dashed border-white/15 bg-pitflix-bg/40 p-6 text-sm text-pitflix-subtle"
         }
       >
         <p>No upcoming episodes from TMDB for series in your library (or none scheduled).</p>
         <Link
           to="/next-episodes"
-          className="mt-3 inline-flex items-center gap-1 text-xs font-semibold text-pitflix-primary hover:underline"
+          className="mt-3 inline-flex items-center gap-1.5 text-xs font-semibold text-pitflix-primary hover:underline"
         >
           <CalendarClock className="h-3.5 w-3.5" />
-          Pin series to prioritize in the next check
+          Open schedule &amp; pins
         </Link>
       </div>
     );
@@ -133,7 +86,9 @@ export function NextEpisodesSection({ embedded = false, variant = "priority" }: 
         {embedded ? null : (
           <div className="mb-4 flex flex-wrap items-center gap-3">
             <div className="flex items-center gap-2">
-              <Tv className="h-5 w-5 text-pitflix-primary" />
+              <span className="flex h-9 w-9 items-center justify-center rounded-xl bg-pitflix-primary/15 ring-1 ring-pitflix-primary/30">
+                <Tv className="h-5 w-5 text-pitflix-primary" aria-hidden />
+              </span>
               <h2 className="text-lg font-bold text-white">Next episodes</h2>
             </div>
             <Link
@@ -152,7 +107,7 @@ export function NextEpisodesSection({ embedded = false, variant = "priority" }: 
             value={filterQ}
             onChange={(e) => setFilterQ(e.target.value)}
             placeholder="Filter list…"
-            className="w-full rounded-lg border border-pitflix-card bg-pitflix-bg py-2 pl-9 pr-3 text-xs text-white placeholder:text-pitflix-muted focus:border-pitflix-primary focus:outline-none"
+            className={filterInput}
           />
         </div>
         <p className="text-sm text-pitflix-subtle">No rows match this filter.</p>
@@ -164,16 +119,20 @@ export function NextEpisodesSection({ embedded = false, variant = "priority" }: 
     <div className={shell}>
       {embedded ? null : (
         <div className="mb-4 flex flex-wrap items-center gap-3">
-          <div className="flex min-w-0 flex-1 items-center gap-2">
-            <Tv className="h-5 w-5 shrink-0 text-pitflix-primary" />
-            <h2 className="text-lg font-bold text-white">
-              {variant === "all" ? "All upcoming episodes" : "Next episodes"}
-            </h2>
-            <span className="hidden text-xs text-pitflix-subtle sm:inline">Library + TMDB</span>
+          <div className="flex min-w-0 flex-1 items-center gap-3">
+            <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-pitflix-primary/15 ring-1 ring-pitflix-primary/30">
+              <Tv className="h-5 w-5 text-pitflix-primary" aria-hidden />
+            </span>
+            <div className="min-w-0">
+              <h2 className="text-lg font-bold text-white md:text-xl">
+                {variant === "all" ? "All upcoming episodes" : "Next episodes"}
+              </h2>
+              <p className="hidden text-xs text-pitflix-subtle sm:block">Library + TMDB air dates</p>
+            </div>
           </div>
           <Link
             to="/next-episodes"
-            className="inline-flex items-center gap-1 text-xs font-semibold text-pitflix-primary hover:underline"
+            className="inline-flex shrink-0 items-center gap-1 text-xs font-semibold text-pitflix-primary hover:underline"
           >
             <CalendarClock className="h-3.5 w-3.5" />
             Manage pins
@@ -187,22 +146,26 @@ export function NextEpisodesSection({ embedded = false, variant = "priority" }: 
           value={filterQ}
           onChange={(e) => setFilterQ(e.target.value)}
           placeholder="Filter by show or episode…"
-          className="w-full rounded-lg border border-pitflix-card bg-pitflix-bg py-2 pl-9 pr-3 text-xs text-white placeholder:text-pitflix-muted focus:border-pitflix-primary focus:outline-none"
+          className={filterInput}
         />
       </div>
-      <div className="max-h-[min(420px,52vh)] space-y-2 overflow-y-auto scroll-smooth pr-1">
+      <div className="max-h-[min(420px,52vh)] space-y-2.5 overflow-y-auto scroll-smooth pr-1">
         {rows.map((r) => {
           const lib = r.libraryShowId != null;
           const href = lib ? `/series/${r.libraryShowId}` : `https://www.themoviedb.org/tv/${r.showTmdbId}`;
           return (
-            <Row
+            <NextEpisodeAirRowLink
               key={`${r.kind ?? "lib"}-${r.showTmdbId}-${r.airDate}-${r.season}-${r.episodeNumber}`}
-              title={r.showTitle}
-              sub={`${r.episodeTitle || "Episode"} · S${r.season ?? "?"}E${r.episodeNumber ?? "?"}`}
+              showTitle={r.showTitle}
+              episodeTitle={r.episodeTitle}
+              season={r.season}
+              episodeNumber={r.episodeNumber}
+              airDate={r.airDate}
+              posterUrl={r.posterUrl}
+              pinned={!!r.pinned}
+              kind={r.kind === "followed" ? "followed" : undefined}
               href={href}
               external={!lib}
-              releaseDate={r.airDate}
-              posterUrl={r.posterUrl}
             />
           );
         })}

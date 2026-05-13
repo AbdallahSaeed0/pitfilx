@@ -1256,6 +1256,107 @@ app.MapGet("/api/stream/tv/{tmdbId:int}/seasons", async (int tmdbId, Cancellatio
     return Results.Json(rows, jsonSerializerOptions);
 });
 
+// —— Stream TMDB details (for StreamingDetailsPage) ——
+app.MapGet("/api/stream/details/{tmdbId:int}", async (int tmdbId, string? mediaType, CancellationToken ct) =>
+{
+    var apiKey = AppSettings.ResolvedTmdbApiKey;
+    if (!AppSettings.IsValidTmdbKey(apiKey) || tmdbId <= 0)
+        return Results.Json(new { error = "TMDB not configured." }, jsonSerializerOptions);
+
+    var isMovie = !string.Equals(mediaType, "Series", StringComparison.OrdinalIgnoreCase);
+    var endpoint = isMovie ? $"movie/{tmdbId}" : $"tv/{tmdbId}";
+    var appendTo = "videos,recommendations,external_ids";
+    var url = $"https://api.themoviedb.org/3/{endpoint}?api_key={Uri.EscapeDataString(apiKey!)}&language=en-US&append_to_response={appendTo}";
+
+    try
+    {
+        using var http = new HttpClient();
+        http.DefaultRequestHeaders.UserAgent.ParseAdd("Pitflix/1.0");
+        var json = await http.GetStringAsync(new Uri(url), ct).ConfigureAwait(false);
+        using var doc = System.Text.Json.JsonDocument.Parse(json);
+        var root = doc.RootElement;
+
+        var title = root.TryGetProperty("title", out var t) ? t.GetString()
+            : root.TryGetProperty("name", out var n) ? n.GetString() : null;
+        var overview = root.TryGetProperty("overview", out var ov) ? ov.GetString() : null;
+        var posterPath = root.TryGetProperty("poster_path", out var pp) ? pp.GetString() : null;
+        var backdropPath = root.TryGetProperty("backdrop_path", out var bp) ? bp.GetString() : null;
+        var voteAverage = root.TryGetProperty("vote_average", out var va) && va.TryGetDouble(out var vd) ? vd : 0;
+        var releaseDate = root.TryGetProperty("release_date", out var rd) ? rd.GetString()
+            : root.TryGetProperty("first_air_date", out var fa) ? fa.GetString() : null;
+        var imdbId = root.TryGetProperty("external_ids", out var ext) && ext.TryGetProperty("imdb_id", out var im)
+            ? im.GetString() : null;
+        var numberOfSeasons = root.TryGetProperty("number_of_seasons", out var ns) && ns.TryGetInt32(out var nsi) ? nsi : 0;
+
+        var genres = new List<string>();
+        if (root.TryGetProperty("genres", out var genresEl) && genresEl.ValueKind == System.Text.Json.JsonValueKind.Array)
+            foreach (var g in genresEl.EnumerateArray())
+                if (g.TryGetProperty("name", out var gn)) genres.Add(gn.GetString() ?? "");
+
+        // Trailers: pick YouTube trailers, Official Trailer first
+        var trailers = new List<StreamTrailerEntry>();
+        if (root.TryGetProperty("videos", out var vids) && vids.TryGetProperty("results", out var vidArr)
+            && vidArr.ValueKind == System.Text.Json.JsonValueKind.Array)
+        {
+            foreach (var v in vidArr.EnumerateArray())
+            {
+                var site = v.TryGetProperty("site", out var si) ? si.GetString() : null;
+                var vtype = v.TryGetProperty("type", out var vt) ? vt.GetString() : null;
+                var vkey = v.TryGetProperty("key", out var vk) ? vk.GetString() : null;
+                var vname = v.TryGetProperty("name", out var vn) ? vn.GetString() : null;
+                if (site == "YouTube" && !string.IsNullOrEmpty(vkey))
+                    trailers.Add(new StreamTrailerEntry(vname, vkey!, vtype, $"https://www.youtube.com/watch?v={vkey}"));
+            }
+        }
+        var officialTrailer = trailers.FirstOrDefault(x => x.Type == "Trailer");
+        var featuredTrailer = officialTrailer ?? trailers.FirstOrDefault();
+        var featuredTrailerObj = featuredTrailer == null ? null : new
+        {
+            name = featuredTrailer.Name, key = featuredTrailer.Key,
+            type = featuredTrailer.Type, youtubeUrl = featuredTrailer.YoutubeUrl
+        };
+
+        // Recommendations
+        var recs = new List<object>();
+        if (root.TryGetProperty("recommendations", out var recsEl) && recsEl.TryGetProperty("results", out var recArr)
+            && recArr.ValueKind == System.Text.Json.JsonValueKind.Array)
+        {
+            foreach (var r in recArr.EnumerateArray().Take(10))
+            {
+                var recTitle = r.TryGetProperty("title", out var rt) ? rt.GetString()
+                    : r.TryGetProperty("name", out var rn) ? rn.GetString() : null;
+                var recId = r.TryGetProperty("id", out var ri) && ri.TryGetInt32(out var rid) ? rid : 0;
+                var recPoster = r.TryGetProperty("poster_path", out var rp) ? rp.GetString() : null;
+                var recDate = r.TryGetProperty("release_date", out var rrd) ? rrd.GetString()
+                    : r.TryGetProperty("first_air_date", out var rfa) ? rfa.GetString() : null;
+                var recMt = r.TryGetProperty("media_type", out var rmt) ? rmt.GetString() : (isMovie ? "movie" : "tv");
+                if (recId > 0 && !string.IsNullOrEmpty(recTitle))
+                    recs.Add(new
+                    {
+                        id = recId, title = recTitle,
+                        posterUrl = string.IsNullOrEmpty(recPoster) ? null : $"https://image.tmdb.org/t/p/w185{recPoster}",
+                        year = recDate?.Length >= 4 ? recDate[..4] : null,
+                        mediaType = recMt == "tv" ? "Series" : "Movie",
+                    });
+            }
+        }
+
+        return Results.Json(new
+        {
+            tmdbId, title, overview,
+            posterUrl = string.IsNullOrEmpty(posterPath) ? null : $"https://image.tmdb.org/t/p/w500{posterPath}",
+            backdropUrl = string.IsNullOrEmpty(backdropPath) ? null : $"https://image.tmdb.org/t/p/w1280{backdropPath}",
+            voteAverage, releaseDate, year = releaseDate?.Length >= 4 ? releaseDate[..4] : null,
+            genres, imdbId, mediaType = isMovie ? "Movie" : "Series",
+            numberOfSeasons, trailer = featuredTrailerObj, recommendations = recs,
+        }, jsonSerializerOptions);
+    }
+    catch (Exception ex)
+    {
+        return Results.Json(new { error = ex.Message }, jsonSerializerOptions);
+    }
+});
+
 // —— Scan ——
 app.MapPost("/api/scan/start", async (ScanStartBody body, LibraryRepository repo, ScanRuntime scan, IServiceScopeFactory scopes,
         RatingsRefreshQueue ratingsRefreshQueue, CancellationToken _startupCt) =>
@@ -3066,6 +3167,37 @@ app.MapPost("/api/subtitles/download", async (SubtitleDownloadBody body, IConfig
         : Results.Json(new { success = false, savedPath = (string?)null, error = err }, jsonSerializerOptions);
 });
 
+// —— SubDL subtitle provider ——
+app.MapGet("/api/subtitles/subdl/search", async (
+    string? imdbId, int? tmdbId, string? title,
+    string? mediaType, int? season, int? episode,
+    LibraryRepository repo, CancellationToken ct) =>
+{
+    var sdlKey = await repo.GetSettingAsync("SubDlApiKey", ct).ConfigureAwait(false);
+    using var sdl = new SubDlClient(sdlKey);
+    var mt = string.IsNullOrWhiteSpace(mediaType) ? "Movie" : mediaType!;
+    var outcome = await sdl.SearchAsync(title, imdbId, tmdbId, mt, season, episode, ct).ConfigureAwait(false);
+    var items = outcome.Items.Select(s => new
+    {
+        releaseName = s.ReleaseName, language = s.Language,
+        fullLink = s.FullLink, isHearingImpaired = s.IsHearingImpaired, format = s.Type,
+    }).ToList();
+    return Results.Json(new { items, error = outcome.Error }, jsonSerializerOptions);
+});
+
+app.MapPost("/api/subtitles/subdl/download", async (SubDlDownloadBody body, LibraryRepository repo, CancellationToken ct) =>
+{
+    if (string.IsNullOrWhiteSpace(body.FullLink) || string.IsNullOrWhiteSpace(body.VideoFilePath))
+        return Results.Json(new { success = false, savedPath = (string?)null, error = "Missing link or path." }, jsonSerializerOptions);
+
+    var sdlKey = await repo.GetSettingAsync("SubDlApiKey", ct).ConfigureAwait(false);
+    using var sdl = new SubDlClient(sdlKey);
+    var (ok, saved, err) = await sdl.DownloadAsync(body.FullLink, body.VideoFilePath, body.Language ?? "", ct).ConfigureAwait(false);
+    return ok
+        ? Results.Json(new { success = true, savedPath = saved, error = (string?)null }, jsonSerializerOptions)
+        : Results.Json(new { success = false, savedPath = (string?)null, error = err }, jsonSerializerOptions);
+});
+
 // —— GET /images/... (endpoint fallback: runs if middleware + static files pass through) ——
 app.MapGet("/images/{**relativePath}", (string relativePath, HttpContext ctx) =>
 {
@@ -4741,6 +4873,8 @@ internal sealed record CompleteSetupBody(
     bool FoldersSkipped);
 
 internal sealed record SubtitleDownloadBody(int FileId, string? VideoFilePath, string? LanguageCode);
+internal sealed record SubDlDownloadBody(string? FullLink, string? VideoFilePath, string? Language);
+internal sealed record StreamTrailerEntry(string? Name, string Key, string? Type, string YoutubeUrl);
 
 internal sealed record BulkWatchBody(int[]? MovieIds, int[]? ShowIds, string? WatchStatus);
 

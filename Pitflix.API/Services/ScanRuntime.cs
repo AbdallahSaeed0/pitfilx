@@ -8,6 +8,8 @@ public sealed class ScanRuntime
 {
     private readonly ConcurrentDictionary<Guid, ChannelWriter<string>> _writers = new();
     private CancellationTokenSource? _scanCts;
+    private readonly SemaphoreSlim _scanLock = new(1, 1);
+    private DateTime _scanStartedAt = DateTime.MinValue;
 
     public CancellationToken ScanToken => _scanCts?.Token ?? CancellationToken.None;
 
@@ -32,8 +34,17 @@ public sealed class ScanRuntime
     public string CurrentFile { get; private set; } = "";
     public int Matched { get; private set; }
     public int Unmatched { get; private set; }
+    /// <summary>
+    /// Paths skipped cheaply during scan: already in the library, or unchanged unmatched (no TMDB re-query).
+    /// </summary>
+    public int Skipped { get; private set; }
 
     public double Percent => Total <= 0 ? 0 : 100.0 * Current / Total;
+
+    /// <summary>
+    /// Check if scan has been running for an unusually long time (potential hang).
+    /// </summary>
+    public TimeSpan ScanRunningDuration => IsRunning ? DateTime.UtcNow - _scanStartedAt : TimeSpan.Zero;
 
     public void ResetProgress(int total)
     {
@@ -42,31 +53,90 @@ public sealed class ScanRuntime
         CurrentFile = "";
         Matched = 0;
         Unmatched = 0;
+        Skipped = 0;
     }
 
-    public void Update(int current, string currentFile, int matched, int unmatched)
+    public void Update(int current, string currentFile, int matched, int unmatched, int skipped)
     {
         Current = current;
         CurrentFile = currentFile;
         Matched = matched;
         Unmatched = unmatched;
+        Skipped = skipped;
     }
 
-    public string BeginJob()
+    public async Task<string?> BeginJobAsync(CancellationToken cancellationToken = default)
     {
-        JobId = Guid.NewGuid().ToString("N");
-        IsRunning = true;
-        return JobId;
-    }
-
-    public void EndJob()
-    {
-        IsRunning = false;
-        JobId = null;
-        foreach (var kv in _writers)
+        var acquired = await _scanLock.WaitAsync(0, cancellationToken).ConfigureAwait(false);
+        if (!acquired)
+            return null;
+        
+        try
         {
-            kv.Value.TryComplete();
-            _writers.TryRemove(kv.Key, out _);
+            if (IsRunning)
+                return null;
+            
+            JobId = Guid.NewGuid().ToString("N");
+            IsRunning = true;
+            _scanStartedAt = DateTime.UtcNow;
+            return JobId;
+        }
+        finally
+        {
+            _scanLock.Release();
+        }
+    }
+
+    public async Task EndJobAsync()
+    {
+        await _scanLock.WaitAsync().ConfigureAwait(false);
+        try
+        {
+            IsRunning = false;
+            JobId = null;
+            _scanStartedAt = DateTime.MinValue;
+            foreach (var kv in _writers)
+            {
+                kv.Value.TryComplete();
+                _writers.TryRemove(kv.Key, out _);
+            }
+        }
+        finally
+        {
+            _scanLock.Release();
+        }
+    }
+
+    /// <summary>
+    /// Force cleanup of scan state (use when scan is detected as hung or abandoned).
+    /// </summary>
+    public async Task ForceResetAsync()
+    {
+        await _scanLock.WaitAsync().ConfigureAwait(false);
+        try
+        {
+            _scanCts?.Cancel();
+            _scanCts?.Dispose();
+            _scanCts = null;
+            IsRunning = false;
+            JobId = null;
+            _scanStartedAt = DateTime.MinValue;
+            Total = 0;
+            Current = 0;
+            CurrentFile = "";
+            Matched = 0;
+            Unmatched = 0;
+            Skipped = 0;
+            
+            foreach (var kv in _writers)
+            {
+                kv.Value.TryComplete();
+                _writers.TryRemove(kv.Key, out _);
+            }
+        }
+        finally
+        {
+            _scanLock.Release();
         }
     }
 

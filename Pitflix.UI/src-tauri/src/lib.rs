@@ -42,7 +42,7 @@ use player::tauri_commands::{
 pub struct ApiChild(pub Mutex<Option<Child>>);
 
 impl ApiChild {
-    /// Stops the bundled Pitflix.API sidecar. Must run before the updater runs the Windows installer:
+    /// Stops the bundled Pitflix.API sidecar. Must run before an external installer runs:
     /// `std::process::exit(0)` skips `RunEvent::Exit`, so we cannot rely on exit handlers alone.
     pub(crate) fn shutdown(&self) {
         let Ok(mut guard) = self.0.lock() else {
@@ -55,21 +55,76 @@ impl ApiChild {
     }
 }
 
-/// Called from the UI after the update package is downloaded and immediately before `Update::install`.
-/// Ensures the API sidecar releases locks on `binaries/pitflix-api-*.exe` before NSIS/MSI runs.
-#[tauri::command]
-fn prepare_update_exit(app: tauri::AppHandle) {
-    log_to_sidecar_file("Pitflix: prepare_update_exit — stopping bundled API before updater install.");
+fn shutdown_for_external_installer(app: &tauri::AppHandle) {
+    log_to_sidecar_file("Pitflix: shutdown_for_external_installer — stopping bundled API before installer.");
     app.state::<ApiChild>().shutdown();
-    log_to_sidecar_file("Pitflix: prepare_update_exit — stopping player (if running).");
+    log_to_sidecar_file("Pitflix: shutdown_for_external_installer — stopping player (if running).");
     if let Ok(mut g) = app.state::<PlayerHostState>().0.lock() {
         if let Some(host) = g.take() {
             host.close();
         }
     }
-    playback_orchestrator::notify_session_closed(&app);
+    playback_orchestrator::notify_session_closed(app);
     #[cfg(windows)]
     std::thread::sleep(Duration::from_millis(450));
+}
+
+/// Legacy hook (e.g. scripts). GitHub release installs use `launch_downloaded_installer_and_exit` instead.
+#[tauri::command]
+fn prepare_update_exit(app: tauri::AppHandle) {
+    shutdown_for_external_installer(&app);
+}
+
+/// Launch a downloaded NSIS installer from `%TEMP%\\PitflixUpdates\\` and exit so the installer can replace files.
+#[tauri::command]
+fn launch_downloaded_installer_and_exit(app: tauri::AppHandle, installer_path: String) -> Result<(), String> {
+    let path = PathBuf::from(installer_path.trim());
+    let abs = validate_pitflix_updates_installer(&path)?;
+    shutdown_for_external_installer(&app);
+
+    let path_str = abs.to_string_lossy().to_string();
+    #[cfg(windows)]
+    {
+        Command::new("cmd")
+            .args(["/C", "start", "", &path_str])
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .map_err(|e| format!("Failed to start installer: {e}"))?;
+    }
+    #[cfg(not(windows))]
+    {
+        Command::new("xdg-open")
+            .arg(&path_str)
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .map_err(|e| format!("Failed to open installer: {e}"))?;
+    }
+
+    std::thread::sleep(Duration::from_millis(200));
+    app.exit(0);
+    Ok(())
+}
+
+fn validate_pitflix_updates_installer(path: &PathBuf) -> Result<PathBuf, String> {
+    let meta = std::fs::metadata(path).map_err(|e| format!("Installer not found: {e}"))?;
+    if meta.len() == 0 {
+        return Err("Installer file is empty.".into());
+    }
+    let abs = std::fs::canonicalize(path).map_err(|e| format!("Invalid installer path: {e}"))?;
+    let pitflix_dir = std::env::temp_dir().join("PitflixUpdates");
+    let pitflix_dir = std::fs::canonicalize(&pitflix_dir)
+        .map_err(|_| "Update folder %TEMP%\\PitflixUpdates not found. Finish download first.".to_string())?;
+    let parent = abs
+        .parent()
+        .ok_or_else(|| "Invalid installer path.".to_string())?;
+    if parent != pitflix_dir.as_path() {
+        return Err("Installer must be located under %TEMP%\\PitflixUpdates.".into());
+    }
+    Ok(abs)
 }
 
 fn skip_bundled_api() -> bool {
@@ -328,6 +383,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             device_read_dir,
             prepare_update_exit,
+            launch_downloaded_installer_and_exit,
             player2_open,
             player2_send,
             player2_pause,
@@ -363,7 +419,7 @@ pub fn run() {
         ])
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
-        .plugin(tauri_plugin_updater::Builder::new().build())
+        .plugin(tauri_plugin_fs::init())
         .plugin(tauri_plugin_process::init())
         .plugin(
             tauri_plugin_autostart::Builder::new()

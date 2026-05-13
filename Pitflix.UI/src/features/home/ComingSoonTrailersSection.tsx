@@ -15,9 +15,12 @@ export function ComingSoonTrailersSection({ embedded = false }: Props) {
     queryKey: ["home-trailers-upcoming"],
     queryFn: getUpcomingTrailers,
     staleTime: 180_000,
+    gcTime: 30 * 60_000,
   });
 
-  if (q.isLoading)
+  const refreshing = q.isFetching && !q.isPending;
+
+  if (q.isPending)
     return (
       <div className={embedded ? "py-2" : "rounded-2xl border border-pitflix-card/40 bg-pitflix-surface/30 p-6"}>
         <div className="flex items-center gap-2 text-sm text-pitflix-subtle">
@@ -62,6 +65,11 @@ export function ComingSoonTrailersSection({ embedded = false }: Props) {
         <div className="mb-4 flex flex-wrap items-center gap-2">
           <Film className="h-5 w-5 shrink-0 text-emerald-300" />
           <h2 className="text-lg font-bold text-white">Coming soon with trailer</h2>
+          {refreshing ? (
+            <span className="inline-flex items-center gap-1 text-[11px] text-pitflix-muted">
+              <Spinner className="h-3.5 w-3.5" /> Updating…
+            </span>
+          ) : null}
           <span className="text-xs text-pitflix-subtle">Future release date · official clip</span>
           <Link
             to="/trailers?mode=upcoming"

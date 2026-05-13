@@ -408,26 +408,28 @@ pub fn translate_srt_to_arabic(
   output_path: String,
 ) -> Result<(), String> {
   let cues = subtitle_generator::parse_srt_file(&srt_path)?;
-  
-  // Join all text into one big block with a unique separator to translate in one go
-  // This is MUCH faster than line-by-line
+  let cues = subtitle_generator::merge_short_gap_cues(cues, 500);
+
+  const SEP: &str = "\n<<<PITFLIX_SEP>>>\n";
   let mut full_text = String::new();
   for cue in &cues {
-    full_text.push_str(&cue.text.replace("\n", " [BR] "));
-    full_text.push_str("\n[CUE]\n");
+    full_text.push_str(&cue.text.replace('\n', " [BR] "));
+    full_text.push_str(SEP);
   }
 
   let translated_full = translate_batch_with_argos(&full_text)?;
-  let translated_lines: Vec<&str> = translated_full.split("\n[CUE]\n").collect();
+  let translated_lines: Vec<&str> = translated_full.split("<<<PITFLIX_SEP>>>").collect();
 
   let mut translated_cues = Vec::new();
   for (i, cue) in cues.iter().enumerate() {
     if let Some(text) = translated_lines.get(i) {
+        let restored = text.replace("[BR]", "\n").replace(" [BR] ", "\n").trim().to_string();
+        let wrapped = subtitle_generator::wrap_arabic_text(&restored, 45);
         translated_cues.push(subtitle_generator::SubtitleCue {
           index: cue.index,
           start: cue.start.clone(),
           end: cue.end.clone(),
-          text: text.replace(" [BR] ", "\n").trim().to_string(),
+          text: wrapped,
         });
     }
   }
@@ -514,38 +516,40 @@ pub async fn generate_arabic_subtitle(
     // Heavy translation work happens here
     let cues = subtitle_generator::parse_srt_file(&temp_srt)?;
     
-    eprintln!("[generate-arabic-subtitle] Sending {} cues to Python for translation...", cues.len());
-    
+    // Merge fragmented cues with gaps ≤ 500 ms to reduce noise and improve translation context
+    let cues = subtitle_generator::merge_short_gap_cues(cues, 500);
+    eprintln!("[generate-arabic-subtitle] After merge: {} cues", cues.len());
+    eprintln!("[generate-arabic-subtitle] Sending cues to Python for translation...");
+
     let mut translated_cues = Vec::new();
-    
-    // Process in smaller chunks to avoid overwhelming Python/Argos and to provide progress
+
     const CHUNK_SIZE: usize = 50;
+    const SEP: &str = "\n<<<PITFLIX_SEP>>>\n";
+
     for chunk in cues.chunks(CHUNK_SIZE) {
         let mut batch_text = String::new();
         for cue in chunk {
-            let escaped_text = cue.text.replace("\n", " [BR] ");
-            batch_text.push_str(&escaped_text);
-            batch_text.push_str("\n[CUE]\n");
+            batch_text.push_str(&cue.text.replace('\n', " [BR] "));
+            batch_text.push_str(SEP);
         }
 
         let translated_batch = translate_batch_with_argos(&batch_text)?;
-        
-        // Split by the [CUE] marker and clean up
+
         let translated_lines: Vec<String> = translated_batch
-            .split("[CUE]")
+            .split("<<<PITFLIX_SEP>>>")
             .map(|s| s.trim().to_string())
             .filter(|s| !s.is_empty())
             .collect();
 
         for (i, cue) in chunk.iter().enumerate() {
             if let Some(text) = translated_lines.get(i) {
-                // Remove any residual [BR] markers and unescape newlines
-                let unescaped_text = text.replace("[BR]", "\n").replace(" [BR] ", "\n").trim().to_string();
+                let restored = text.replace("[BR]", "\n").replace(" [BR] ", "\n").trim().to_string();
+                let wrapped = subtitle_generator::wrap_arabic_text(&restored, 45);
                 translated_cues.push(subtitle_generator::SubtitleCue {
                     index: cue.index,
                     start: cue.start.clone(),
                     end: cue.end.clone(),
-                    text: unescaped_text,
+                    text: wrapped,
                 });
             }
         }

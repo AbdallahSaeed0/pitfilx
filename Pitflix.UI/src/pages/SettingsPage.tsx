@@ -597,7 +597,10 @@ export function SettingsPage() {
                       onClick={() => {
                         setPathBusy(true);
                         void removeLibraryPath(p)
-                          .then(() => refetchSettings())
+                          .then(() => {
+                            void refetchSettings();
+                          })
+                          .catch(() => setToast("Could not remove library folder."))
                           .finally(() => setPathBusy(false));
                       }}
                     >

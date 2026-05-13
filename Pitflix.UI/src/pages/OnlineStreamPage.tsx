@@ -1,15 +1,13 @@
 import { useQuery } from "@tanstack/react-query";
-import { Clapperboard, Play, Search } from "lucide-react";
+import { Clapperboard, Info, Search } from "lucide-react";
 import { useEffect, useState } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import { searchUnmatched } from "../api/unmatched";
-import { getStreamImdbId } from "../api/stream";
-import { TvEpisodePickModal } from "../features/streaming/TvEpisodePickModal";
-import { streamMovieEmbedUrl, streamTvEmbedUrl } from "../features/streaming/streamEmbedUrls";
 import { MediaImage } from "../components/ui/MediaImage";
 import { Spinner } from "../components/ui/Spinner";
 import { useDebounce } from "../hooks/useDebounce";
 import { cn } from "../utils/cn";
+import type { StreamingDetailsLocationState } from "./StreamingDetailsPage";
 
 type SearchKind = "Both" | "Movie" | "Series";
 
@@ -82,51 +80,15 @@ export function OnlineStreamPage() {
 
   const rows = searchQuery.data ?? [];
 
-  const imdbQuery = useQuery({
-    queryKey: [
-      "online-stream-imdb",
-      rows.map((r) => `${r.id}:${r.mediaType}`).join("|"),
-    ],
-    queryFn: async () => {
-      const entries = await Promise.all(
-        rows.map(async (r) => {
-          const res = await getStreamImdbId(r.id, r.mediaType);
-          return [r.id, res.imdbId ?? null] as const;
-        }),
-      );
-      const map: Record<number, string | null> = {};
-      for (const [id, imdb] of entries) map[id] = imdb;
-      return map;
-    },
-    enabled: rows.length > 0,
-  });
-
-  const imdbMap = imdbQuery.data ?? {};
-
-  const [tvPick, setTvPick] = useState<{
-    tmdbId: number;
-    title: string;
-    imdbId: string;
-  } | null>(null);
-
-  const playMovie = (row: StreamSearchRow, imdbId: string) => {
-    navigate("/stream-player", {
-      state: {
-        streamUrl: streamMovieEmbedUrl(imdbId),
-        title: row.title,
-        libraryWatchMeta: { tmdbId: row.id, mediaType: "Movie" as const },
-      },
-    });
-  };
-
-  const playTv = (imdbId: string, season: number, episode: number, label: string, tmdbId: number) => {
-    navigate("/stream-player", {
-      state: {
-        streamUrl: streamTvEmbedUrl(imdbId, season, episode),
-        title: label,
-        libraryWatchMeta: { tmdbId, mediaType: "Series" as const, season, episode },
-      },
-    });
+  const openDetails = (row: StreamSearchRow) => {
+    const state: StreamingDetailsLocationState = {
+      tmdbId: row.id,
+      mediaType: row.mediaType,
+      title: row.title,
+      posterUrl: posterDisplay(row.posterUrl),
+      year: row.year ?? null,
+    };
+    navigate("/stream-details", { state });
   };
 
   const kindTabs: { id: SearchKind; label: string }[] = [
@@ -147,8 +109,7 @@ export function OnlineStreamPage() {
             </span>
           </h1>
           <p className="mt-1 max-w-xl text-sm text-pitflix-subtle">
-            Search TMDB and open StreamIMDB embeds in-app. This does not use your library files — local playback is
-            unchanged.
+            Search TMDB and stream in-app. Click a result to open its details page.
           </p>
         </div>
       </div>
@@ -197,14 +158,15 @@ export function OnlineStreamPage() {
       ) : (
         <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5">
           {rows.map((row) => {
-            const imdbId = imdbMap[row.id];
-            const imdbLoading = imdbQuery.isFetching || (imdbId === undefined && rows.length > 0);
             const poster = posterDisplay(row.posterUrl);
-
             return (
               <article
                 key={`${row.mediaType}-${row.id}`}
-                className="flex flex-col overflow-hidden rounded-xl border border-pitflix-card/60 bg-pitflix-surface/80 shadow-lg shadow-black/30"
+                className="flex cursor-pointer flex-col overflow-hidden rounded-xl border border-pitflix-card/60 bg-pitflix-surface/80 shadow-lg shadow-black/30 transition-transform hover:scale-[1.02]"
+                onClick={() => openDetails(row)}
+                role="button"
+                tabIndex={0}
+                onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") openDetails(row); }}
               >
                 <div className="relative aspect-[2/3] w-full bg-pitflix-card/40">
                   <MediaImage
@@ -217,24 +179,16 @@ export function OnlineStreamPage() {
                     {row.mediaType === "Movie" ? "Movie" : "TV"}
                   </span>
                 </div>
-                <div className="flex flex-1 flex-col gap-2 p-3">
+                <div className="flex flex-1 flex-col gap-1.5 p-3">
                   <h3 className="line-clamp-2 text-sm font-semibold leading-snug text-white">{row.title}</h3>
                   <p className="text-[11px] text-pitflix-muted">{row.year ?? "—"}</p>
-                  <p className="truncate font-mono text-[10px] text-pitflix-subtle">
-                    {imdbLoading ? "IMDb: …" : imdbId ? `IMDb: ${imdbId}` : "IMDb: unavailable"}
-                  </p>
                   <button
                     type="button"
-                    disabled={imdbLoading || !imdbId}
-                    onClick={() => {
-                      if (!imdbId) return;
-                      if (row.mediaType === "Movie") playMovie(row, imdbId);
-                      else setTvPick({ tmdbId: row.id, title: row.title, imdbId });
-                    }}
-                    className="mt-auto inline-flex items-center justify-center gap-1.5 rounded-lg bg-pitflix-primary py-2 text-xs font-semibold text-white hover:bg-pitflix-light disabled:cursor-not-allowed disabled:opacity-40"
+                    onClick={(e) => { e.stopPropagation(); openDetails(row); }}
+                    className="mt-auto inline-flex items-center justify-center gap-1.5 rounded-lg border border-pitflix-card bg-pitflix-card/60 py-1.5 text-xs font-semibold text-white hover:border-pitflix-primary/50 hover:bg-pitflix-primary/20"
                   >
-                    <Play className="h-3.5 w-3.5" />
-                    Play stream
+                    <Info className="h-3.5 w-3.5" />
+                    View details
                   </button>
                 </div>
               </article>
@@ -242,19 +196,6 @@ export function OnlineStreamPage() {
           })}
         </div>
       )}
-
-      <TvEpisodePickModal
-        open={tvPick != null}
-        title={tvPick?.title ?? ""}
-        tmdbId={tvPick?.tmdbId ?? 0}
-        imdbId={tvPick?.imdbId ?? ""}
-        onClose={() => setTvPick(null)}
-        onPlay={(season, episode) => {
-          if (!tvPick) return;
-          playTv(tvPick.imdbId, season, episode, `${tvPick.title} · S${season}E${episode}`, tvPick.tmdbId);
-          setTvPick(null);
-        }}
-      />
     </div>
   );
 }

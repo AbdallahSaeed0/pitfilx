@@ -138,7 +138,12 @@ export function TrailersPage() {
     return browseQ.data ?? [];
   }, [mode, latestQ.data, browseQ.data, filter, debouncedSearch]);
 
-  const loading = mode === "latest" ? latestQ.isLoading : browseQ.isLoading;
+  /** Initial load only — keep showing cached/persisted rows while refetch completes. */
+  const initialLoading = mode === "latest" ? latestQ.isPending : browseQ.isPending;
+  const listRefreshing =
+    mode === "latest"
+      ? latestQ.isFetching && !latestQ.isPending
+      : browseQ.isFetching && !browseQ.isPending;
   const error = mode === "latest" ? latestQ.isError : browseQ.isError;
 
   // Reset to page 1 when filters change
@@ -216,19 +221,22 @@ export function TrailersPage() {
         {mode !== "latest" && searchDraft.trim().length > 0 && searchDraft.trim().length < 2 ? (
           <p className="mt-1 text-[11px] text-pitflix-muted">Type at least 2 characters to search TMDB.</p>
         ) : null}
+        {listRefreshing ? (
+          <p className="mt-1 text-[11px] text-pitflix-muted">Updating trailers…</p>
+        ) : null}
       </div>
 
-      {loading ? <TrailerGridSkeleton /> : null}
+      {initialLoading ? <TrailerGridSkeleton /> : null}
 
       {error ? (
         <p className="text-sm text-rose-200/90">Could not load trailers. Is the API running?</p>
       ) : null}
 
-      {!loading && !error && list.length === 0 ? (
+      {!initialLoading && !error && list.length === 0 ? (
         <p className="text-sm text-pitflix-subtle">No trailers matched this filter right now.</p>
       ) : null}
 
-      {!loading && list.length > 0 ? (
+      {!initialLoading && list.length > 0 ? (
         <>
           <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5">
             {paginatedList.map((t) => {

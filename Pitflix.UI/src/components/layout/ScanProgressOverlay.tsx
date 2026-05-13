@@ -113,13 +113,27 @@ export function ScanProgressOverlay() {
           <p className="mb-2 truncate text-xs text-pitflix-subtle" title={data?.currentFile}>
             {data?.currentFile}
           </p>
-          <div className="flex gap-4 text-xs">
+          <div className="flex flex-wrap gap-x-4 gap-y-1 text-xs">
             <span className="text-green-400">✓ {data?.matched ?? 0} matched</span>
             <span className="text-pitflix-muted">⚠ {data?.unmatched ?? 0} unmatched</span>
-            {(data?.skipped ?? 0) > 0 ? (
-              <span className="text-pitflix-subtle">↷ {data?.skipped ?? 0} skipped</span>
-            ) : null}
+            <span className="text-pitflix-subtle">
+              ↷ {data?.skipped ?? 0} skipped
+              {(data?.skipped ?? 0) > 0 ? (
+                <span className="text-pitflix-muted">
+                  {" "}
+                  (already in library, or unmatched with same cleaned title — no TMDB redo)
+                </span>
+              ) : null}
+            </span>
           </div>
+          {(data?.matched ?? 0) === 0 &&
+          (data?.unmatched ?? 0) === 0 &&
+          (data?.skipped ?? 0) > 0 ? (
+            <p className="mt-2 text-[11px] leading-snug text-pitflix-muted">
+              Already-imported paths and unchanged unmatched paths skip TMDB (fast). Parsing still runs so renames /
+              parser updates are detected. ✕ stops the scan; hourly auto-scan waits until no scan is running.
+            </p>
+          ) : null}
         </motion.div>
       ) : null}
     </AnimatePresence>

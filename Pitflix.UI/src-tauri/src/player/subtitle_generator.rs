@@ -195,6 +195,81 @@ pub fn get_subtitle_output_path(video_path: &str) -> PathBuf {
     parent.join(format!("{}.ar.srt", file_stem))
 }
 
+/// Parse an SRT timestamp "HH:MM:SS,mmm" into milliseconds.
+fn parse_srt_time_ms(ts: &str) -> Option<u64> {
+    let (time_part, ms_part) = ts.split_once(',')?;
+    let ms: u64 = ms_part.trim().parse().ok()?;
+    let mut parts = time_part.split(':');
+    let h: u64 = parts.next()?.trim().parse().ok()?;
+    let m: u64 = parts.next()?.trim().parse().ok()?;
+    let s: u64 = parts.next()?.trim().parse().ok()?;
+    Some(h * 3_600_000 + m * 60_000 + s * 1_000 + ms)
+}
+
+/// Merge consecutive cues whose gap is ≤ `max_gap_ms` milliseconds.
+/// Joined text is separated by a single space; index is re-numbered afterward.
+pub fn merge_short_gap_cues(cues: Vec<SubtitleCue>, max_gap_ms: u64) -> Vec<SubtitleCue> {
+    if cues.is_empty() {
+        return cues;
+    }
+    let mut result: Vec<SubtitleCue> = Vec::with_capacity(cues.len());
+    let mut iter = cues.into_iter();
+    let mut current = iter.next().unwrap();
+
+    for next in iter {
+        let end_ms = parse_srt_time_ms(&current.end).unwrap_or(u64::MAX);
+        let start_ms = parse_srt_time_ms(&next.start).unwrap_or(u64::MAX);
+        if start_ms.saturating_sub(end_ms) <= max_gap_ms {
+            current = SubtitleCue {
+                index: current.index,
+                start: current.start.clone(),
+                end: next.end.clone(),
+                text: format!("{} {}", current.text.trim(), next.text.trim()),
+            };
+        } else {
+            result.push(current);
+            current = next;
+        }
+    }
+    result.push(current);
+    for (i, cue) in result.iter_mut().enumerate() {
+        cue.index = i + 1;
+    }
+    result
+}
+
+/// Wrap a single-line subtitle string into at most 2 lines of ≤ `max_chars` each.
+/// Splits at the word boundary closest to the midpoint.
+/// Multi-line text (dialogue with embedded newlines) is returned unchanged.
+pub fn wrap_arabic_text(text: &str, max_chars: usize) -> String {
+    if text.contains('\n') {
+        return text.to_string();
+    }
+    let char_count = text.chars().count();
+    if char_count <= max_chars {
+        return text.to_string();
+    }
+    let words: Vec<&str> = text.split_whitespace().collect();
+    if words.len() < 2 {
+        return text.to_string();
+    }
+    let half = char_count / 2;
+    let mut len_so_far = 0usize;
+    let mut best_idx = 1;
+    let mut best_dist = usize::MAX;
+    for (i, w) in words.iter().enumerate() {
+        if i > 0 {
+            let dist = (len_so_far as isize - half as isize).unsigned_abs();
+            if dist < best_dist {
+                best_dist = dist;
+                best_idx = i;
+            }
+        }
+        len_so_far += w.chars().count() + 1;
+    }
+    format!("{}\n{}", words[..best_idx].join(" "), words[best_idx..].join(" "))
+}
+
 pub fn is_subtitle_cached(video_path: &str) -> bool {
     let cache_path = get_subtitle_output_path(video_path);
     let exists = cache_path.exists();

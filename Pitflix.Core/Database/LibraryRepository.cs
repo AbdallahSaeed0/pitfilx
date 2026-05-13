@@ -611,6 +611,36 @@ public sealed class LibraryRepository
             .ConfigureAwait(false);
     }
 
+    /// <summary>
+    /// Builds a path index for the current library snapshot (one DB pass). Used by <see cref="Scanner.ScanPipeline"/> to
+    /// classify paths without per-file queries and to order work so new files run first.
+    /// </summary>
+    public async Task<LibraryPathPresenceIndex> CreateLibraryPathPresenceIndexAsync(
+        CancellationToken cancellationToken = default)
+    {
+        var set = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+        var episodePaths = await _db.Episodes.AsNoTracking()
+            .Where(e => e.FilePath != "")
+            .Select(e => e.FilePath)
+            .ToListAsync(cancellationToken)
+            .ConfigureAwait(false);
+
+        var moviePaths = await _db.Movies.AsNoTracking()
+            .Where(m => m.FilePath != "")
+            .Select(m => m.FilePath)
+            .ToListAsync(cancellationToken)
+            .ConfigureAwait(false);
+
+        foreach (var p in episodePaths.Concat(moviePaths))
+        {
+            foreach (var v in MediaPathNormalizer.EquivalenceVariants(p))
+                set.Add(v);
+        }
+
+        return new LibraryPathPresenceIndex(set);
+    }
+
     /// <summary>True if this path already has an Unmatched scan log (auto-scans re-hit the same file often).</summary>
     public async Task<bool> HasUnmatchedScanLogAsync(string filePath,
         CancellationToken cancellationToken = default)
@@ -624,6 +654,32 @@ public sealed class LibraryRepository
             .AnyAsync(x =>
                     x.Status == "Unmatched" &&
                     (variants.Contains(x.FilePath) || variantsLower.Contains(x.FilePath.ToLower())),
+                cancellationToken)
+            .ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// Full-library scans use this to avoid TMDB churn: same normalized path already Unmatched with the same parsed title.
+    /// Rescan-Unmatched runs must not skip (clean name intentionally re-evaluated).
+    /// </summary>
+    public async Task<bool> HasUnchangedUnmatchedScanLogAsync(string filePath, string parsedCleanName,
+        CancellationToken cancellationToken = default)
+    {
+        parsedCleanName = (parsedCleanName ?? "").Trim();
+        if (parsedCleanName.Length == 0)
+            return false;
+
+        filePath = MediaPathNormalizer.PreferredPhysicalPath(filePath);
+        var variants = MediaPathNormalizer.EquivalenceVariants(filePath);
+        if (variants.Count == 0)
+            return false;
+        var variantsLower = variants.Select(v => v.ToLowerInvariant()).Distinct().ToList();
+        var want = parsedCleanName.ToLowerInvariant();
+        return await _db.ScanLogs.AsNoTracking()
+            .AnyAsync(x =>
+                    x.Status == "Unmatched" &&
+                    (variants.Contains(x.FilePath) || variantsLower.Contains(x.FilePath.ToLower())) &&
+                    (x.CleanName ?? "").ToLower() == want,
                 cancellationToken)
             .ConfigureAwait(false);
     }
@@ -651,11 +707,12 @@ public sealed class LibraryRepository
         if (variants.Count == 0)
             return false;
         var variantsLower = variants.Select(v => v.ToLowerInvariant()).Distinct().ToList();
+        // Use SQL-translatable equality — EF Core cannot translate string.Equals(..., OrdinalIgnoreCase).
         return await _db.ScanLogs.AsNoTracking()
             .AnyAsync(
                 x =>
                     (variants.Contains(x.FilePath) || variantsLower.Contains(x.FilePath.ToLower())) &&
-                    string.Equals(x.Status, "Matched", StringComparison.OrdinalIgnoreCase),
+                    x.Status == "Matched",
                 cancellationToken).ConfigureAwait(false);
     }
 
@@ -1619,7 +1676,7 @@ public sealed class LibraryRepository
 
     public async Task SaveLibraryPathAsync(string path, CancellationToken cancellationToken = default)
     {
-        var t = path?.Trim();
+        var t = MediaPathNormalizer.PreferredPhysicalPath(path ?? "");
         if (string.IsNullOrEmpty(t))
             return;
 
@@ -1641,9 +1698,14 @@ public sealed class LibraryRepository
         await _db.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
     }
 
+    /// <summary>Counts removed by <see cref="ClearIndexedMediaUnderLibraryRootAsync"/> (optional maintenance only).</summary>
+    public sealed record LibraryFolderRemovalCounts(int ShowsRemoved, int MoviesRemoved, int ScanLogsRemoved,
+        int WatchHistoryRemoved);
+
+    /// <summary>Removes a folder from the configured scan list only. Movies, series, and watch history are unchanged.</summary>
     public async Task RemoveLibraryPathAsync(string path, CancellationToken cancellationToken = default)
     {
-        var t = path?.Trim();
+        var t = MediaPathNormalizer.PreferredPhysicalPath(path ?? "");
         if (string.IsNullOrEmpty(t))
             return;
 
@@ -1655,6 +1717,91 @@ public sealed class LibraryRepository
 
         _db.LibraryFolders.Remove(row);
         await _db.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// Optional maintenance: deletes indexed shows, movies, scan logs, and watch-history rows whose paths fall under
+    /// <paramref name="path"/>. Does not change library folder settings. Call only after explicit user confirmation.
+    /// </summary>
+    public async Task<LibraryFolderRemovalCounts> ClearIndexedMediaUnderLibraryRootAsync(string path,
+        CancellationToken cancellationToken = default)
+    {
+        var normalizedRoot = MediaPathNormalizer.PreferredPhysicalPath(path ?? "");
+        if (string.IsNullOrEmpty(normalizedRoot))
+            return new LibraryFolderRemovalCounts(0, 0, 0, 0);
+
+        return await ClearIndexedMediaUnderLibraryRootCoreAsync(normalizedRoot, cancellationToken).ConfigureAwait(false);
+    }
+
+    private async Task<LibraryFolderRemovalCounts> ClearIndexedMediaUnderLibraryRootCoreAsync(string normalizedRoot,
+        CancellationToken cancellationToken = default)
+    {
+        var showsRemoved = 0;
+        var moviesRemoved = 0;
+
+        var showRows = await _db.Shows.AsNoTracking()
+            .Where(s => s.FolderPath != "")
+            .Select(s => new { s.Id, s.FolderPath })
+            .ToListAsync(cancellationToken)
+            .ConfigureAwait(false);
+
+        foreach (var s in showRows.Where(x =>
+                     LibraryPathHelper.MediaPathIsUnderLibraryRoot(normalizedRoot, x.FolderPath)))
+        {
+            if (await DeleteShowByIdAsync(s.Id, cancellationToken).ConfigureAwait(false))
+                showsRemoved++;
+        }
+
+        var movieRows = await _db.Movies.AsNoTracking()
+            .Where(m => m.FilePath != "")
+            .Select(m => new { m.Id, m.FilePath })
+            .ToListAsync(cancellationToken)
+            .ConfigureAwait(false);
+
+        foreach (var m in movieRows.Where(x =>
+                     LibraryPathHelper.MediaPathIsUnderLibraryRoot(normalizedRoot, x.FilePath)))
+        {
+            if (await DeleteMovieByIdAsync(m.Id, cancellationToken).ConfigureAwait(false))
+                moviesRemoved++;
+        }
+
+        var scanRows = await _db.ScanLogs.AsNoTracking()
+            .Select(l => new { l.Id, l.FilePath })
+            .ToListAsync(cancellationToken)
+            .ConfigureAwait(false);
+
+        var scanIds = scanRows
+            .Where(x => LibraryPathHelper.MediaPathIsUnderLibraryRoot(normalizedRoot, x.FilePath))
+            .Select(x => x.Id)
+            .ToList();
+
+        var scanRemoved = 0;
+        if (scanIds.Count > 0)
+        {
+            scanRemoved = await _db.ScanLogs.Where(l => scanIds.Contains(l.Id))
+                .ExecuteDeleteAsync(cancellationToken)
+                .ConfigureAwait(false);
+        }
+
+        var whRows = await _db.WatchHistories.AsNoTracking()
+            .Select(w => new { w.Id, w.FilePath })
+            .ToListAsync(cancellationToken)
+            .ConfigureAwait(false);
+
+        var whIds = whRows
+            .Where(x => LibraryPathHelper.MediaPathIsUnderLibraryRoot(normalizedRoot, x.FilePath))
+            .Select(x => x.Id)
+            .ToList();
+
+        var whRemoved = 0;
+        if (whIds.Count > 0)
+        {
+            whRemoved = await _db.WatchHistories.Where(w => whIds.Contains(w.Id))
+                .ExecuteDeleteAsync(cancellationToken)
+                .ConfigureAwait(false);
+        }
+
+        return new LibraryFolderRemovalCounts(showsRemoved, moviesRemoved, scanRemoved, whRemoved);
     }
 
     public async Task<IReadOnlyList<string>> GetPinnedScanPathsAsync(CancellationToken cancellationToken = default)
@@ -1681,7 +1828,7 @@ public sealed class LibraryRepository
 
     public async Task AddPinnedScanPathAsync(string path, CancellationToken cancellationToken = default)
     {
-        var t = path?.Trim();
+        var t = MediaPathNormalizer.PreferredPhysicalPath(path ?? "");
         if (string.IsNullOrEmpty(t))
             return;
 
@@ -1696,7 +1843,7 @@ public sealed class LibraryRepository
 
     public async Task RemovePinnedScanPathAsync(string path, CancellationToken cancellationToken = default)
     {
-        var t = path?.Trim();
+        var t = MediaPathNormalizer.PreferredPhysicalPath(path ?? "");
         if (string.IsNullOrEmpty(t))
             return;
 
@@ -1732,7 +1879,7 @@ public sealed class LibraryRepository
 
     public async Task AddExcludedScanPathAsync(string path, CancellationToken cancellationToken = default)
     {
-        var t = path?.Trim();
+        var t = MediaPathNormalizer.PreferredPhysicalPath(path ?? "");
         if (string.IsNullOrEmpty(t))
             return;
 
@@ -1747,7 +1894,7 @@ public sealed class LibraryRepository
 
     public async Task RemoveExcludedScanPathAsync(string path, CancellationToken cancellationToken = default)
     {
-        var t = path?.Trim();
+        var t = MediaPathNormalizer.PreferredPhysicalPath(path ?? "");
         if (string.IsNullOrEmpty(t))
             return;
 

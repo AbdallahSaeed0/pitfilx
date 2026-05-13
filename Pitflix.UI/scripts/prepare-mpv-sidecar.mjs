@@ -204,11 +204,49 @@ function copyDirectoryRecursive(src, dest) {
   }
 }
 
+function sleepSync(ms) {
+  // Sync sleep without extra deps (works on Node 16+).
+  const sab = new SharedArrayBuffer(4);
+  const int32 = new Int32Array(sab);
+  Atomics.wait(int32, 0, 0, ms);
+}
+
+function copyFileWithRetriesSync(src, dest, { attempts = 10, initialDelayMs = 120 } = {}) {
+  let lastErr = null;
+  for (let i = 0; i < attempts; i++) {
+    try {
+      fs.copyFileSync(src, dest);
+      return;
+    } catch (e) {
+      lastErr = e;
+      const code = e?.code;
+      if (code !== "EBUSY" && code !== "EPERM" && code !== "EACCES") throw e;
+      sleepSync(initialDelayMs * (i + 1));
+    }
+  }
+  throw lastErr ?? new Error(`copyFileWithRetriesSync failed: ${src} -> ${dest}`);
+}
+
 function copyPortableMpvFolder(mpvExeSrc, destExePath) {
   const dir = path.dirname(mpvExeSrc);
   removeOldMpvDlls();
   fs.mkdirSync(binDir, { recursive: true });
-  fs.copyFileSync(mpvExeSrc, destExePath);
+  // Windows may keep the existing file locked briefly (e.g. running Pitflix dev/build, antivirus scan).
+  // Retry rather than failing the whole installer build.
+  try {
+    if (fs.existsSync(destExePath)) {
+      const bak = `${destExePath}.bak`;
+      try {
+        fs.rmSync(bak, { force: true });
+      } catch {
+        /* ignore */
+      }
+      fs.renameSync(destExePath, bak);
+    }
+  } catch {
+    /* ignore */
+  }
+  copyFileWithRetriesSync(mpvExeSrc, destExePath);
   for (const dll of listDlls(dir)) {
     fs.copyFileSync(path.join(dir, dll), path.join(binDir, dll));
   }

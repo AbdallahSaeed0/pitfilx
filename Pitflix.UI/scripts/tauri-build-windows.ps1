@@ -41,7 +41,6 @@ Write-Host ""
 # npm runs this script in a fresh PowerShell, so signing must reach the Node/tauri-cli process.
 # tauri-cli reads only TAURI_SIGNING_PRIVATE_KEY. If that value is a path to an existing file, it loads the key from disk.
 # (TAURI_SIGNING_PRIVATE_KEY_PATH is not read by the bundler — do not rely on it.)
-$localKey = Join-Path $uiRoot "src-tauri\.tauri-updater.key"
 if (
   [string]::IsNullOrWhiteSpace($env:TAURI_SIGNING_PRIVATE_KEY) -and
   -not [string]::IsNullOrWhiteSpace($env:TAURI_SIGNING_PRIVATE_KEY_PATH) -and
@@ -49,48 +48,24 @@ if (
 ) {
   $env:TAURI_SIGNING_PRIVATE_KEY = $env:TAURI_SIGNING_PRIVATE_KEY_PATH
 }
-$signPrefix = ""
-$hasSigning =
-  (Test-Path -LiteralPath $localKey) -or
-  (-not [string]::IsNullOrWhiteSpace($env:TAURI_SIGNING_PRIVATE_KEY))
 
-if (Test-Path -LiteralPath $localKey) {
-  $env:TAURI_SIGNING_PRIVATE_KEY = $localKey
-  $signPrefix = 'set "TAURI_SIGNING_PRIVATE_KEY=' + $localKey + '"'
-  Write-Host "Using updater signing key from: $localKey (TAURI_SIGNING_PRIVATE_KEY set to this path)"
-  Write-Host ""
-}
-elseif ($hasSigning) {
-  Write-Host "Using TAURI_SIGNING_PRIVATE_KEY from environment."
-  Write-Host ""
-}
-
+# Keeps `createUpdaterArtifacts: false` explicit (in-app updates use GitHub Releases installers, not Tauri signed bundles).
 $noSigMerge = Join-Path $uiRoot "src-tauri\tauri.bundle.nosig.json"
 $configMerge = ""
-if (-not $hasSigning) {
-  if (Test-Path $noSigMerge) {
-    $configMerge = '--config "' + $noSigMerge + '"'
-    Write-Host 'No updater signing key found - merging tauri.bundle.nosig.json (no .sig / updater artifacts).'
-    Write-Host 'For signed updates: add src-tauri\.tauri-updater.key or set TAURI_SIGNING_PRIVATE_KEY. See UPDATER_SETUP.md'
-    Write-Host ""
-  }
+if (Test-Path $noSigMerge) {
+  $configMerge = '--config "' + $noSigMerge + '"'
 }
 
 $batchParts = @(
   ('call "' + $vcvars + '"'),
   ('set "CARGO_TARGET_DIR=' + $targetDir + '"')
 )
-if ($signPrefix) {
-  $batchParts += $signPrefix
-}
 $batchParts += ('cd /d "' + $uiRoot + '"')
 $batchParts += ('npx tauri build ' + $configMerge.Trim())
 $batch = ($batchParts | Where-Object { $_.Length -gt 0 }) -join ' && '
 $p = Start-Process -FilePath "cmd.exe" -ArgumentList "/c", $batch -NoNewWindow -Wait -PassThru
 
 Write-Host ""
-Write-Host "Updater signing (optional for local dev, required for release updates):"
-Write-Host "  Set TAURI_SIGNING_PRIVATE_KEY (inline key or path to key file) before release builds."
-Write-Host "  See Pitflix.UI/UPDATER_SETUP.md"
+Write-Host "Ship Windows builds via GitHub Releases (.exe). Users update from Check for updates (GitHub API + installer download)."
 
 exit $p.ExitCode

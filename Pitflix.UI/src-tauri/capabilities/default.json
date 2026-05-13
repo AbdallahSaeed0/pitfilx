@@ -24,10 +24,23 @@
     },
     "dialog:default",
     "autostart:default",
-    "updater:default",
     "process:default",
     "process:allow-restart",
     "allow-prepare-update-exit",
+    "allow-launch-installer",
+    "fs:default",
+    {
+      "identifier": "fs:allow-mkdir",
+      "allow": [{ "path": "$TEMP/PitflixUpdates" }]
+    },
+    {
+      "identifier": "fs:allow-write-file",
+      "allow": [{ "path": "$TEMP/PitflixUpdates/**/*" }]
+    },
+    {
+      "identifier": "fs:allow-read-file",
+      "allow": [{ "path": "$TEMP/PitflixUpdates/**/*" }]
+    },
     "allow-player",
     "allow-my-device"
   ]

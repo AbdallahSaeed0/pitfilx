@@ -1,59 +1,56 @@
 import { isTauri } from "@tauri-apps/api/core";
-import { Download, RefreshCw } from "lucide-react";
-import { useAppUpdater } from "../../hooks/useAppUpdater";
+import { RefreshCw } from "lucide-react";
+import { useEffect, useState } from "react";
+import { useGitHubUpdater } from "../../context/GitHubUpdaterContext";
 import { useAppPrefsStore } from "../../store/appPrefsStore";
-import { UPDATER_CONFIG_FILE } from "../../config/updater";
-
-function phaseLabel(phase: ReturnType<typeof useAppUpdater>["phase"]): string | null {
-  switch (phase) {
-    case "checking":
-      return "Checking for updates…";
-    case "downloading":
-      return "Downloading update…";
-    case "installing":
-      return null;
-    case "success":
-      return "Finishing — the app will restart.";
-    default:
-      return null;
-  }
-}
+import { GITHUB_RELEASES_WEB } from "../../config/githubRelease";
+import { getDesktopAppVersion } from "../../updater/desktopVersion";
+import { UI_PACKAGE_VERSION } from "../../version";
 
 export function AppUpdateSection() {
   const {
     phase,
     errorMessage,
-    currentVersion,
-    availableVersion,
-    releaseNotes,
-    releaseDate,
-    downloadPercent,
-    check,
-    installPending,
-    resetToIdle,
-  } = useAppUpdater();
+    checkForUpdates,
+    dismissModal,
+  } = useGitHubUpdater();
 
   const checkOnStartup = useAppPrefsStore((s) => s.checkUpdatesOnStartup);
   const setCheckOnStartup = useAppPrefsStore((s) => s.setCheckUpdatesOnStartup);
 
-  const busy = phase === "checking" || phase === "downloading" || phase === "installing";
+  const busy = phase === "checking" || phase === "downloading";
+
+  const [runtimeVersion, setRuntimeVersion] = useState<string | null>(null);
+  useEffect(() => {
+    void getDesktopAppVersion().then(setRuntimeVersion);
+  }, []);
+
+  const displayedVersion = runtimeVersion ?? UI_PACKAGE_VERSION;
 
   return (
     <section id="app-updates" className="rounded-xl border border-pitflix-card/50 bg-pitflix-card p-5">
       <h2 className="text-sm font-semibold text-white">App updates</h2>
-      <p className="mt-1 text-[10px] text-pitflix-subtle">
-        Install new Pitflix versions from the internet. Update source is configured at build time in{" "}
-        <span className="font-mono text-pitflix-muted">{UPDATER_CONFIG_FILE}</span>.
-      </p>
-
       <div className="mt-4 flex flex-wrap items-baseline gap-x-3 gap-y-1">
         <span className="text-[11px] text-pitflix-muted">Current version</span>
-        <span className="font-mono text-sm font-semibold text-white">{currentVersion}</span>
+        <span className="font-mono text-sm font-semibold text-white">{displayedVersion}</span>
       </div>
+
+      <p className="mt-3 text-[10px] text-pitflix-subtle leading-relaxed">
+        Pitflix checks{" "}
+        <a
+          href={GITHUB_RELEASES_WEB}
+          target="_blank"
+          rel="noreferrer"
+          className="text-pitflix-primary underline-offset-2 hover:underline"
+        >
+          GitHub Releases
+        </a>{" "}
+        for the latest Windows installer. No separate signature file is required.
+      </p>
 
       {!isTauri() ? (
         <p className="mt-4 text-xs text-pitflix-muted">
-          You are running the web UI. Download the Pitflix desktop app to receive updates here.
+          You are running the web UI. Download the Pitflix desktop app to update from here.
         </p>
       ) : (
         <>
@@ -61,7 +58,7 @@ export function AppUpdateSection() {
             <button
               type="button"
               disabled={busy}
-              onClick={() => void check()}
+              onClick={() => void checkForUpdates()}
               className="inline-flex items-center gap-2 rounded-lg border border-pitflix-card bg-pitflix-bg px-3 py-2 text-xs font-medium text-white hover:border-pitflix-primary/50 disabled:opacity-50"
             >
               {phase === "checking" ? (
@@ -72,71 +69,20 @@ export function AppUpdateSection() {
               Check for updates
             </button>
 
-            {phase === "available" ? (
+            {phase === "error" ? (
               <button
                 type="button"
-                disabled={busy}
-                onClick={() => void installPending()}
-                className="inline-flex items-center gap-2 rounded-lg bg-pitflix-primary px-3 py-2 text-xs font-semibold text-white hover:bg-pitflix-light disabled:opacity-50"
-              >
-                <Download className="h-3.5 w-3.5" />
-                Download &amp; install
-              </button>
-            ) : null}
-
-            {phase !== "idle" && phase !== "checking" && !busy ? (
-              <button
-                type="button"
-                onClick={() => resetToIdle()}
+                onClick={() => dismissModal()}
                 className="rounded-lg border border-pitflix-card px-3 py-2 text-xs text-pitflix-muted hover:text-white"
               >
-                Dismiss
+                Clear status
               </button>
             ) : null}
           </div>
 
           {phase === "up_to_date" ? (
-            <p className="mt-3 text-xs text-emerald-400/90">You are up to date.</p>
+            <p className="mt-3 text-xs text-emerald-400/90">You’re on the latest release.</p>
           ) : null}
-
-          {phase === "available" && availableVersion ? (
-            <div className="mt-4 rounded-lg border border-pitflix-primary/25 bg-pitflix-bg/60 p-3">
-              <p className="text-xs font-medium text-white">
-                Update available: <span className="font-mono text-pitflix-primary">{availableVersion}</span>
-              </p>
-              {releaseDate ? (
-                <p className="mt-1 text-[10px] text-pitflix-subtle">Released {releaseDate}</p>
-              ) : null}
-              {releaseNotes ? (
-                <pre className="mt-2 max-h-40 overflow-y-auto whitespace-pre-wrap font-sans text-[11px] leading-relaxed text-pitflix-muted">
-                  {releaseNotes}
-                </pre>
-              ) : (
-                <p className="mt-2 text-[11px] text-pitflix-subtle">No release notes for this build.</p>
-              )}
-            </div>
-          ) : null}
-
-          {(phase === "downloading" || phase === "installing" || phase === "success") && (
-            <div className="mt-4 space-y-2">
-              {phase === "installing" ? (
-                <>
-                  <p className="text-sm font-medium text-white">Pitflix will now close to complete the update.</p>
-                  <p className="text-[11px] text-pitflix-muted">Starting the installer…</p>
-                </>
-              ) : (
-                <p className="text-xs text-pitflix-muted">{phaseLabel(phase)}</p>
-              )}
-              {phase === "downloading" && downloadPercent != null ? (
-                <div className="h-2 w-full overflow-hidden rounded-full bg-pitflix-bg">
-                  <div
-                    className="h-full rounded-full bg-pitflix-primary transition-[width]"
-                    style={{ width: `${downloadPercent}%` }}
-                  />
-                </div>
-              ) : null}
-            </div>
-          )}
 
           {phase === "error" && errorMessage ? (
             <p className="mt-3 text-xs text-red-400/90">{errorMessage}</p>
@@ -145,9 +91,9 @@ export function AppUpdateSection() {
           <div className="mt-6 border-t border-white/5 pt-4">
             <div className="flex items-center justify-between gap-3">
               <div>
-                <p className="text-xs font-medium text-white">Check for updates when Pitflix opens</p>
+                <p className="text-xs font-medium text-white">Check for updates automatically</p>
                 <p className="mt-0.5 text-[10px] text-pitflix-subtle">
-                  Notifies you if an update exists — nothing is downloaded or installed automatically.
+                  After launch, Pitflix compares your version with the latest GitHub release. You choose when to download.
                 </p>
               </div>
               <button

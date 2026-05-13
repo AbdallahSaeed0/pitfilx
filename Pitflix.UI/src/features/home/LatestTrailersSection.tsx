@@ -15,13 +15,16 @@ export function LatestTrailersSection({ embedded = false }: LatestTrailersProps)
     queryKey: ["home-trailers", "persisted-v1"],
     queryFn: getLatestTrailers,
     staleTime: 180_000,
+    gcTime: 30 * 60_000,
   });
 
-  if (q.isLoading)
+  const refreshing = q.isFetching && !q.isPending;
+
+  if (q.isPending)
     return (
       <div className={embedded ? "py-2" : "rounded-2xl border border-pitflix-card/40 bg-pitflix-surface/30 p-6"}>
         <div className="flex items-center gap-2 text-sm text-pitflix-subtle">
-          <Spinner className="h-5 w-5" /> Fetching trailers…
+          <Spinner className="h-5 w-5" /> Loading trailers…
         </div>
       </div>
     );
@@ -65,6 +68,11 @@ export function LatestTrailersSection({ embedded = false }: LatestTrailersProps)
         <div className="mb-4 flex flex-wrap items-center gap-2">
           <Play className="h-5 w-5 shrink-0 text-pitflix-primary" />
           <h2 className="text-lg font-bold text-white">Latest trailers</h2>
+          {refreshing ? (
+            <span className="inline-flex items-center gap-1 text-[11px] text-pitflix-muted">
+              <Spinner className="h-3.5 w-3.5" /> Updating…
+            </span>
+          ) : null}
           <span className="text-xs text-pitflix-subtle">Official-channel ingest, newest YouTube publish first</span>
           <Link
             to="/trailers?mode=latest"

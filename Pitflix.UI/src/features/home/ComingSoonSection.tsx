@@ -2,20 +2,10 @@ import { useQuery } from "@tanstack/react-query";
 import { useMemo } from "react";
 import { CalendarClock } from "lucide-react";
 import { getComingSoon, type ComingSoonItem } from "../../api/homeDiscover";
+import { AirDateCountdown } from "../../components/ui/AirDateCountdown";
 import { MediaImage } from "../../components/ui/MediaImage";
 import { Spinner } from "../../components/ui/Spinner";
-import { airDateToUtcMs, formatCountdown, useCountdown } from "../../hooks/useCountdown";
 import { formatRating } from "../../utils/format";
-
-function CountdownPill({ releaseDate }: { releaseDate: string }) {
-  const target = airDateToUtcMs(releaseDate, null);
-  const left = useCountdown(target);
-  const text = formatCountdown(left);
-  if (!text) return null;
-  return (
-    <span className="rounded-md bg-black/50 px-2 py-0.5 font-mono text-[10px] text-amber-100/95">{text}</span>
-  );
-}
 
 function Card({ item }: { item: ComingSoonItem }) {
   return (
@@ -31,9 +21,9 @@ function Card({ item }: { item: ComingSoonItem }) {
         <p className="text-[10px] text-pitflix-subtle">
           {item.releaseDate} · ★ {formatRating(item.voteAverage)}
         </p>
-        <div className="flex flex-wrap items-center gap-1">
-          <span className="text-[10px] uppercase text-pitflix-muted">{item.mediaType}</span>
-          <CountdownPill releaseDate={item.releaseDate} />
+        <p className="text-[10px] uppercase text-pitflix-muted">{item.mediaType}</p>
+        <div className="w-full min-w-0">
+          <AirDateCountdown airDate={item.releaseDate} layout="inline" compact />
         </div>
       </div>
     </div>

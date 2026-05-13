@@ -71,8 +71,34 @@ public static partial class NameParser
     /// <summary>Extra folder between season and files (e.g. Show/S01/1080p/ep.mkv) — must not become the show root.</summary>
     private static readonly HashSet<string> ReleaseQualityFolderSegments = new(StringComparer.OrdinalIgnoreCase)
     {
-        "1080p", "720p", "480p", "2160p", "1440p", "4k", "uhd", "hd", "sd",
-        "bluray", "blu-ray", "webrip", "web-dl", "webdl", "hdtv", "dvdrip", "remux", "hdr", "sdr", "x264", "x265", "hevc"
+        "1080p", "720p", "480p", "2160p", "1440p", "576p", "432p", "4k", "uhd", "hd", "sd",
+        "bluray", "blu-ray", "webrip", "web-dl", "webdl", "hdtv", "dvdrip", "bdrip", "brrip", "remux", "hdr", "sdr",
+        "x264", "x265", "hevc", "h264", "h265", "avc",
+    };
+
+    /// <summary>
+    /// After one of these dot segments, a trailing alphanumeric token is treated as a release group
+    /// (<c>...720p.bluray.sujaidr</c> → drop <c>sujaidr</c>). Kept stricter than all quality tokens so we do not eat
+    /// real title words after <c>720p</c> alone.
+    /// </summary>
+    private static readonly HashSet<string> DotSegmentBeforeLikelySceneGroup = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "bluray", "blu-ray", "brrip", "bdrip", "webrip", "web-dl", "webdl", "hdtv", "dvdrip", "dvd", "remux",
+        "x264", "x265", "hevc", "h264", "h265", "avc",
+        "proper", "repack", "internal", "limited", "uncut",
+    };
+
+    private static readonly HashSet<string> NeverStripTrailingDotReleaseGroupSegment = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "extras", "extra", "sample", "proof", "subs", "sub", "specials", "special", "deleted", "extended",
+        "trailer", "trailers", "featurette", "featurettes", "promo", "preair", "cd1", "cd2", "part1", "part2",
+        "commentary", "feature", "complete",
+    };
+
+    /// <summary>Short scene tags often placed after codecs (hyphen-groups cover many; dots use this).</summary>
+    private static readonly HashSet<string> ShortLowercaseDotReleaseGroups = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "psa", "evo", "ntb", "ettv", "fgt", "megusta", "sujaidr", "dmz", "hdt", "ctrlhd", "pdtv", "yify", "yts",
     };
 
     [GeneratedRegex(@"^Series[.\s_-]*\d{1,3}$", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)]
@@ -99,6 +125,10 @@ public static partial class NameParser
     /// <summary>Trailing release-group token after a hyphen (e.g. <c>...HEVC-PSA</c>).</summary>
     [GeneratedRegex(@"-(?i)([A-Z0-9]{2,12})$", RegexOptions.CultureInvariant)]
     private static partial Regex TrailingReleaseGroupHyphen();
+
+    /// <summary>Standalone <c>S01E05</c> / <c>s10e12</c> dot segment (episode payload already removed from string elsewhere).</summary>
+    [GeneratedRegex(@"^(?i)s\d{1,2}[._\s-]*e\d{1,3}(?![0-9])$", RegexOptions.CultureInvariant)]
+    private static partial Regex SeasonEpisodeDotSegmentPattern();
 
     [GeneratedRegex(
         @"(?i)(\.akwam\.net|\.akwam\b|\.my\s*cima\.tv|mycima\.tv|wecima\.com|my\s*cima|we\s*cima|cima\s*club|egy\s*best)",
@@ -307,21 +337,22 @@ public static partial class NameParser
 
     private static string ResolveLibraryMediaType(string filePath)
     {
-        foreach (var raw in filePath.Split(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar))
-        {
-            var part = raw.Trim();
-            if (part.Equals("Movies", StringComparison.OrdinalIgnoreCase))
-                return "Movie";
-        }
+        var fromFolders = FileScanner.InferMediaType(filePath);
+        if (fromFolders is "Movie" or "Series")
+            return fromFolders;
 
-        foreach (var raw in filePath.Split(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar))
-        {
-            var part = raw.Trim();
-            if (part.Equals("Series", StringComparison.OrdinalIgnoreCase))
-                return "Series";
-        }
+        var fileName = Path.GetFileNameWithoutExtension(filePath);
+        if (string.IsNullOrEmpty(fileName))
+            return "";
 
-        return FileScanner.InferMediaType(filePath);
+        // Paths like ..\Show.Name\Season 1\episode.mkv with no Movies/Series parent still need a TV lookup.
+        if (SeasonEpisodePattern().IsMatch(fileName))
+            return "Series";
+
+        if (TryInferSeasonFromPath(filePath).HasValue && TryInferEpisodeFromFileName(fileName).HasValue)
+            return "Series";
+
+        return "";
     }
 
     private static ParseResult EmptyResult() => new()
@@ -331,9 +362,76 @@ public static partial class NameParser
         Confidence = ParseConfidence.Low
     };
 
+    private static bool DotSegmentAnchorsProbableSceneGroup(string seg)
+    {
+        var t = seg.Trim();
+        if (t.Length == 0)
+            return false;
+        if (DotSegmentBeforeLikelySceneGroup.Contains(t))
+            return true;
+        if (ReleaseQualityFolderSegments.Contains(t))
+            return true;
+        if (SeasonEpisodeDotSegmentPattern().IsMatch(t))
+            return true;
+        return Regex.IsMatch(t, @"(?i)^(480|720|1080|2160|576|432)p$", RegexOptions.CultureInvariant);
+    }
+
+    private static bool LooksLikeDotSeparatedReleaseGroupToken(string seg)
+    {
+        if (NeverStripTrailingDotReleaseGroupSegment.Contains(seg))
+            return false;
+        var t = seg.Trim();
+        if (t.Length is < 2 or > 12)
+            return false;
+        if (!t.All(static c => char.IsLetterOrDigit(c)))
+            return false;
+        if (t.All(char.IsDigit))
+            return false;
+        if (t.Length == 4 && int.TryParse(t, NumberStyles.Integer, CultureInfo.InvariantCulture, out var y) &&
+            y is >= 1900 and <= 2035)
+            return false;
+        if (DotSegmentAnchorsProbableSceneGroup(t))
+            return false;
+        if (ShortLowercaseDotReleaseGroups.Contains(t))
+            return true;
+        if (t.Any(char.IsAsciiDigit))
+            return true;
+        var hasUpper = t.Any(static c => c is >= 'A' and <= 'Z');
+        var hasLower = t.Any(static c => c is >= 'a' and <= 'z');
+        if (hasUpper && !hasLower)
+            return true;
+        // Long lowercase letter-only tokens (e.g. sujaidr) — avoid 2–4 letter words that may be real titles.
+        return t.Length >= 5 && hasLower && !t.Any(char.IsAsciiDigit);
+    }
+
+    /// <summary>
+    /// Dot-delimited scene layout: <c>title.S10E12.720p.bluray.sujaidr</c> — drop release-group tail after encode/quality.
+    /// Hyphen groups are handled separately via <see cref="TrailingReleaseGroupHyphen"/>.
+    /// </summary>
+    private static string StripTrailingDotSeparatedReleaseGroups(string fileNameWithoutExt)
+    {
+        var parts = fileNameWithoutExt.Split('.', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+        if (parts.Length < 2)
+            return fileNameWithoutExt;
+        var list = new List<string>(parts);
+        while (list.Count >= 2)
+        {
+            var last = list[^1];
+            var prev = list[^2];
+            if (!LooksLikeDotSeparatedReleaseGroupToken(last))
+                break;
+            if (!DotSegmentAnchorsProbableSceneGroup(prev))
+                break;
+            list.RemoveAt(list.Count - 1);
+        }
+
+        return string.Join(".", list);
+    }
+
     private static string BuildCleanName(string fileName, string? seasonEpisodeToken, string? yearToken)
     {
         var s = StripLeadingIndexFromFileName(fileName);
+        s = StripTrailingDotSeparatedReleaseGroups(s);
 
         // Some releases append an encode/part marker like "x264_2" or "..._1" which can survive
         // noise-token stripping (because "x264" is removed but "_2" remains). Detect this early so

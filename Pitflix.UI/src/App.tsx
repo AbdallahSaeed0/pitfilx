@@ -27,6 +27,7 @@ import { NextEpisodesPage } from "./pages/NextEpisodesPage";
 import { PlayerPage } from "./pages/PlayerPage";
 import { OnlineStreamPage } from "./pages/OnlineStreamPage";
 import { StreamPlayerPage } from "./pages/StreamPlayerPage";
+import { StreamingDetailsPage } from "./pages/StreamingDetailsPage";
 import { BackgroundTasksProvider } from "./context/BackgroundTasksContext";
 
 function PlaybackPolListenerHost() {
@@ -85,6 +86,7 @@ function App() {
           <Route path="recommendations" element={<RecommendationsPage />} />
           <Route path="trailers" element={<TrailersPage />} />
           <Route path="online-stream" element={<OnlineStreamPage />} />
+          <Route path="stream-details" element={<StreamingDetailsPage />} />
           <Route path="next-episodes" element={<NextEpisodesPage />} />
           <Route path="awards" element={<AwardsPage />} />
           <Route path="awards/:awardId/:year" element={<AwardEditionPage />} />

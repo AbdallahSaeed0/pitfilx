@@ -8,7 +8,8 @@ public sealed class FileScanner
 
     private static readonly HashSet<string> VideoExtensions =
     [
-        ".mkv", ".mp4", ".avi", ".m4v", ".wmv", ".webm", ".mov", ".mpeg", ".mpg", ".flv"
+        ".mkv", ".mp4", ".avi", ".m4v", ".wmv", ".webm", ".mov", ".mpeg", ".mpg", ".flv",
+        ".ts", ".m2ts", ".mts", ".divx"
     ];
 
     public IReadOnlyList<string> ScanDirectory(string rootPath, bool recursive = true, IReadOnlyList<string>? excludedPaths = null)
@@ -133,8 +134,23 @@ public sealed class FileScanner
     }
 
     /// <summary>
-    /// "Movie" if path contains a <c>Movies</c> segment, "Series" if <c>Series</c> (case-insensitive). First match wins.
+    /// Infers TMDB bucket from common library folder names: <c>Movies</c>, <c>Films</c>, <c>TV</c>, <c>Series</c>, Arabic equivalents, etc.
+    /// Movie classification is checked before series so hybrid trees resolve predictably.
     /// </summary>
+    private static readonly HashSet<string> MovieFolderSegments = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "Movies", "Movie", "Films", "Film",
+        "أفلام", "افلام", // Arabic: films — matches NameParser library layout hints
+    };
+
+    /// <summary>TV-style roots (Anime is treated as series for TMDB TV).</summary>
+    private static readonly HashSet<string> SeriesFolderSegments = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "Series", "TV", "Television", "Shows",
+        "مسلسلات", // Arabic: series
+        "Anime",
+    };
+
     public static string InferMediaType(string filePath)
     {
         if (string.IsNullOrEmpty(filePath))
@@ -145,11 +161,16 @@ public sealed class FileScanner
             var part = raw.Trim();
             if (part.Length == 0)
                 continue;
-
-            if (part.Equals("Movies", StringComparison.OrdinalIgnoreCase))
+            if (MovieFolderSegments.Contains(part))
                 return "Movie";
+        }
 
-            if (part.Equals("Series", StringComparison.OrdinalIgnoreCase))
+        foreach (var raw in filePath.Split(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar))
+        {
+            var part = raw.Trim();
+            if (part.Length == 0)
+                continue;
+            if (SeriesFolderSegments.Contains(part))
                 return "Series";
         }
 

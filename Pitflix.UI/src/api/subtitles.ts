@@ -50,3 +50,46 @@ export const searchSubtitles = (p: SubtitleSearchParams) =>
 
 export const downloadSubtitle = (body: { fileId: number; videoFilePath: string; languageCode: string }) =>
   api.post<{ success: boolean; savedPath?: string; error?: string }>("/subtitles/download", body).then((r) => r.data);
+
+// ── SubDL ────────────────────────────────────────────────────────────────────
+
+export type SubDlRow = {
+  releaseName: string;
+  language: string;
+  fullLink: string;
+  isHearingImpaired: boolean;
+  format: string;
+};
+
+export type SubDlPayload = {
+  items: SubDlRow[];
+  error: string | null;
+};
+
+export type SubDlSearchParams = {
+  imdbId?: string;
+  tmdbId?: number;
+  title?: string;
+  mediaType?: string;
+  season?: number;
+  episode?: number;
+};
+
+export const searchSubDl = (p: SubDlSearchParams) =>
+  api
+    .get<SubDlPayload>("/subtitles/subdl/search", {
+      params: {
+        imdbId: p.imdbId,
+        tmdbId: p.tmdbId,
+        title: p.title,
+        mediaType: p.mediaType,
+        season: p.season,
+        episode: p.episode,
+      },
+    })
+    .then((r) => r.data);
+
+export const downloadSubDl = (body: { fullLink: string; videoFilePath: string; language: string }) =>
+  api
+    .post<{ success: boolean; savedPath?: string; error?: string }>("/subtitles/subdl/download", body)
+    .then((r) => r.data);
