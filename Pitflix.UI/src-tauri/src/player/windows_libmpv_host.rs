@@ -169,6 +169,7 @@ pub fn create_embedded_libmpv_session(
   video_hwnd: HWND,
   libmpv_dll: PathBuf,
   payload: PlayerOpen,
+  config_dir: Option<PathBuf>,
 ) -> Result<EmbeddedLibMpvSession, String> {
   append_player_debug_log(
     Some(&app),
@@ -181,6 +182,36 @@ pub fn create_embedded_libmpv_session(
 
   // 1) Create mpv handle (no initialize yet)
   let mpv = Arc::new(MpvClient::create_for_render(&libmpv_dll)?);
+
+  // 1b) Apply config-dir and Lua scripts if available (same set as external mpv.exe mode).
+  if let Some(ref cdir) = config_dir {
+    let s = cdir.to_string_lossy();
+    // Strip \\?\ extended-length prefix so mpv can parse the path.
+    let cp = if let Some(rest) = s.strip_prefix(r"\\?\UNC\") {
+      format!(r"\\{}", rest)
+    } else if let Some(rest) = s.strip_prefix(r"\\?\") {
+      rest.to_string()
+    } else {
+      s.into_owned()
+    };
+    // Do NOT load mpv.conf — it contains `vo=gpu` and `hwdec=auto-safe` which
+    // override the `vo=libmpv` / `hwdec=no` required for embedded WGL rendering
+    // and cause STATUS_STACK_BUFFER_OVERRUN during mpv_initialize().
+    // Scripts are loaded explicitly below so nothing is lost.
+    let _ = mpv.set_option_string("config", "no");
+    let _ = mpv.set_option_string("load-scripts", "yes");
+    let _ = mpv.set_option_string("osc", "no");
+    let _ = mpv.set_option_string("script", &format!("{cp}/scripts/uosc/main.lua"));
+    let _ = mpv.set_option_string("script", &format!("{cp}/scripts/pitflix-episode-nav.lua"));
+    let _ = mpv.set_option_string("script", &format!("{cp}/scripts/pitflix-player-controls.lua"));
+    let _ = mpv.set_option_string("script", &format!("{cp}/scripts/pitflix-config-check.lua"));
+    append_player_debug_log(
+      Some(&app),
+      &format!("[libmpv-scripts] config_dir={cp} scripts=uosc,pitflix-episode-nav,pitflix-player-controls,pitflix-config-check"),
+    );
+  } else {
+    append_player_debug_log(Some(&app), "[libmpv-scripts] no config_dir — running without Lua scripts");
+  }
 
   // 2) Create GL on the child HWND (must be done on the owning window thread in practice;
   // for Phase 1 we assume this runs on the main thread via Tauri run_on_main_thread).
@@ -233,8 +264,24 @@ pub fn create_embedded_libmpv_session(
     let _ = SetWindowLongPtrW(video_hwnd, GWLP_USERDATA, renderer_ptr as isize);
   }
 
-  // 3) Now initialize mpv core (render ctx exists).
+  // 3) Re-assert the two options that are critical for embedded WGL rendering.
+  // vo=libmpv tells mpv to use the render API (our WGL path); hwdec=no forces
+  // software decode so no D3D/DXVA interop is attempted.
+  // Do NOT set gpu-api here — with vo=libmpv, gpu-api is for vo=gpu and causes
+  // mpv to partially initialise a second GL stack during mpv_initialize(),
+  // which corrupts the stack → STATUS_STACK_BUFFER_OVERRUN.
+  let _ = mpv.set_option_string("vo", "libmpv");
+  let _ = mpv.set_option_string("hwdec", "no");
+
+  // 3b) Now initialize mpv core (render ctx exists).
   mpv.initialize()?;
+
+  // 3c) Only NOW arm the render-update callback. Doing it before mpv_initialize() caused
+  // WASAPI/COM init to pump the Win32 message queue mid-init, dispatching WM_MPV_RENDER
+  // re-entrantly into mpv_render_context_render → STATUS_STACK_BUFFER_OVERRUN.
+  unsafe {
+    (*renderer_ptr).arm_update_callback();
+  }
 
   // 4) Observe Phase-1 properties.
   mpv.observe_property(1, "pause", mpv_format::MPV_FORMAT_FLAG)?;
@@ -370,6 +417,9 @@ pub fn create_embedded_libmpv_session(
             }
             PlayerCommand::SetMute(v) => {
               let _ = mpv_ev.command(&["set_property", "mute", if v { "yes" } else { "no" }]);
+            }
+            PlayerCommand::SetSpeed(v) => {
+              let _ = mpv_ev.command(&["set_property", "speed", &format!("{v}")]);
             }
             PlayerCommand::Stop => {
               let _ = mpv_ev.command(&["quit"]);

@@ -1,12 +1,12 @@
-using System.Net.Http;
 using Pitflix.Core.Api;
 using Pitflix.Core.Config;
+using Pitflix.Core.Net;
 
 namespace Pitflix.API.Services;
 
 public static class TmdbClientFactory
 {
-    private static readonly HttpClient Http = new();
+    private static readonly HttpClient Http = PitflixHttp.CreateClient();
 
     public static TmdbClient? Create()
     {

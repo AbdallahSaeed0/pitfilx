@@ -1,6 +1,7 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useCallback, useMemo, useState } from "react";
-import { useSearchParams } from "react-router-dom";
+import { LayoutGrid, List } from "lucide-react";
+import { Link, useSearchParams } from "react-router-dom";
 import {
   bulkDeleteFromDevice,
   bulkRemoveFromLibrary,
@@ -11,6 +12,7 @@ import { getStats } from "../api/stats";
 import { useMovies } from "../hooks/useMovies";
 import { useDebounce } from "../hooks/useDebounce";
 import { PosterCard } from "../components/ui/PosterCard";
+import { LibraryListRow } from "../components/ui/LibraryListRow";
 import { Pagination } from "../components/ui/Pagination";
 import { LibraryGridSkeleton } from "../components/ui/LibraryGridSkeleton";
 import { LibrarySearchField } from "../components/ui/LibrarySearchField";
@@ -19,6 +21,9 @@ import type { MediaCard } from "../types/media";
 import { cn } from "../utils/cn";
 import { isFavoritesListName } from "../utils/listMarks";
 import { COMMON_GENRES } from "../data/commonGenres";
+
+const VIEW_STORAGE_KEY = "pitflix.library.view.movies";
+type ViewMode = "grid" | "list";
 
 export function MoviesPage() {
   const qc = useQueryClient();
@@ -48,6 +53,13 @@ export function MoviesPage() {
   const [selectionMode, setSelectionMode] = useState(false);
   const [selectedIds, setSelectedIds] = useState<Set<number>>(() => new Set());
   const [markBusy, setMarkBusy] = useState(false);
+  const [viewMode, setViewMode] = useState<ViewMode>(() => {
+    try { return (localStorage.getItem(VIEW_STORAGE_KEY) as ViewMode) || "grid"; } catch { return "grid"; }
+  });
+  const setView = (v: ViewMode) => {
+    setViewMode(v);
+    try { localStorage.setItem(VIEW_STORAGE_KEY, v); } catch {}
+  };
 
   const { data: stats } = useQuery({
     queryKey: ["stats"],
@@ -187,6 +199,25 @@ export function MoviesPage() {
           <p className="mt-1 text-sm text-pitflix-muted">{total} titles in your library</p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
+          {/* View toggle */}
+          <div className="flex items-center gap-0.5 rounded-lg border border-pitflix-card bg-pitflix-card p-0.5">
+            <button
+              type="button"
+              title="Grid view"
+              onClick={() => setView("grid")}
+              className={cn("rounded-md p-1.5 transition-colors", viewMode === "grid" ? "bg-pitflix-primary text-white" : "text-pitflix-muted hover:text-white")}
+            >
+              <LayoutGrid className="h-4 w-4" />
+            </button>
+            <button
+              type="button"
+              title="List view"
+              onClick={() => setView("list")}
+              className={cn("rounded-md p-1.5 transition-colors", viewMode === "list" ? "bg-pitflix-primary text-white" : "text-pitflix-muted hover:text-white")}
+            >
+              <List className="h-4 w-4" />
+            </button>
+          </div>
           {selectionMode ? (
             <>
               <span className="text-xs text-pitflix-muted">{selectedIds.size} selected</span>
@@ -323,23 +354,53 @@ export function MoviesPage() {
 
       {isPending && !isPlaceholderData ? (
         <LibraryGridSkeleton />
+      ) : !isPending && total === 0 && !search && !genre && watch === "all" ? (
+        <div className="flex flex-col items-center gap-4 py-24 text-center">
+          <p className="text-4xl">🎬</p>
+          <p className="text-lg font-semibold text-white">No movies in your library yet</p>
+          <p className="max-w-sm text-sm text-pitflix-subtle">
+            Add a library folder in Settings, then run a scan to import your files.
+          </p>
+          <Link
+            to="/settings"
+            className="mt-2 rounded-lg bg-pitflix-primary px-5 py-2.5 text-sm font-semibold text-white hover:bg-pitflix-light"
+          >
+            Open Settings
+          </Link>
+        </div>
       ) : (
         <>
           <ScrollReveal>
-            <div className="grid grid-cols-2 gap-x-6 gap-y-10 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 2xl:grid-cols-7">
-              {((data?.items ?? []) as MediaCard[]).map((m) => (
-                <PosterCard
-                  key={m.id}
-                  item={m}
-                  mediaType="Movie"
-                  className="justify-self-center"
-                  isFavorite={favoriteSet.has(m.tmdbId)}
-                  selectionMode={selectionMode}
-                  selected={selectedIds.has(m.id)}
-                  onToggleSelect={() => toggleSelect(m.id)}
-                />
-              ))}
-            </div>
+            {viewMode === "grid" ? (
+              <div className="grid grid-cols-4 sm:grid-cols-5 md:grid-cols-6 lg:grid-cols-7 xl:grid-cols-8 2xl:grid-cols-10 gap-3 gap-y-7">
+                {((data?.items ?? []) as MediaCard[]).map((m) => (
+                  <PosterCard
+                    key={m.id}
+                    item={m}
+                    mediaType="Movie"
+                    isFavorite={favoriteSet.has(m.tmdbId)}
+                    selectionMode={selectionMode}
+                    selected={selectedIds.has(m.id)}
+                    onToggleSelect={() => toggleSelect(m.id)}
+                    className="w-full"
+                  />
+                ))}
+              </div>
+            ) : (
+              <div className="flex flex-col divide-y divide-pitflix-card/50">
+                {((data?.items ?? []) as MediaCard[]).map((m) => (
+                  <LibraryListRow
+                    key={m.id}
+                    item={m}
+                    mediaType="Movie"
+                    isFavorite={favoriteSet.has(m.tmdbId)}
+                    selectionMode={selectionMode}
+                    selected={selectedIds.has(m.id)}
+                    onToggleSelect={() => toggleSelect(m.id)}
+                  />
+                ))}
+              </div>
+            )}
           </ScrollReveal>
           <ScrollReveal className="mt-8">
             <Pagination

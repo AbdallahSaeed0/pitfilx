@@ -212,6 +212,9 @@ struct PersistedResume {
   /// Correlates with Pitflix server `WatchHistories.Id` when the webview sends it.
   #[serde(default, skip_serializing_if = "Option::is_none")]
   history_id: Option<i32>,
+  /// Last subtitle pick for this episode: `""` = off, `"e:{id}"` = embedded, `"x:{path}"` = external.
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  subtitle_pick: Option<String>,
 }
 
 pub struct PlaybackOrchestrator {
@@ -290,6 +293,51 @@ impl PlaybackOrchestrator {
     let bytes = serde_json::to_vec_pretty(&self.resume_disk)
       .map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
     fs::write(path, bytes)
+  }
+
+  /// Persist an explicit final position for an episode key, without needing an active session.
+  /// Use this from the close handler so the save doesn't race with `clear_session`.
+  /// `subtitle_pick` is carried forward from the existing entry if present.
+  pub fn set_position_for_key(&mut self, key: &str, time_pos: f64, duration: f64, history_id: Option<i32>) {
+    let now_ms = std::time::SystemTime::now()
+      .duration_since(std::time::UNIX_EPOCH)
+      .map(|d| d.as_millis())
+      .unwrap_or(0);
+    let prev = self.resume_disk.positions.get(key).cloned();
+    let dur_opt = duration.is_finite().then_some(duration.max(0.0)).filter(|d| *d > 0.5);
+    let duration_seconds = dur_opt.or_else(|| prev.as_ref().and_then(|p| p.duration_seconds));
+    let history_id = history_id.or_else(|| prev.as_ref().and_then(|p| p.history_id));
+    let subtitle_pick = prev.as_ref().and_then(|p| p.subtitle_pick.clone());
+    self.resume_disk.positions.insert(
+      key.to_string(),
+      PersistedResume {
+        seconds: time_pos.max(0.0),
+        updated_unix_ms: now_ms,
+        duration_seconds,
+        history_id,
+        subtitle_pick,
+      },
+    );
+    let _ = self.save_resume_disk();
+  }
+
+  /// Persist the user's subtitle pick for an episode key (e.g. `"ep:42"`).
+  /// `val` is `""` for off, `"e:{id}"` for embedded, `"x:{encoded_path}"` for external.
+  pub fn set_subtitle_pick(&mut self, key: &str, val: &str) {
+    let entry = self.resume_disk.positions.entry(key.to_string()).or_insert_with(|| PersistedResume {
+      seconds: 0.0,
+      updated_unix_ms: 0,
+      duration_seconds: None,
+      history_id: None,
+      subtitle_pick: None,
+    });
+    entry.subtitle_pick = Some(val.to_string());
+    let _ = self.save_resume_disk();
+  }
+
+  /// Retrieve the last subtitle pick for an episode key, or `None` if never set.
+  pub fn get_subtitle_pick(&self, key: &str) -> Option<String> {
+    self.resume_disk.positions.get(key)?.subtitle_pick.clone()
   }
 
   pub fn resume_hints_for_episode(&self, key: &str) -> ResumeHints {
@@ -411,6 +459,8 @@ impl PlaybackOrchestrator {
     let prev = self.resume_disk.positions.get(&key).cloned();
     let duration_seconds = dur_opt.or_else(|| prev.as_ref().and_then(|p| p.duration_seconds));
     let history_id = history_id.or_else(|| prev.as_ref().and_then(|p| p.history_id));
+    // Carry subtitle_pick forward so saving the position never wipes a saved subtitle choice.
+    let subtitle_pick = prev.as_ref().and_then(|p| p.subtitle_pick.clone());
     self.resume_disk.positions.insert(
       key,
       PersistedResume {
@@ -418,6 +468,7 @@ impl PlaybackOrchestrator {
         updated_unix_ms: now_ms,
         duration_seconds,
         history_id,
+        subtitle_pick,
       },
     );
     let _ = self.save_resume_disk();

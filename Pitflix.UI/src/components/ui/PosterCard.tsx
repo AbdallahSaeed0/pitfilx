@@ -1,9 +1,16 @@
 import { Heart } from "lucide-react";
+import { useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
+import { useQueryClient } from "@tanstack/react-query";
+import { useHoverCard } from "../../hooks/useHoverCard";
+import { usePlayback } from "../../hooks/usePlayback";
+import { getMovie } from "../../api/movies";
+import { getShow } from "../../api/series";
 import type { MediaCard } from "../../types/media";
 import { cn } from "../../utils/cn";
 import { formatRating, formatYear } from "../../utils/format";
 import { toPosterSrc } from "../../utils/posterSrc";
+import { MediaHoverCard } from "./MediaHoverCard";
 import { MediaImage } from "./MediaImage";
 
 export type PosterCardMetaHints = {
@@ -42,6 +49,11 @@ export function PosterCard({
   metaHints,
 }: PosterCardProps) {
   const navigate = useNavigate();
+  const qc = useQueryClient();
+  const { play } = usePlayback();
+  const cardRef = useRef<HTMLDivElement>(null);
+  const [anchorRect, setAnchorRect] = useState<DOMRect | null>(null);
+  const { open: hoverOpen, triggerProps, cardProps } = useHoverCard();
   const primary = item.selectedPosterPath || item.posterLocalPath;
   const remote = item.posterRemoteUrl;
   const src = toPosterSrc((primary ?? remote) ?? undefined);
@@ -52,7 +64,19 @@ export function PosterCard({
   const rating = item.voteAverage ?? 0;
   const yearLabel = formatYear(item.year);
 
+  const playPath = item.mediaFilePath || item.filePath;
+
   const openDetail = () => navigate(detailPath);
+
+  const handleMouseEnter = () => {
+    if (cardRef.current) setAnchorRect(cardRef.current.getBoundingClientRect());
+    triggerProps.onMouseEnter();
+    if (mediaType === "Movie") {
+      void qc.prefetchQuery({ queryKey: ["movie", item.id], queryFn: () => getMovie(item.id), staleTime: 30 * 60_000 });
+    } else {
+      void qc.prefetchQuery({ queryKey: ["show", item.id], queryFn: () => getShow(item.id), staleTime: 30 * 60_000 });
+    }
+  };
 
   const handleMainActivate = () => {
     if (selectionMode && onToggleSelect) onToggleSelect();
@@ -64,13 +88,17 @@ export function PosterCard({
   const showPosterRatingOnHover = metaHints?.showPosterRatingOnHover !== false;
 
   return (
+    <>
     <div
+      ref={cardRef}
       className={cn(
         "group relative shrink-0 cursor-pointer text-left",
         size === "sm" ? "w-[136px]" : "w-[160px]",
         "rounded-xl transition-[transform,filter] duration-200 hover:-translate-y-1",
         className,
       )}
+      onMouseEnter={handleMouseEnter}
+      onMouseLeave={triggerProps.onMouseLeave}
     >
       <div
         role="button"
@@ -172,5 +200,29 @@ export function PosterCard({
         </button>
       ) : null}
     </div>
+    {hoverOpen && anchorRect ? (
+      <MediaHoverCard
+        item={item}
+        mediaType={mediaType}
+        anchorRect={anchorRect}
+        onPlay={
+          playPath
+            ? () => {
+                void play(
+                  playPath,
+                  item.title,
+                  item.selectedPosterPath || item.posterLocalPath || null,
+                  mediaType,
+                  0,
+                );
+              }
+            : undefined
+        }
+        onInfo={() => navigate(detailPath)}
+        onMouseEnter={cardProps.onMouseEnter}
+        onMouseLeave={cardProps.onMouseLeave}
+      />
+    ) : null}
+    </>
   );
 }

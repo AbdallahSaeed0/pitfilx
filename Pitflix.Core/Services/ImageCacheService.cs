@@ -1,14 +1,13 @@
 using System.Net.Http;
+using Pitflix.Core.Net;
 
 namespace Pitflix.Core.Services;
 
 /// <summary>Local TMDB image cache under %LocalAppData%\Pitflix\Images.</summary>
 public static class ImageCacheService
 {
-    private static readonly Lazy<HttpClient> FallbackHttp = new(() => new HttpClient
-    {
-        Timeout = TimeSpan.FromSeconds(60)
-    });
+    private static readonly Lazy<HttpClient> FallbackHttp = new(() =>
+        PitflixHttp.CreateClient(TimeSpan.FromSeconds(60)));
 
     public static string CacheRoot => Path.Combine(
         Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),

@@ -1,11 +1,12 @@
 import api from "./client";
 
-export const getHistory = (limit = 10, opts?: { includeSuppressed?: boolean }) =>
+export const getHistory = (limit = 10, opts?: { includeSuppressed?: boolean; lite?: boolean }) =>
   api
     .get("/history", {
       params: {
         limit,
         ...(opts?.includeSuppressed ? { includeSuppressed: true } : {}),
+        ...(opts?.lite ? { lite: true } : {}),
       },
     })
     .then((r) => r.data);
@@ -37,3 +38,19 @@ export const removeHistoryEntry = (id: number) =>
 /** Dismiss from Continue watching; optionally mark the library movie or episode as completed first. */
 export const dismissHistoryEntry = (id: number, markCompleted: boolean) =>
   api.post<{ success: boolean }>(`/history/${id}/dismiss`, { markCompleted }).then((r) => r.data);
+
+/**
+ * Record a streaming or manual "watched" event so it counts in Statistics
+ * even when the title is not in the local library.
+ */
+export const markWatchedEntry = (body: {
+  tmdbId: number;
+  imdbId?: string | null;
+  mediaType: string;
+  title: string;
+  posterUrl?: string | null;
+  source: "streaming" | "manual";
+  seasonNumber?: number | null;
+  episodeNumber?: number | null;
+  runtimeMinutes?: number;
+}) => api.post<{ success: boolean }>("/history/mark-watched", body).then((r) => r.data);

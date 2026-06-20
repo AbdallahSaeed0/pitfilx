@@ -1,5 +1,6 @@
 import { AnimatePresence, motion } from "framer-motion";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { Link } from "react-router-dom";
 import {
   downloadSubtitle,
   downloadSubDl,
@@ -131,6 +132,14 @@ export function SubtitleDrawer({
   const [sdlRows, setSdlRows] = useState<SubDlRow[]>([]);
   const [sdlError, setSdlError] = useState<string | null>(null);
   const [sdlDownload, setSdlDownload] = useState<Record<string, "idle" | "loading" | "ok" | "err">>({});
+  const [sdlManualQ, setSdlManualQ] = useState("");
+  // Tracks whether a search attempt has been made for the current drawer session.
+  // Using a flag (not sdlRows.length) so that empty/error results don't re-trigger the effect.
+  const [sdlHasSearched, setSdlHasSearched] = useState(false);
+
+  // Ref-based guard: prevents double-firing the auto-search without triggering
+  // extra re-renders (state-based guards cause effect loops with sdlLoading).
+  const sdlSearchFiredRef = useRef(false);
 
   const runManualSearch = useCallback(() => {
     const q = manualQ.trim();
@@ -155,6 +164,29 @@ export function SubtitleDrawer({
       .catch(() => setTransportError("Could not search subtitles. Check that the API is running."))
       .finally(() => setLoading(false));
   }, [manualQ, mode, movieTmdbId, showTmdbId, episodeSeason, episodeNumber]);
+
+  const runSubDlSearch = useCallback((overrideTitle?: string) => {
+    const q = (overrideTitle ?? sdlManualQ).trim();
+    setSdlHasSearched(true);
+    setSdlLoading(true);
+    setSdlError(null);
+    setSdlRows([]);
+    setSdlDownload({});
+    void searchSubDl({
+      imdbId,
+      tmdbId: mode === "movie" ? movieTmdbId : showTmdbId,
+      title: q || title,
+      mediaType: mode === "movie" ? "Movie" : "Series",
+      season: episodeSeason,
+      episode: episodeNumber,
+    })
+      .then((p) => {
+        setSdlRows(p.items);
+        if (p.error) setSdlError(p.error);
+      })
+      .catch(() => setSdlError("SubDL search failed."))
+      .finally(() => setSdlLoading(false));
+  }, [sdlManualQ, imdbId, mode, movieTmdbId, showTmdbId, title, episodeSeason, episodeNumber]);
 
   // Load OpenSubtitles on open
   useEffect(() => {
@@ -182,34 +214,27 @@ export function SubtitleDrawer({
       .finally(() => setLoading(false));
   }, [open, mode, movieId, episodeId, title]);
 
-  // Load SubDL when that tab is first selected
+  // Fire SubDL search the moment the drawer opens (background prefetch).
+  // Results are ready by the time the user clicks the SubDL tab.
+  // Using a ref guard instead of state avoids the effect-loop race where
+  // sdlLoading being true would silently block the old tab-change trigger.
   useEffect(() => {
-    if (!open || tab !== "subdl" || sdlRows.length > 0 || sdlLoading) return;
-    setSdlLoading(true);
-    setSdlError(null);
-    void searchSubDl({
-      imdbId,
-      tmdbId: mode === "movie" ? movieTmdbId : showTmdbId,
-      title,
-      mediaType: mode === "movie" ? "Movie" : "Series",
-      season: episodeSeason,
-      episode: episodeNumber,
-    })
-      .then((p) => {
-        setSdlRows(p.items);
-        if (p.error) setSdlError(p.error);
-      })
-      .catch(() => setSdlError("SubDL search failed."))
-      .finally(() => setSdlLoading(false));
-  }, [open, tab, sdlRows.length, sdlLoading, imdbId, mode, movieTmdbId, showTmdbId, title, episodeSeason, episodeNumber]);
+    if (!open) return;
+    if (sdlSearchFiredRef.current) return;
+    sdlSearchFiredRef.current = true;
+    runSubDlSearch(title);
+  }, [open, runSubDlSearch, title]);
 
-  // Reset SubDL cache when drawer reopens
+  // Reset all SubDL state when drawer closes so the next open triggers a fresh search.
   useEffect(() => {
-    if (!open) {
-      setSdlRows([]);
-      setSdlError(null);
-      setSdlDownload({});
-    }
+    if (open) return;
+    sdlSearchFiredRef.current = false;
+    setSdlHasSearched(false);
+    setSdlRows([]);
+    setSdlError(null);
+    setSdlDownload({});
+    setSdlLoading(false);
+    setSdlManualQ("");
   }, [open]);
 
   const searchBar = (
@@ -305,8 +330,17 @@ export function SubtitleDrawer({
                     <div className="flex flex-1 flex-col items-center justify-center py-16">
                       <Spinner />
                     </div>
-                  ) : rows.length === 0 ? (
-                    <p className="text-sm text-pitflix-muted">No subtitles for this search yet.</p>
+                  ) : rows.length === 0 && !loading ? (
+                    <div className="flex flex-col gap-3 py-8 text-center">
+                      <p className="text-sm text-pitflix-muted">No subtitles found for this title.</p>
+                      <p className="text-[11px] text-pitflix-subtle">
+                        Add an OpenSubtitles or SubDL API key in{" "}
+                        <Link to="/settings" className="text-pitflix-primary hover:underline">
+                          Settings → API keys
+                        </Link>{" "}
+                        to improve results.
+                      </p>
+                    </div>
                   ) : (
                     <ul className={`space-y-3 pb-4 ${loading ? "opacity-60" : ""}`}>
                       {rows.map((s) => {
@@ -325,6 +359,7 @@ export function SubtitleDrawer({
                                   {s.ratings > 0 ? ` · ★ ${s.ratings.toFixed(1)}` : ""}
                                 </p>
                                 <div className="mt-1 flex flex-wrap gap-1">
+                                  <span className="rounded bg-blue-900/60 px-1.5 py-0.5 text-[10px] text-blue-200">OpenSubtitles</span>
                                   {s.isMachineTranslated ? (
                                     <span className="rounded bg-pitflix-card px-1.5 py-0.5 text-[10px] text-pitflix-muted">🤖 Auto</span>
                                   ) : null}
@@ -365,15 +400,53 @@ export function SubtitleDrawer({
 
               {tab === "subdl" && (
                 <>
+                  {/* SubDL manual search bar */}
+                  <div className="shrink-0 space-y-2">
+                    <div className="flex gap-2">
+                      <input
+                        value={sdlManualQ}
+                        onChange={(e) => setSdlManualQ(e.target.value)}
+                        onKeyDown={(e) => { if (e.key === "Enter") runSubDlSearch(); }}
+                        placeholder={`Search SubDL… (default: ${title})`}
+                        className="min-w-0 flex-1 rounded-lg border border-pitflix-card bg-pitflix-bg px-3 py-2 text-sm text-white placeholder:text-pitflix-subtle"
+                      />
+                      <button
+                        type="button"
+                        disabled={sdlLoading}
+                        onClick={() => runSubDlSearch()}
+                        className="shrink-0 rounded-lg bg-pitflix-primary px-3 py-2 text-sm font-medium text-white disabled:opacity-40"
+                      >
+                        {sdlLoading ? "…" : "Search"}
+                      </button>
+                    </div>
+                    <p className="text-[11px] text-pitflix-subtle">
+                      Searches Arabic &amp; English. Edit the query if nothing appears.
+                    </p>
+                  </div>
                   {sdlLoading && sdlRows.length === 0 ? (
                     <div className="flex flex-1 flex-col items-center justify-center py-16">
                       <Spinner />
                     </div>
                   ) : sdlError ? (
-                    <p className="text-sm text-red-400">{sdlError}</p>
-                  ) : sdlRows.length === 0 ? (
-                    <p className="text-sm text-pitflix-muted">No SubDL subtitles found.</p>
-                  ) : (
+                    <div className="space-y-2">
+                      <p className="text-sm text-red-400">{sdlError}</p>
+                      <button
+                        type="button"
+                        onClick={() => runSubDlSearch()}
+                        className="rounded-lg border border-pitflix-card px-3 py-1.5 text-xs text-pitflix-muted hover:text-white"
+                      >
+                        Retry
+                      </button>
+                    </div>
+                  ) : sdlRows.length === 0 && sdlHasSearched ? (
+                    <div className="space-y-2">
+                      <p className="text-sm text-pitflix-muted">No SubDL subtitles found.</p>
+                      <p className="text-[11px] text-pitflix-subtle">
+                        Try editing the search query above, or check your SubDL API key in{" "}
+                        <Link to="/settings" className="text-pitflix-primary hover:underline">Settings → API keys</Link>.
+                      </p>
+                    </div>
+                  ) : sdlRows.length === 0 ? null : (
                     <ul className={`space-y-3 pb-4 ${sdlLoading ? "opacity-60" : ""}`}>
                       {sdlRows.map((s) => {
                         const key = s.fullLink;
@@ -385,11 +458,12 @@ export function SubtitleDrawer({
                               <div className="min-w-0 flex-1">
                                 <p className="line-clamp-2 text-xs font-medium text-white">{s.releaseName}</p>
                                 <p className="mt-0.5 text-[10px] text-pitflix-muted uppercase">{s.format}</p>
-                                {s.isHearingImpaired ? (
-                                  <span className="mt-1 inline-block rounded bg-pitflix-card px-1.5 py-0.5 text-[10px] text-pitflix-muted">
-                                    👂 HI
-                                  </span>
-                                ) : null}
+                                <div className="mt-1 flex flex-wrap gap-1">
+                                  <span className="rounded bg-emerald-900/60 px-1.5 py-0.5 text-[10px] text-emerald-200">SubDL</span>
+                                  {s.isHearingImpaired ? (
+                                    <span className="rounded bg-pitflix-card px-1.5 py-0.5 text-[10px] text-pitflix-muted">👂 HI</span>
+                                  ) : null}
+                                </div>
                               </div>
                             </div>
                             <button

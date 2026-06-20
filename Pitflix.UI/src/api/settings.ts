@@ -13,6 +13,9 @@ export type WizardDraft = {
 export type PitflixSettings = {
   tmdbApiKey: string;
   openSubtitlesApiKey?: string;
+  subDlApiKey?: string;
+  mdblistApiKey?: string;
+  tvdbApiKey?: string;
   libraryPaths: string[];
   /** Folders scanned automatically every ~2 minutes (in addition to the hourly full library pass). */
   pinnedScanPaths?: string[];
@@ -24,6 +27,8 @@ export type PitflixSettings = {
   mediaPlayerPath?: string;
   /** When true (default), the desktop app uses bundled mpv instead of external players. */
   useBuiltinPlayer?: boolean;
+  /** How the built-in player opens: 'detached' (default) = separate mpv window; 'embedded' = mpv inside the app window. */
+  playerMode?: 'detached' | 'embedded';
   /** When true (default), show corner toasts when pinned/hourly auto-scan matches or flags a file. */
   libraryScanDesktopToasts?: boolean;
   setupComplete?: boolean;
@@ -56,9 +61,13 @@ export const saveSettings = (body: {
   tmdbApiKey?: string;
   openSubtitlesApiKey?: string;
   openSubtitlesAppName?: string;
+  subDlApiKey?: string;
+  mdblistApiKey?: string;
+  tvdbApiKey?: string;
   libraryPaths?: string[];
   mediaPlayerPath?: string;
   useBuiltinPlayer?: boolean;
+  playerMode?: 'detached' | 'embedded';
   libraryScanDesktopToasts?: boolean;
 }) => api.post("/settings", body).then((r) => r.data);
 
@@ -88,6 +97,27 @@ export const verifyTmdbKey = (key: string) =>
 export const verifyOpenSubtitlesKey = (key: string) =>
   api
     .get<{ valid: boolean; error?: string | null }>("/settings/verify-opensubtitles", { params: { key } })
+    .then((r) => r.data);
+
+export const verifySubDlKey = (key: string) =>
+  api
+    .get<{ valid: boolean; error?: string | null }>("/settings/verify-subdl", { params: { key } })
+    .then((r) => r.data);
+
+export const verifyMdblistKey = (key: string) =>
+  api
+    .get<{ valid: boolean; imdbScore?: number | null; rawSnippet?: string; error?: string | null }>(
+      "/settings/verify-mdblist",
+      { params: { key } },
+    )
+    .then((r) => {
+      if (r.data.rawSnippet) console.debug("[MDBList verify] raw response:", r.data.rawSnippet);
+      return r.data;
+    });
+
+export const verifyTvdbKey = (key: string) =>
+  api
+    .get<{ valid: boolean; error?: string | null }>("/settings/verify-tvdb", { params: { key } })
     .then((r) => r.data);
 
 export const pathExistsOnServer = (path: string) =>

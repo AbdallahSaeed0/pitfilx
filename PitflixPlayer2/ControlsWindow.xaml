@@ -1,0 +1,1266 @@
+<Window x:Class="PitflixPlayer.ControlsWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="PitflixPlayer Controls"
+        WindowStyle="None"
+        WindowState="Normal"
+        AllowsTransparency="True"
+        Background="Transparent"
+        ShowInTaskbar="False"
+        ResizeMode="NoResize"
+        UseLayoutRounding="True"
+        SnapsToDevicePixels="True"
+        TextOptions.TextFormattingMode="Display"
+        TextOptions.TextRenderingMode="ClearType"
+        RenderOptions.ClearTypeHint="Enabled"
+        RenderOptions.BitmapScalingMode="HighQuality">
+
+    <Window.Resources>
+
+        <!-- ── Purple seek / volume slider ───────────────────────────────────
+             Root Grid gets Background="Transparent" so the entire slider
+             rectangle is hit-testable — without this, clicks that land
+             outside the 4 px track are swallowed by the parent in an
+             AllowsTransparency window and PreviewMouseLeftButtonDown never fires.
+        -->
+        <Style x:Key="PurpleSlider" TargetType="Slider">
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Slider">
+                        <Grid Background="Transparent">
+                            <Border Height="4" VerticalAlignment="Center"
+                                    CornerRadius="2" Background="#44FFFFFF"/>
+                            <Track x:Name="PART_Track">
+                                <!-- DecreaseRepeatButton spans from the start
+                                     of the track to the thumb — painting it
+                                     purple gives the "progress fill" the user
+                                     asked for (you can see at a glance how
+                                     much of the video has played).  The
+                                     IncreaseRepeatButton (right side) stays
+                                     invisible so the gray track shows through
+                                     for the un-played portion. -->
+                                <Track.DecreaseRepeatButton>
+                                    <RepeatButton Command="Slider.DecreaseLarge"
+                                                  Focusable="False">
+                                        <RepeatButton.Template>
+                                            <ControlTemplate TargetType="RepeatButton">
+                                                <Border Height="4"
+                                                        VerticalAlignment="Center"
+                                                        CornerRadius="2"
+                                                        Background="#7C3AED"/>
+                                            </ControlTemplate>
+                                        </RepeatButton.Template>
+                                    </RepeatButton>
+                                </Track.DecreaseRepeatButton>
+                                <Track.Thumb>
+                                    <Thumb>
+                                        <Thumb.Template>
+                                            <ControlTemplate TargetType="Thumb">
+                                                <Ellipse Width="12" Height="12"
+                                                         Fill="#7C3AED"
+                                                         Stroke="#FFFFFF"
+                                                         StrokeThickness="1.5"/>
+                                            </ControlTemplate>
+                                        </Thumb.Template>
+                                    </Thumb>
+                                </Track.Thumb>
+                                <Track.IncreaseRepeatButton>
+                                    <RepeatButton Command="Slider.IncreaseLarge"
+                                                  Background="Transparent"
+                                                  BorderBrush="Transparent"
+                                                  Focusable="False" Opacity="0"/>
+                                </Track.IncreaseRepeatButton>
+                            </Track>
+                        </Grid>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <!-- ── Flat icon button (transport) ──────────────────────────────────
+             Background="#01000000" (1-alpha black) makes every pixel of the
+             button hit-testable even inside an AllowsTransparency window.
+        -->
+        <Style x:Key="IconButton" TargetType="Button">
+            <Setter Property="Background"      Value="#01000000"/>
+            <Setter Property="BorderBrush"     Value="Transparent"/>
+            <Setter Property="BorderThickness" Value="0"/>
+            <Setter Property="Cursor"          Value="Hand"/>
+            <Setter Property="Foreground"      Value="White"/>
+            <Setter Property="FontFamily"      Value="Segoe UI Symbol, Segoe UI"/>
+            <Setter Property="FontSize"        Value="18"/>
+            <Setter Property="Width"           Value="32"/>
+            <Setter Property="Height"          Value="32"/>
+            <Setter Property="Focusable"       Value="False"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Button">
+                        <Border x:Name="Bd"
+                                Background="{TemplateBinding Background}"
+                                CornerRadius="6" Padding="4">
+                            <ContentPresenter HorizontalAlignment="Center"
+                                              VerticalAlignment="Center"/>
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="Bd" Property="Background" Value="#33FFFFFF"/>
+                            </Trigger>
+                            <Trigger Property="IsPressed" Value="True">
+                                <Setter TargetName="Bd" Property="Background" Value="#55FFFFFF"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <!-- ── Chrome button (40×40, window controls) ────────────────────────
+             • Default icon colour: #AAAAAA  (Foreground setter)
+             • Hover:  background #ffffff18, icon → White
+             • Pressed: background #ffffff33, icon → White
+             • Background "#01000000" ensures hit-testing in transparent window
+        -->
+        <!-- ── Themed chrome button (minimize / maximize / more) ─────────────
+             Matches the app's purple accent.  Rounded corners (4 px) for a
+             modern look, purple-tinted hover, deeper purple on press.
+             Foreground brightens to white on hover for contrast.
+        -->
+        <!-- ── Themed vertical scrollbar ────────────────────────────────────
+             Replaces the default Windows gray with a slim, dark, purple-
+             accented bar.  Hides the +/- repeat buttons (8 px tall by
+             default, never used in modern apps).  Thumb gets brand purple
+             with rounded corners; track is a transparent dark column.
+        -->
+        <Style x:Key="ThemedScrollBarThumb" TargetType="Thumb">
+            <Setter Property="OverridesDefaultStyle" Value="True"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Thumb">
+                        <Border CornerRadius="4"
+                                Background="#7C3AED"
+                                BorderBrush="Transparent"/>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <Style x:Key="HiddenRepeatButton" TargetType="RepeatButton">
+            <Setter Property="OverridesDefaultStyle" Value="True"/>
+            <Setter Property="Background"            Value="Transparent"/>
+            <Setter Property="Focusable"             Value="False"/>
+            <Setter Property="IsTabStop"             Value="False"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="RepeatButton">
+                        <Border Background="Transparent"/>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <Style TargetType="ScrollBar">
+            <Setter Property="Background" Value="Transparent"/>
+            <Setter Property="Foreground" Value="#7C3AED"/>
+            <Setter Property="Width"      Value="8"/>
+            <Setter Property="MinWidth"   Value="8"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="ScrollBar">
+                        <Grid Background="#1A000000">
+                            <Track x:Name="PART_Track" IsDirectionReversed="True">
+                                <Track.DecreaseRepeatButton>
+                                    <RepeatButton Style="{StaticResource HiddenRepeatButton}"
+                                                  Command="ScrollBar.PageUpCommand"/>
+                                </Track.DecreaseRepeatButton>
+                                <Track.Thumb>
+                                    <Thumb Style="{StaticResource ThemedScrollBarThumb}"
+                                           Margin="2,0,2,0"/>
+                                </Track.Thumb>
+                                <Track.IncreaseRepeatButton>
+                                    <RepeatButton Style="{StaticResource HiddenRepeatButton}"
+                                                  Command="ScrollBar.PageDownCommand"/>
+                                </Track.IncreaseRepeatButton>
+                            </Track>
+                        </Grid>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <Style x:Key="ChromeButton" TargetType="Button">
+            <Setter Property="Width"           Value="30"/>
+            <Setter Property="Height"          Value="24"/>
+            <Setter Property="Background"      Value="#01000000"/>
+            <Setter Property="Foreground"      Value="#BFBFBF"/>
+            <Setter Property="BorderBrush"     Value="Transparent"/>
+            <Setter Property="BorderThickness" Value="0"/>
+            <Setter Property="Margin"          Value="1,0,1,0"/>
+            <Setter Property="Cursor"          Value="Hand"/>
+            <Setter Property="Focusable"       Value="False"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Button">
+                        <Border x:Name="Bd"
+                                Background="{TemplateBinding Background}"
+                                CornerRadius="4">
+                            <ContentPresenter HorizontalAlignment="Center"
+                                              VerticalAlignment="Center"/>
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <!-- ~26 % opacity of brand purple -->
+                                <Setter TargetName="Bd" Property="Background" Value="#447C3AED"/>
+                                <Setter Property="Foreground"                 Value="White"/>
+                            </Trigger>
+                            <Trigger Property="IsPressed" Value="True">
+                                <!-- Pressed = brand purple stronger -->
+                                <Setter TargetName="Bd" Property="Background" Value="#7C3AED"/>
+                                <Setter Property="Foreground"                 Value="White"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <!-- ── Close chrome button (red on hover) ────────────────────────────
+             Red close-on-hover is a near-universal convention (Windows,
+             macOS, browsers all use it), so we keep it even with the rest
+             of the theme being purple — users intuit "red X = destructive
+             action" regardless of theme.  Rounded corners match the
+             themed ChromeButton above.
+        -->
+        <Style x:Key="ChromeCloseButton" TargetType="Button"
+               BasedOn="{StaticResource ChromeButton}">
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Button">
+                        <Border x:Name="Bd"
+                                Background="{TemplateBinding Background}"
+                                CornerRadius="4">
+                            <ContentPresenter HorizontalAlignment="Center"
+                                              VerticalAlignment="Center"/>
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="Bd" Property="Background" Value="#E81123"/>
+                                <Setter Property="Foreground"                 Value="White"/>
+                            </Trigger>
+                            <Trigger Property="IsPressed" Value="True">
+                                <Setter TargetName="Bd" Property="Background" Value="#C0001A"/>
+                                <Setter Property="Foreground"                 Value="White"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <!-- Subtitle track row button: rounded, dark hover, left-aligned. -->
+        <Style x:Key="SubRowButton" TargetType="Button">
+            <Setter Property="Background" Value="Transparent"/>
+            <Setter Property="Cursor" Value="Hand"/>
+            <Setter Property="HorizontalContentAlignment" Value="Stretch"/>
+            <Setter Property="Margin" Value="0,1"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Button">
+                        <Border x:Name="Bd" Background="{TemplateBinding Background}"
+                                CornerRadius="7" Padding="8,7">
+                            <ContentPresenter/>
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="Bd" Property="Background" Value="#1AFFFFFF"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+    </Window.Resources>
+
+    <Grid>
+
+        <!-- ══ TITLEBAR (top 40 px) ═════════════════════════════════════════
+             Background="Transparent" (non-null) keeps the grid hit-testable
+             in an AllowsTransparency window but leaves no visible dark strip
+             over the video — only the child elements (title, chrome buttons)
+             are drawn.  The bottom gradient lives on ControlsOverlay only.
+        -->
+        <Grid x:Name="TitlebarOverlay"
+              VerticalAlignment="Top" Height="40"
+              Background="Transparent"
+              IsHitTestVisible="True" Cursor="Arrow">
+
+            <!-- Drag surface kept for legacy MouseLeftButtonDown wiring; the
+                 actual drag now happens at WM_NCHITTEST level (HitTestHook
+                 returns HTCAPTION over this area, the OS handles drag
+                 natively, ControlsWindow.LocationChanged drags Owner). -->
+            <Border Background="Transparent"/>
+
+            <!-- Left: purple ● + episode title.  The title is a button so the
+                 user can click it for a quick-info popup (synopsis / rating). -->
+            <StackPanel Orientation="Horizontal" VerticalAlignment="Center"
+                        Margin="12,0,0,0">
+                <Ellipse Width="10" Height="10" Fill="#7C3AED"
+                         VerticalAlignment="Center" Margin="0,0,8,0"
+                         IsHitTestVisible="False"/>
+                <Button x:Name="TitleInfoBtn" Cursor="Hand"
+                        Background="Transparent" BorderThickness="0" Padding="0"
+                        ToolTip="Quick info" Click="OnTitleInfoClick">
+                    <Button.Template>
+                        <ControlTemplate TargetType="Button">
+                            <Border Background="#01000000" Padding="2,0">
+                                <ContentPresenter VerticalAlignment="Center"/>
+                            </Border>
+                        </ControlTemplate>
+                    </Button.Template>
+                    <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                        <TextBlock x:Name="TitlebarTitleLabel"
+                                   Foreground="White" FontFamily="Segoe UI"
+                                   FontSize="13" FontWeight="SemiBold"
+                                   VerticalAlignment="Center"
+                                   TextTrimming="CharacterEllipsis" MaxWidth="360"/>
+                        <!-- Vector "info" affordance (circle + i) — drawn, not a
+                             glyph, so it's safe under invariant globalization. -->
+                        <Grid Width="14" Height="14" Margin="6,0,0,0"
+                              VerticalAlignment="Center">
+                            <Ellipse Stroke="#888888" StrokeThickness="1.3"/>
+                            <Rectangle Width="1.4" Height="4" Fill="#888888"
+                                       VerticalAlignment="Center" Margin="0,2,0,0"/>
+                            <Ellipse Width="1.6" Height="1.6" Fill="#888888"
+                                     VerticalAlignment="Center" Margin="0,-5,0,0"/>
+                        </Grid>
+                    </StackPanel>
+                </Button>
+            </StackPanel>
+
+            <!-- Quick-info popup anchored under the title -->
+            <Popup x:Name="QuickInfoPopup"
+                   PlacementTarget="{Binding ElementName=TitleInfoBtn}"
+                   Placement="Bottom" StaysOpen="False"
+                   AllowsTransparency="True" PopupAnimation="Fade">
+                <Border Background="#F0141014" BorderBrush="#7B2FBE" BorderThickness="1"
+                        CornerRadius="10" Padding="16" MaxWidth="420" Margin="0,6,0,0">
+                    <Border.Effect>
+                        <DropShadowEffect Color="#7B2FBE" BlurRadius="20"
+                                          ShadowDepth="0" Opacity="0.4"/>
+                    </Border.Effect>
+                    <StackPanel>
+                        <TextBlock x:Name="QuickInfoTitle" Foreground="White"
+                                   FontFamily="Segoe UI" FontSize="15" FontWeight="Bold"
+                                   TextWrapping="Wrap"/>
+                        <TextBlock x:Name="QuickInfoMeta" Foreground="#9A8FB0"
+                                   FontFamily="Segoe UI" FontSize="12" Margin="0,3,0,0"
+                                   TextWrapping="Wrap"/>
+                        <TextBlock x:Name="QuickInfoOverview" Foreground="#CCCCCC"
+                                   FontFamily="Segoe UI" FontSize="12.5" Margin="0,8,0,0"
+                                   TextWrapping="Wrap" MaxWidth="388"/>
+                    </StackPanel>
+                </Border>
+            </Popup>
+
+            <!-- Right: indicators + chrome buttons (flush, 0-px spacing).
+                 Named so the HitTestHook can return HTCLIENT for clicks on
+                 these (so the buttons actually work) while returning
+                 HTCAPTION for the rest of the titlebar (so the OS drags
+                 the window natively). -->
+            <!-- Margin=6,0,8,0: pulls the cluster ~8 px in from the right
+                 edge so the close-X button doesn't get clipped at the very
+                 corner.  DWM-extended bounds give us pixel-perfect Window
+                 alignment, but at the precise edge, anti-aliased button
+                 backgrounds rendered ~1 px past the right boundary — which
+                 was the user's "the three buttons show outside the frame"
+                 bug.  Small inset is all it takes. -->
+            <StackPanel x:Name="TitlebarChromeButtons"
+                        Orientation="Horizontal" HorizontalAlignment="Right"
+                        VerticalAlignment="Center"
+                        Margin="6,0,8,0">
+
+                <!-- Speed label (hidden at 1×) -->
+                <TextBlock x:Name="SpeedLabelTitlebar"
+                           Foreground="#7C3AED" FontFamily="Segoe UI"
+                           FontSize="12" FontWeight="SemiBold"
+                           VerticalAlignment="Center"
+                           Visibility="Collapsed" Margin="0,0,10,0"/>
+
+                <!-- Volume % -->
+                <TextBlock x:Name="VolumePctLabel"
+                           Foreground="#BBFFFFFF" FontFamily="Segoe UI"
+                           FontSize="12" VerticalAlignment="Center"
+                           Margin="0,0,8,0" Text="🔊 80%"/>
+
+                <!-- More ⋯ (horizontal three dots) -->
+                <Button x:Name="TitlebarMoreBtn"
+                        Style="{StaticResource ChromeButton}"
+                        ToolTip="More options"
+                        Click="OnMoreClick">
+                    <Path StrokeThickness="3"
+                          Stroke="{Binding Foreground,
+                              RelativeSource={RelativeSource AncestorType={x:Type Button}}}"
+                          StrokeStartLineCap="Round" StrokeEndLineCap="Round"
+                          Data="M4,8 L4.01,8 M8,8 L8.01,8 M12,8 L12.01,8"
+                          Width="16" Height="16" Stretch="None"
+                          SnapsToDevicePixels="True"/>
+                </Button>
+
+                <!-- Minimize — -->
+                <Button Style="{StaticResource ChromeButton}"
+                        ToolTip="Minimize"
+                        Click="OnMinimizeClick">
+                    <Path Data="M4,8 H12"
+                          Stroke="{Binding Foreground,
+                              RelativeSource={RelativeSource AncestorType={x:Type Button}}}"
+                          StrokeThickness="1.5"
+                          Width="16" Height="16" Stretch="None"
+                          SnapsToDevicePixels="True"/>
+                </Button>
+
+                <!-- Maximize □ / Restore ❐ -->
+                <Button x:Name="MaximizeRestoreBtn"
+                        Style="{StaticResource ChromeButton}"
+                        ToolTip="Maximize"
+                        Click="OnMaximizeRestoreClick">
+                    <Path x:Name="MaxRestoreIcon"
+                          Data="M2,2 H14 V14 H2 Z"
+                          Stroke="{Binding Foreground,
+                              RelativeSource={RelativeSource AncestorType={x:Type Button}}}"
+                          StrokeThickness="1.5" Fill="Transparent"
+                          Width="16" Height="16" Stretch="None"
+                          SnapsToDevicePixels="True"/>
+                </Button>
+
+                <!-- Close × -->
+                <Button Style="{StaticResource ChromeCloseButton}"
+                        ToolTip="Close"
+                        Click="OnCloseClick">
+                    <Path Data="M3,3 L13,13 M13,3 L3,13"
+                          Stroke="{Binding Foreground,
+                              RelativeSource={RelativeSource AncestorType={x:Type Button}}}"
+                          StrokeThickness="1.5"
+                          Width="16" Height="16" Stretch="None"
+                          SnapsToDevicePixels="True"/>
+                </Button>
+
+            </StackPanel>
+        </Grid>
+
+        <!-- ══ CONTROLS (bottom 52 px, single-row compact layout) ═══════════
+             Solid #F0000000 backdrop, no gradient.  Every gradient I tried
+             still rendered a visible alpha-transition band — over a dark
+             video it reads as a thin gray strip even with the transition
+             compressed to <5 %.  A flat opaque bar sized to exactly fit the
+             button row eliminates any visible band entirely.  Height 52 =
+             button row (~40 px) + 6 px top breathing room + 6 px bottom.  -->
+        <!-- Two-row controls layout (compact):
+             Row 0 = transport buttons (32 px)
+             Row 1 = full-width timeline + position/remaining labels (22 px)
+             Total height ~ 54 px. -->
+        <Grid x:Name="ControlsOverlay"
+              VerticalAlignment="Bottom" Height="54"
+              IsHitTestVisible="True" Cursor="Arrow"
+              Background="#F0000000">
+            <Grid.RowDefinitions>
+                <RowDefinition Height="32"/>   <!-- buttons row -->
+                <RowDefinition Height="*"/>     <!-- timeline row -->
+            </Grid.RowDefinitions>
+
+            <!-- ─────────── ROW 0: TRANSPORT BUTTONS ─────────── -->
+            <Grid Grid.Row="0" Margin="12,0,12,0" Background="Transparent">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="Auto"/>   <!-- prev/play/next -->
+                    <ColumnDefinition Width="*"/>      <!-- spacer -->
+                    <ColumnDefinition Width="Auto"/>   <!-- mute + vol -->
+                    <ColumnDefinition Width="Auto"/>   <!-- speed -->
+                    <ColumnDefinition Width="Auto"/>   <!-- CC -->
+                    <ColumnDefinition Width="Auto"/>   <!-- more -->
+                </Grid.ColumnDefinitions>
+
+                <!-- Left cluster: prev / play-pause / next -->
+                <StackPanel Grid.Column="0" Orientation="Horizontal"
+                            VerticalAlignment="Center">
+                    <Button x:Name="PrevBtn"
+                            Style="{StaticResource IconButton}" Content="⏮"
+                            ToolTip="Previous" Click="OnPrevClick"
+                            Visibility="Collapsed"/>
+                    <Button x:Name="PauseResumeBtn"
+                            Style="{StaticResource IconButton}"
+                            ToolTip="Pause / Resume" Click="OnPauseResumeClick">
+                        <TextBlock x:Name="PauseResumeIcon" Text="⏸"
+                                   FontFamily="Segoe UI Symbol, Segoe UI"
+                                   FontSize="18"/>
+                    </Button>
+                    <Button x:Name="NextBtn"
+                            Style="{StaticResource IconButton}" Content="⏭"
+                            ToolTip="Next" Click="OnNextClick"
+                            Visibility="Collapsed"/>
+                </StackPanel>
+
+                <!-- Right cluster: mute + volume slider -->
+                <StackPanel Grid.Column="2" Orientation="Horizontal"
+                            VerticalAlignment="Center" Margin="0,0,6,0">
+                    <Button x:Name="MuteBtn"
+                            Style="{StaticResource IconButton}"
+                            Margin="0,0,4,0"
+                            ToolTip="Mute / Unmute" Click="OnMuteClick">
+                        <TextBlock x:Name="MuteIcon" Text="🔊" FontSize="14"/>
+                    </Button>
+                    <Slider x:Name="VolumeSlider"
+                            Style="{StaticResource PurpleSlider}"
+                            Width="80" Minimum="0" Maximum="200" Value="80"
+                            IsMoveToPointEnabled="False"
+                            VerticalAlignment="Center"
+                            ValueChanged="OnVolumeChanged"
+                            PreviewMouseLeftButtonDown="OnVolumeMouseDown"
+                            PreviewMouseMove="OnVolumeMouseMove"
+                            PreviewMouseLeftButtonUp="OnVolumeMouseUp"
+                            PreviewMouseWheel="OnVolumeMouseWheel"/>
+                </StackPanel>
+
+                <!-- Speed label (hidden when 1×) -->
+                <TextBlock Grid.Column="3" x:Name="SpeedLabelControls"
+                           Foreground="#7C3AED" FontFamily="Segoe UI"
+                           FontSize="12" FontWeight="SemiBold"
+                           VerticalAlignment="Center"
+                           Visibility="Collapsed" Margin="0,0,4,0"/>
+
+                <!-- CC -->
+                <Button Grid.Column="4" x:Name="SubtitleBtn"
+                        Style="{StaticResource IconButton}"
+                        Content="CC" FontSize="12" FontWeight="Bold"
+                        ToolTip="Subtitle tracks"
+                        Click="OnSubtitleButtonClick"/>
+
+                <!-- More ⋮ -->
+                <Button Grid.Column="5" x:Name="ControlsMoreBtn"
+                        Style="{StaticResource IconButton}"
+                        ToolTip="More options"
+                        Click="OnMoreClick">
+                    <Path StrokeThickness="3"
+                          Stroke="{Binding Foreground,
+                              RelativeSource={RelativeSource AncestorType={x:Type Button}}}"
+                          StrokeStartLineCap="Round" StrokeEndLineCap="Round"
+                          Data="M8,4 L8.01,4 M8,8 L8.01,8 M8,12 L8.01,12"
+                          Width="16" Height="16" Stretch="None"
+                          SnapsToDevicePixels="True"/>
+                </Button>
+            </Grid>
+
+            <!-- ─────────── ROW 1: FULL-WIDTH TIMELINE ─────────── -->
+            <Grid Grid.Row="1" Margin="12,0,12,4" VerticalAlignment="Center"
+                  Background="Transparent">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="Auto"/>
+                    <ColumnDefinition Width="*"/>
+                    <ColumnDefinition Width="Auto"/>
+                </Grid.ColumnDefinitions>
+
+                <TextBlock Grid.Column="0" x:Name="PositionLabel" Text="00:00"
+                           Foreground="White" FontFamily="Segoe UI" FontSize="11"
+                           VerticalAlignment="Center" Margin="0,0,10,0"/>
+
+                <Slider Grid.Column="1" x:Name="TimelineSlider"
+                        Style="{StaticResource PurpleSlider}"
+                        Minimum="0" Maximum="100" Value="0"
+                        IsMoveToPointEnabled="False"
+                        VerticalAlignment="Center"
+                        PreviewMouseLeftButtonDown="OnSeekMouseDown"
+                        PreviewMouseMove="OnSeekMouseMove"
+                        PreviewMouseLeftButtonUp="OnSeekMouseUp"
+                        MouseEnter="OnTimelineHoverEnter"
+                        MouseMove="OnTimelineHoverMove"
+                        MouseLeave="OnTimelineHoverLeave"/>
+
+                <TextBlock Grid.Column="2" x:Name="DurationLabel" Text="00:00"
+                           Foreground="#BFBFBF" FontFamily="Segoe UI" FontSize="11"
+                           VerticalAlignment="Center" Margin="10,0,0,0"/>
+            </Grid>
+        </Grid>
+
+        <!-- Time + frame-preview tooltip that floats above the timeline.
+             Thumbnail area is 240×135 (16:9), with the time label centered
+             below.  Image visibility is toggled depending on whether a
+             cached frame exists for the hovered timestamp — text-only when
+             no thumb available yet, otherwise frame + text. -->
+        <Border x:Name="TimelineHoverTip"
+                Visibility="Collapsed"
+                Background="#E6000000" BorderBrush="#7C3AED" BorderThickness="1"
+                CornerRadius="8" Padding="4"
+                HorizontalAlignment="Left" VerticalAlignment="Bottom"
+                IsHitTestVisible="False">
+            <Border.Effect>
+                <DropShadowEffect Color="#7C3AED" BlurRadius="10"
+                                  ShadowDepth="0" Opacity="0.5"/>
+            </Border.Effect>
+            <StackPanel>
+                <Border x:Name="TimelineHoverThumbBorder"
+                        Width="160" Height="90"
+                        Background="#0D0D0D"
+                        CornerRadius="4"
+                        ClipToBounds="True"
+                        Visibility="Collapsed">
+                    <Image x:Name="TimelineHoverThumb"
+                           Stretch="UniformToFill"/>
+                </Border>
+                <TextBlock x:Name="TimelineHoverLabel"
+                           Foreground="White" FontFamily="Segoe UI"
+                           FontSize="13" FontWeight="SemiBold"
+                           HorizontalAlignment="Center"
+                           Margin="0,4,0,2"/>
+            </StackPanel>
+        </Border>
+
+        <!-- ══ PROGRESS BAR (3 px, shown when controls hidden) ══════════════ -->
+        <Grid x:Name="ProgressBarStrip"
+              VerticalAlignment="Bottom" Height="3"
+              Opacity="0" IsHitTestVisible="False">
+            <Rectangle Fill="#33FFFFFF"/>
+            <Rectangle x:Name="ProgressFill"
+                       Fill="#7C3AED"
+                       HorizontalAlignment="Left" Width="0"/>
+        </Grid>
+
+        <!-- ══ SKIP INDICATOR (centered pill, animated) ══════════════════════ -->
+        <Border x:Name="SkipIndicator"
+                HorizontalAlignment="Center" VerticalAlignment="Center"
+                Background="#BB000000" CornerRadius="24"
+                Padding="28,12" Opacity="0" IsHitTestVisible="False">
+            <TextBlock x:Name="SkipLabel"
+                       Foreground="White" FontFamily="Segoe UI"
+                       FontSize="28" FontWeight="SemiBold"/>
+        </Border>
+
+        <!-- ══ VOLUME INDICATOR (left side, vertical bar) ═════════════════════
+             Supports 0-200 % range.
+             Fill colour: purple (#7C3AED) at ≤100 %, coral (#FF6B6B) above 100 %.
+             Fill height = (volume / 200) × 120 px  (set in code-behind).
+             Visible 1500 ms after any volume change, then fades 300 ms.
+        -->
+        <Border x:Name="VolumeIndicatorPanel"
+                HorizontalAlignment="Left" VerticalAlignment="Center"
+                Margin="24,0,0,0"
+                Background="#CC000000" CornerRadius="10"
+                Padding="10,10"
+                Opacity="0" IsHitTestVisible="False">
+            <StackPanel Orientation="Vertical" HorizontalAlignment="Center">
+                <!-- Volume % label above the bar -->
+                <TextBlock x:Name="VolumeIndicatorLabel"
+                           Foreground="White" FontFamily="Segoe UI"
+                           FontSize="12" FontWeight="SemiBold"
+                           HorizontalAlignment="Center"
+                           Margin="0,0,0,6"/>
+                <!-- Track container: 6 × 120 px, fill grows from bottom -->
+                <Border Width="6" Height="120" CornerRadius="3"
+                        Background="#44FFFFFF">
+                    <Grid>
+                        <Rectangle x:Name="VolumeIndicatorFill"
+                                   Width="6" Height="0"
+                                   VerticalAlignment="Bottom"
+                                   RadiusX="3" RadiusY="3"
+                                   Fill="#7C3AED"/>
+                    </Grid>
+                </Border>
+            </StackPanel>
+        </Border>
+
+        <!-- ══ AUDIO DELAY INDICATOR (right side, mirrors volume bar) ═════════
+             Triggered by A (audio earlier) / Z (audio later) shortcuts.
+             Same visual language as the volume side bar but right-aligned
+             and with text indicating the delta in seconds (±X.Xs). -->
+        <Border x:Name="AudioDelayPanel"
+                HorizontalAlignment="Right" VerticalAlignment="Center"
+                Margin="0,0,24,0"
+                Background="#CC000000" CornerRadius="10"
+                Padding="10,10"
+                Opacity="0" IsHitTestVisible="False">
+            <StackPanel Orientation="Vertical" HorizontalAlignment="Center">
+                <TextBlock Text="Audio" Foreground="#BFBFBF"
+                           FontFamily="Segoe UI" FontSize="11"
+                           HorizontalAlignment="Center"/>
+                <TextBlock x:Name="AudioDelayLabel"
+                           Foreground="White" FontFamily="Segoe UI"
+                           FontSize="14" FontWeight="SemiBold"
+                           HorizontalAlignment="Center"
+                           Margin="0,2,0,6"/>
+                <!-- Small horizontal bar; centre tick at the middle, fill
+                     extends LEFT for negative delay / RIGHT for positive. -->
+                <Border Width="120" Height="6" CornerRadius="3"
+                        Background="#44FFFFFF">
+                    <Grid>
+                        <Rectangle Width="2" Fill="#88FFFFFF"
+                                   HorizontalAlignment="Center"/>
+                        <Rectangle x:Name="AudioDelayFill"
+                                   Height="6" Width="0"
+                                   HorizontalAlignment="Center"
+                                   RadiusX="3" RadiusY="3"
+                                   Fill="#7C3AED"/>
+                    </Grid>
+                </Border>
+            </StackPanel>
+        </Border>
+
+        <!-- ══ KEYBOARD SHORTCUTS HELP OVERLAY (H to toggle) ══════════════════ -->
+        <Border x:Name="ShortcutsOverlay"
+                HorizontalAlignment="Center" VerticalAlignment="Center"
+                Background="#E6000000" BorderBrush="#7C3AED" BorderThickness="1"
+                CornerRadius="10" Padding="24,18"
+                Visibility="Collapsed" Opacity="0"
+                IsHitTestVisible="False">
+            <Border.Effect>
+                <DropShadowEffect Color="#7C3AED" BlurRadius="24"
+                                  ShadowDepth="0" Opacity="0.4"/>
+            </Border.Effect>
+            <StackPanel>
+                <TextBlock Text="Keyboard Shortcuts"
+                           Foreground="White" FontFamily="Segoe UI"
+                           FontSize="16" FontWeight="Bold"
+                           Margin="0,0,0,14"/>
+                <Grid>
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="Auto"/>
+                        <ColumnDefinition Width="Auto" MinWidth="220"/>
+                        <ColumnDefinition Width="24"/>
+                        <ColumnDefinition Width="Auto"/>
+                        <ColumnDefinition Width="Auto" MinWidth="220"/>
+                    </Grid.ColumnDefinitions>
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="Auto"/>
+                    </Grid.RowDefinitions>
+                    <!-- Left column -->
+                    <Border Grid.Row="0" Grid.Column="0" Margin="0,3,10,3" Padding="8,2"
+                            Background="#33FFFFFF" CornerRadius="4">
+                        <TextBlock Text="Space" Foreground="White"
+                                   FontFamily="Consolas" FontSize="12"/>
+                    </Border>
+                    <TextBlock Grid.Row="0" Grid.Column="1" Text="Play / Pause"
+                               Foreground="#DDDDDD" FontFamily="Segoe UI" FontSize="13"
+                               VerticalAlignment="Center"/>
+
+                    <Border Grid.Row="1" Grid.Column="0" Margin="0,3,10,3" Padding="8,2"
+                            Background="#33FFFFFF" CornerRadius="4">
+                        <TextBlock Text="← →" Foreground="White"
+                                   FontFamily="Consolas" FontSize="12"/>
+                    </Border>
+                    <TextBlock Grid.Row="1" Grid.Column="1" Text="Seek ±5 sec"
+                               Foreground="#DDDDDD" FontFamily="Segoe UI" FontSize="13"
+                               VerticalAlignment="Center"/>
+
+                    <Border Grid.Row="2" Grid.Column="0" Margin="0,3,10,3" Padding="8,2"
+                            Background="#33FFFFFF" CornerRadius="4">
+                        <TextBlock Text="↑ ↓" Foreground="White"
+                                   FontFamily="Consolas" FontSize="12"/>
+                    </Border>
+                    <TextBlock Grid.Row="2" Grid.Column="1" Text="Volume ±5%"
+                               Foreground="#DDDDDD" FontFamily="Segoe UI" FontSize="13"
+                               VerticalAlignment="Center"/>
+
+                    <Border Grid.Row="3" Grid.Column="0" Margin="0,3,10,3" Padding="8,2"
+                            Background="#33FFFFFF" CornerRadius="4">
+                        <TextBlock Text="F" Foreground="White"
+                                   FontFamily="Consolas" FontSize="12"/>
+                    </Border>
+                    <TextBlock Grid.Row="3" Grid.Column="1" Text="Toggle Fullscreen"
+                               Foreground="#DDDDDD" FontFamily="Segoe UI" FontSize="13"
+                               VerticalAlignment="Center"/>
+
+                    <Border Grid.Row="4" Grid.Column="0" Margin="0,3,10,3" Padding="8,2"
+                            Background="#33FFFFFF" CornerRadius="4">
+                        <TextBlock Text="Esc" Foreground="White"
+                                   FontFamily="Consolas" FontSize="12"/>
+                    </Border>
+                    <TextBlock Grid.Row="4" Grid.Column="1" Text="Exit Fullscreen"
+                               Foreground="#DDDDDD" FontFamily="Segoe UI" FontSize="13"
+                               VerticalAlignment="Center"/>
+
+                    <Border Grid.Row="5" Grid.Column="0" Margin="0,3,10,3" Padding="8,2"
+                            Background="#33FFFFFF" CornerRadius="4">
+                        <TextBlock Text="N / P" Foreground="White"
+                                   FontFamily="Consolas" FontSize="12"/>
+                    </Border>
+                    <TextBlock Grid.Row="5" Grid.Column="1" Text="Next / Previous in playlist"
+                               Foreground="#DDDDDD" FontFamily="Segoe UI" FontSize="13"
+                               VerticalAlignment="Center"/>
+
+                    <Border Grid.Row="6" Grid.Column="0" Margin="0,3,10,3" Padding="8,2"
+                            Background="#33FFFFFF" CornerRadius="4">
+                        <TextBlock Text="H" Foreground="White"
+                                   FontFamily="Consolas" FontSize="12"/>
+                    </Border>
+                    <TextBlock Grid.Row="6" Grid.Column="1" Text="Toggle this help"
+                               Foreground="#DDDDDD" FontFamily="Segoe UI" FontSize="13"
+                               VerticalAlignment="Center"/>
+
+                    <!-- Right column -->
+                    <Border Grid.Row="0" Grid.Column="3" Margin="0,3,10,3" Padding="8,2"
+                            Background="#33FFFFFF" CornerRadius="4">
+                        <TextBlock Text="S" Foreground="White"
+                                   FontFamily="Consolas" FontSize="12"/>
+                    </Border>
+                    <TextBlock Grid.Row="0" Grid.Column="4" Text="Screenshot"
+                               Foreground="#DDDDDD" FontFamily="Segoe UI" FontSize="13"
+                               VerticalAlignment="Center"/>
+
+                    <Border Grid.Row="1" Grid.Column="3" Margin="0,3,10,3" Padding="8,2"
+                            Background="#33FFFFFF" CornerRadius="4">
+                        <TextBlock Text="A / Z" Foreground="White"
+                                   FontFamily="Consolas" FontSize="12"/>
+                    </Border>
+                    <TextBlock Grid.Row="1" Grid.Column="4" Text="Audio delay  ±0.1s"
+                               Foreground="#DDDDDD" FontFamily="Segoe UI" FontSize="13"
+                               VerticalAlignment="Center"/>
+
+                    <Border Grid.Row="2" Grid.Column="3" Margin="0,3,10,3" Padding="8,2"
+                            Background="#33FFFFFF" CornerRadius="4">
+                        <TextBlock Text="Wheel" Foreground="White"
+                                   FontFamily="Consolas" FontSize="12"/>
+                    </Border>
+                    <TextBlock Grid.Row="2" Grid.Column="4" Text="Volume (anywhere) /  Seek (bottom 15%)"
+                               Foreground="#DDDDDD" FontFamily="Segoe UI" FontSize="13"
+                               VerticalAlignment="Center"/>
+
+                    <Border Grid.Row="3" Grid.Column="3" Margin="0,3,10,3" Padding="8,2"
+                            Background="#33FFFFFF" CornerRadius="4">
+                        <TextBlock Text="Right" Foreground="White"
+                                   FontFamily="Consolas" FontSize="12"/>
+                    </Border>
+                    <TextBlock Grid.Row="3" Grid.Column="4" Text="Context menu"
+                               Foreground="#DDDDDD" FontFamily="Segoe UI" FontSize="13"
+                               VerticalAlignment="Center"/>
+
+                    <Border Grid.Row="4" Grid.Column="3" Margin="0,3,10,3" Padding="8,2"
+                            Background="#33FFFFFF" CornerRadius="4">
+                        <TextBlock Text="2× click" Foreground="White"
+                                   FontFamily="Consolas" FontSize="12"/>
+                    </Border>
+                    <TextBlock Grid.Row="4" Grid.Column="4" Text="Toggle fullscreen on video"
+                               Foreground="#DDDDDD" FontFamily="Segoe UI" FontSize="13"
+                               VerticalAlignment="Center"/>
+                </Grid>
+                <TextBlock Text="Press H or Esc to close"
+                           Foreground="#888888" FontFamily="Segoe UI" FontSize="11"
+                           HorizontalAlignment="Center" Margin="0,16,0,0"/>
+            </StackPanel>
+        </Border>
+
+        <!-- ══ TOAST OVERLAY (centered pill — screenshot, etc.) ════════════════ -->
+        <Border x:Name="ToastOverlay"
+                HorizontalAlignment="Center" VerticalAlignment="Top"
+                Margin="0,80,0,0"
+                Background="#CC000000" CornerRadius="22"
+                Padding="20,10" Opacity="0" IsHitTestVisible="False">
+            <TextBlock x:Name="ToastLabel"
+                       Foreground="White" FontFamily="Segoe UI"
+                       FontSize="15" FontWeight="SemiBold"/>
+        </Border>
+
+        <!-- ══ NEXT EPISODE OVERLAY (FIX 8 — auto-advance) ════════════════════
+             Appears at the bottom 30% of the screen when the session ends
+             AND the current item is an episode with a known successor.
+             Countdown: 10 seconds.  Buttons for Play Now / Cancel.  -->
+        <Border x:Name="NextEpisodeOverlay"
+                VerticalAlignment="Bottom"
+                Height="220"
+                Visibility="Collapsed" Opacity="0"
+                IsHitTestVisible="True">
+            <Border.Background>
+                <LinearGradientBrush StartPoint="0,0" EndPoint="0,1">
+                    <GradientStop Color="Transparent" Offset="0.0"/>
+                    <GradientStop Color="#CC000000"   Offset="0.3"/>
+                    <GradientStop Color="#F0000000"   Offset="1.0"/>
+                </LinearGradientBrush>
+            </Border.Background>
+            <Grid Margin="40,30,40,30">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="Auto"/>
+                    <ColumnDefinition Width="*"/>
+                    <ColumnDefinition Width="Auto"/>
+                </Grid.ColumnDefinitions>
+                <!-- Left: thumbnail placeholder (dark rounded square) -->
+                <Border Grid.Column="0" Width="200" Height="120"
+                        CornerRadius="8" Background="#1A1A1A"
+                        BorderBrush="#7C3AED" BorderThickness="1"
+                        VerticalAlignment="Center">
+                    <Image x:Name="NextEpisodeThumb"
+                           Stretch="UniformToFill"/>
+                </Border>
+                <!-- Middle: text -->
+                <StackPanel Grid.Column="1" Margin="20,0,20,0"
+                            VerticalAlignment="Center">
+                    <TextBlock Text="Next Episode" Foreground="#AAAAAA"
+                               FontFamily="Segoe UI" FontSize="14"/>
+                    <TextBlock x:Name="NextEpisodeTitle" Foreground="White"
+                               FontFamily="Segoe UI" FontSize="20" FontWeight="Bold"
+                               Margin="0,4,0,4"
+                               TextTrimming="CharacterEllipsis"/>
+                    <TextBlock x:Name="NextEpisodeCountdown" Foreground="#AAAAAA"
+                               FontFamily="Segoe UI" FontSize="14"/>
+                    <!-- Countdown progress strip -->
+                    <Border Height="3" CornerRadius="1.5"
+                            Background="#33FFFFFF" Margin="0,8,0,0">
+                        <Grid>
+                            <Rectangle x:Name="NextEpisodeProgress"
+                                       Fill="#7C3AED" HorizontalAlignment="Left"
+                                       Width="0" Height="3"/>
+                        </Grid>
+                    </Border>
+                </StackPanel>
+                <!-- Right: buttons -->
+                <StackPanel Grid.Column="2" Orientation="Horizontal"
+                            VerticalAlignment="Center">
+                    <Button x:Name="NextEpisodePlayBtn"
+                            Padding="20,10"
+                            Background="#7C3AED" Foreground="White"
+                            BorderBrush="Transparent" BorderThickness="0"
+                            FontFamily="Segoe UI" FontSize="14" FontWeight="SemiBold"
+                            Cursor="Hand"
+                            Click="OnNextEpisodePlayClick">
+                        <Button.Template>
+                            <ControlTemplate TargetType="Button">
+                                <Border Background="{TemplateBinding Background}"
+                                        CornerRadius="6"
+                                        Padding="{TemplateBinding Padding}">
+                                    <ContentPresenter HorizontalAlignment="Center"
+                                                      VerticalAlignment="Center"/>
+                                </Border>
+                            </ControlTemplate>
+                        </Button.Template>
+                        Play Now
+                    </Button>
+                    <Button x:Name="NextEpisodeCancelBtn"
+                            Padding="20,10" Margin="10,0,0,0"
+                            Background="Transparent" Foreground="White"
+                            BorderBrush="#66FFFFFF" BorderThickness="1"
+                            FontFamily="Segoe UI" FontSize="14"
+                            Cursor="Hand"
+                            Click="OnNextEpisodeCancelClick">
+                        <Button.Template>
+                            <ControlTemplate TargetType="Button">
+                                <Border Background="{TemplateBinding Background}"
+                                        BorderBrush="{TemplateBinding BorderBrush}"
+                                        BorderThickness="{TemplateBinding BorderThickness}"
+                                        CornerRadius="6"
+                                        Padding="{TemplateBinding Padding}">
+                                    <ContentPresenter HorizontalAlignment="Center"
+                                                      VerticalAlignment="Center"/>
+                                </Border>
+                            </ControlTemplate>
+                        </Button.Template>
+                        Cancel
+                    </Button>
+                </StackPanel>
+            </Grid>
+        </Border>
+
+        <!-- ══ SUBTITLE POPUP ════════════════════════════════════════════════ -->
+        <Popup x:Name="SubtitlePopup"
+               PlacementTarget="{Binding ElementName=SubtitleBtn}"
+               Placement="Top" StaysOpen="False"
+               AllowsTransparency="True" PopupAnimation="Fade">
+            <Border Background="#F0141014" BorderBrush="#7B2FBE" BorderThickness="1"
+                    CornerRadius="10" Padding="8" MinWidth="248" MaxWidth="360"
+                    Margin="0,0,0,6">
+                <Border.Effect>
+                    <DropShadowEffect Color="#7B2FBE" BlurRadius="18"
+                                      ShadowDepth="0" Opacity="0.4"/>
+                </Border.Effect>
+                <StackPanel>
+                    <TextBlock Text="SUBTITLES" Foreground="#9A8FB0"
+                               FontFamily="Segoe UI" FontSize="10" FontWeight="Bold"
+                               Margin="6,2,0,8"/>
+                    <ScrollViewer MaxHeight="320" VerticalScrollBarVisibility="Auto">
+                        <StackPanel x:Name="SubtitleTrackList" Orientation="Vertical"/>
+                    </ScrollViewer>
+                </StackPanel>
+            </Border>
+        </Popup>
+
+        <!-- ══ CONTEXT MENU POPUP ════════════════════════════════════════════ -->
+        <Popup x:Name="ContextMenuPopup"
+               Placement="Absolute"
+               AllowsTransparency="True"
+               StaysOpen="False"
+               PopupAnimation="None">
+            <Border Background="#F01A1A1A" BorderBrush="#55444444" BorderThickness="1"
+                    CornerRadius="8" Padding="4" MinWidth="210">
+                <StackPanel x:Name="ContextMenuItems"/>
+            </Border>
+        </Popup>
+
+        <!-- ══ SPEED SUBMENU POPUP ═══════════════════════════════════════════ -->
+        <Popup x:Name="SpeedPopup"
+               Placement="Absolute"
+               AllowsTransparency="True"
+               StaysOpen="False"
+               PopupAnimation="None">
+            <Border Background="#F01A1A1A" BorderBrush="#55444444" BorderThickness="1"
+                    CornerRadius="8" Padding="4" MinWidth="160">
+                <StackPanel x:Name="SpeedMenuItems"/>
+            </Border>
+        </Popup>
+
+        <!-- ══ AUDIO TRACKS POPUP ════════════════════════════════════════════ -->
+        <Popup x:Name="AudioPopup"
+               Placement="Absolute"
+               AllowsTransparency="True"
+               StaysOpen="False"
+               PopupAnimation="None">
+            <Border Background="#F01A1A1A" BorderBrush="#55444444" BorderThickness="1"
+                    CornerRadius="8" Padding="6" MinWidth="180">
+                <StackPanel x:Name="AudioTrackList"/>
+            </Border>
+        </Popup>
+
+        <!-- ══ PLAYLIST POPUP ════════════════════════════════════════════════
+             Shows the full folder playlist built by MainWindow's
+             BuildFolderPlaylistAsync.  Scrollable list, current file
+             highlighted, click an entry → mpv playlist-pos jumps there.
+             Header row has a pin (📌 / unpinned, 📍 pinned) and ✕ close;
+             pin toggles StaysOpen so the popup persists while you interact
+             with other parts of the UI.  -->
+        <Popup x:Name="PlaylistPopup"
+               Placement="Absolute"
+               AllowsTransparency="True"
+               StaysOpen="False"
+               PopupAnimation="None">
+            <!-- Themed shell: deep near-black bg with the brand purple as
+                 the border accent and a soft purple drop-shadow.  Reads
+                 immediately as "part of this app" instead of generic dark. -->
+            <Border Background="#F0141014"
+                    BorderBrush="#7C3AED" BorderThickness="1"
+                    CornerRadius="10" Padding="6"
+                    MinWidth="440" MaxWidth="640">
+                <Border.Effect>
+                    <DropShadowEffect Color="#7C3AED" BlurRadius="20"
+                                      ShadowDepth="0" Opacity="0.45"/>
+                </Border.Effect>
+                <DockPanel LastChildFill="True">
+                    <!-- Header: draggable title strip + pin + close.  The
+                         title strip itself catches MouseLeftButtonDown so
+                         the user can grab anywhere on the header (except
+                         the buttons) to move the popup; we update
+                         HorizontalOffset/VerticalOffset on MouseMove. -->
+                    <Border DockPanel.Dock="Top" Margin="0,0,0,8"
+                            Background="#22000000"
+                            CornerRadius="6"
+                            Padding="10,6,6,6">
+                    <Grid x:Name="PlaylistDragHeader"
+                          Background="#01000000"
+                          Cursor="SizeAll"
+                          MouseLeftButtonDown="OnPlaylistHeaderMouseDown"
+                          MouseMove="OnPlaylistHeaderMouseMove"
+                          MouseLeftButtonUp="OnPlaylistHeaderMouseUp">
+                        <TextBlock Foreground="White"
+                                   FontFamily="Segoe UI" FontSize="13"
+                                   FontWeight="SemiBold"
+                                   VerticalAlignment="Center"
+                                   IsHitTestVisible="False">
+                            <Run Text="⋮⋮  " Foreground="#7C3AED"/>
+                            <Run Text="Playlist"/>
+                        </TextBlock>
+                        <StackPanel Orientation="Horizontal"
+                                    HorizontalAlignment="Right"
+                                    VerticalAlignment="Center">
+                            <Button x:Name="PlaylistPinBtn"
+                                    Style="{StaticResource IconButton}"
+                                    Width="28" Height="28"
+                                    ToolTip="Pin (keep playlist open)"
+                                    Click="OnPlaylistPinClick">
+                                <TextBlock x:Name="PlaylistPinIcon" Text="📌"
+                                           FontSize="13"/>
+                            </Button>
+                            <Button Style="{StaticResource IconButton}"
+                                    Width="28" Height="28"
+                                    ToolTip="Close" Margin="2,0,0,0"
+                                    Click="OnPlaylistCloseClick">
+                                <TextBlock Text="✕" FontSize="12"/>
+                            </Button>
+                        </StackPanel>
+                    </Grid>
+                    </Border>
+                    <ScrollViewer MaxHeight="460"
+                                  VerticalScrollBarVisibility="Auto"
+                                  HorizontalScrollBarVisibility="Disabled">
+                        <StackPanel x:Name="PlaylistItems"/>
+                    </ScrollViewer>
+                </DockPanel>
+            </Border>
+        </Popup>
+
+        <!-- RESUME OVERLAY (Pick up where you left off).
+             Shown at startup when the session carries a meaningful resume
+             position.  mpv stays paused (already seeked to the resume point
+             by the backend start option) until the user chooses.  Themed with
+             the Pitflix brand colour (#7B2FBE) and logo. -->
+        <Border x:Name="ResumeOverlay"
+                Background="#E6000000"
+                Visibility="Collapsed"
+                IsHitTestVisible="True">
+            <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center"
+                        MaxWidth="560">
+                <!-- Brand logo -->
+                <Image Source="PitflixPlayer.ico" Width="56" Height="56"
+                       HorizontalAlignment="Center" Margin="0,0,0,18"
+                       RenderOptions.BitmapScalingMode="HighQuality"/>
+
+                <!-- Card -->
+                <Border Background="#16121A" CornerRadius="16"
+                        BorderBrush="#33FFFFFF" BorderThickness="1"
+                        Padding="28,24">
+                    <Border.Effect>
+                        <DropShadowEffect Color="#7B2FBE" BlurRadius="32"
+                                          ShadowDepth="0" Opacity="0.35"/>
+                    </Border.Effect>
+                    <StackPanel>
+                        <TextBlock Text="PICK UP WHERE YOU LEFT OFF"
+                                   Foreground="#9A8FB0" FontFamily="Segoe UI"
+                                   FontSize="11" FontWeight="Bold"/>
+                        <TextBlock x:Name="ResumeTitleLabel"
+                                   Foreground="White" FontFamily="Segoe UI"
+                                   FontSize="24" FontWeight="Bold"
+                                   Margin="0,8,0,2"
+                                   TextTrimming="CharacterEllipsis"/>
+                        <TextBlock x:Name="ResumeWatchedLabel"
+                                   Foreground="#AAAAAA" FontFamily="Segoe UI"
+                                   FontSize="14"/>
+
+                        <!-- Progress bar (two-column star grid; filled column
+                             widened in code-behind to the watched %) -->
+                        <Border Height="6" CornerRadius="3"
+                                Background="#22FFFFFF" Margin="0,16,0,0">
+                            <Grid>
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition x:Name="ResumeProgressFilledCol" Width="0*"/>
+                                    <ColumnDefinition x:Name="ResumeProgressEmptyCol"  Width="1*"/>
+                                </Grid.ColumnDefinitions>
+                                <Border Grid.Column="0" CornerRadius="3">
+                                    <Border.Background>
+                                        <LinearGradientBrush StartPoint="0,0" EndPoint="1,0">
+                                            <GradientStop Color="#7B2FBE" Offset="0.0"/>
+                                            <GradientStop Color="#A855F7" Offset="1.0"/>
+                                        </LinearGradientBrush>
+                                    </Border.Background>
+                                </Border>
+                            </Grid>
+                        </Border>
+
+                        <!-- Actions -->
+                        <StackPanel Orientation="Horizontal" Margin="0,22,0,0">
+                            <Button x:Name="ResumeBtn"
+                                    Height="46" MinWidth="220" Padding="22,0"
+                                    Background="#7B2FBE" Foreground="White"
+                                    BorderThickness="0" Cursor="Hand"
+                                    FontFamily="Segoe UI" FontSize="15" FontWeight="SemiBold"
+                                    Click="OnResumeClick">
+                                <Button.Template>
+                                    <ControlTemplate TargetType="Button">
+                                        <Border Background="{TemplateBinding Background}"
+                                                CornerRadius="10"
+                                                Padding="{TemplateBinding Padding}">
+                                            <ContentPresenter HorizontalAlignment="Center"
+                                                              VerticalAlignment="Center"/>
+                                        </Border>
+                                    </ControlTemplate>
+                                </Button.Template>
+                                <TextBlock x:Name="ResumeBtnText" Text="Resume"/>
+                            </Button>
+                            <Button x:Name="StartOverBtn"
+                                    Height="46" MinWidth="130" Padding="22,0"
+                                    Margin="12,0,0,0"
+                                    Background="#1AFFFFFF" Foreground="White"
+                                    BorderBrush="#33FFFFFF" BorderThickness="1"
+                                    Cursor="Hand"
+                                    FontFamily="Segoe UI" FontSize="15"
+                                    Click="OnStartOverClick">
+                                <Button.Template>
+                                    <ControlTemplate TargetType="Button">
+                                        <Border Background="{TemplateBinding Background}"
+                                                BorderBrush="{TemplateBinding BorderBrush}"
+                                                BorderThickness="{TemplateBinding BorderThickness}"
+                                                CornerRadius="10"
+                                                Padding="{TemplateBinding Padding}">
+                                            <ContentPresenter HorizontalAlignment="Center"
+                                                              VerticalAlignment="Center"/>
+                                        </Border>
+                                    </ControlTemplate>
+                                </Button.Template>
+                                Start Over
+                            </Button>
+                        </StackPanel>
+                    </StackPanel>
+                </Border>
+
+                <!-- Cancel -->
+                <Button x:Name="ResumeCancelBtn"
+                        HorizontalAlignment="Center" Margin="0,16,0,0"
+                        Background="Transparent" Foreground="#9A8FB0"
+                        BorderThickness="0" Cursor="Hand"
+                        FontFamily="Segoe UI" FontSize="13"
+                        Click="OnResumeCancelClick">
+                    <Button.Template>
+                        <ControlTemplate TargetType="Button">
+                            <Border Background="Transparent" Padding="8,4">
+                                <ContentPresenter HorizontalAlignment="Center"
+                                                  VerticalAlignment="Center"/>
+                            </Border>
+                        </ControlTemplate>
+                    </Button.Template>
+                    Cancel
+                </Button>
+            </StackPanel>
+        </Border>
+
+        <!-- LOADING OVERLAY — shown over the black host while mpv opens the file. -->
+        <Border x:Name="LoadingOverlay"
+                Background="#FF000000"
+                Visibility="Collapsed"
+                IsHitTestVisible="True">
+            <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center">
+                <TextBlock x:Name="LoadingTitleLabel"
+                           Foreground="#33FFFFFF" FontFamily="Segoe UI"
+                           FontSize="40" FontWeight="Bold"
+                           HorizontalAlignment="Center"
+                           TextAlignment="Center" TextTrimming="CharacterEllipsis"
+                           MaxWidth="700" Margin="0,0,0,24"/>
+                <Image Source="PitflixPlayer.ico" Width="52" Height="52"
+                       HorizontalAlignment="Center"
+                       RenderOptions.BitmapScalingMode="HighQuality">
+                    <Image.RenderTransform>
+                        <ScaleTransform x:Name="LoadingPulse" CenterX="26" CenterY="26"
+                                        ScaleX="1" ScaleY="1"/>
+                    </Image.RenderTransform>
+                    <Image.Triggers>
+                        <EventTrigger RoutedEvent="Image.Loaded">
+                            <BeginStoryboard>
+                                <Storyboard RepeatBehavior="Forever" AutoReverse="True">
+                                    <DoubleAnimation Storyboard.TargetName="LoadingPulse"
+                                                     Storyboard.TargetProperty="ScaleX"
+                                                     From="0.9" To="1.1" Duration="0:0:0.8"/>
+                                    <DoubleAnimation Storyboard.TargetName="LoadingPulse"
+                                                     Storyboard.TargetProperty="ScaleY"
+                                                     From="0.9" To="1.1" Duration="0:0:0.8"/>
+                                </Storyboard>
+                            </BeginStoryboard>
+                        </EventTrigger>
+                    </Image.Triggers>
+                </Image>
+                <TextBlock Text="LOADING" Foreground="#C9A8F7"
+                           FontFamily="Segoe UI" FontSize="12" FontWeight="Bold"
+                           HorizontalAlignment="Center" Margin="0,18,0,0">
+                    <TextBlock.LayoutTransform>
+                        <ScaleTransform ScaleX="1" ScaleY="1"/>
+                    </TextBlock.LayoutTransform>
+                </TextBlock>
+            </StackPanel>
+        </Border>
+
+    </Grid>
+</Window>

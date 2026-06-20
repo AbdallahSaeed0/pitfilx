@@ -32,6 +32,11 @@ pub struct PauseIpcVerifySnapshot {
 #[derive(Debug, Clone, Serialize)]
 pub struct Player2NativeState {
   pub session_active: bool,
+  /// True when the IPC pipe to mpv has died (EOF or read error). A session can be
+  /// `session_active` yet have `ipc_dead = true` if `player2_close` was never called.
+  /// Use `session_active && !ipc_dead` to guard "reconnect without reopening" flows.
+  #[serde(default)]
+  pub ipc_dead: bool,
   /// `libmpv` (embedded) | `external_mpv` (detached) | `none` (idle)
   pub backend: String,
   /// Monotonic id assigned when a native session opens (debug).

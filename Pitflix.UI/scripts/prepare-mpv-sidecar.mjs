@@ -332,6 +332,20 @@ async function main() {
   const destName = `mpv-${triple}${ext}`;
   const dest = path.join(binDir, destName);
 
+  // If the sidecar already exists from a previous build, skip the download and just
+  // refresh mpv-config (so uosc / settings changes are always picked up).
+  if (fs.existsSync(dest) && fs.statSync(dest).isFile()) {
+    console.log(`prepare-mpv-sidecar: sidecar already present, skipping download (${dest})`);
+    const mpvConfigSrc = path.join(uiRoot, "src-tauri", "mpv-config");
+    const mpvConfigDest = path.join(binDir, "mpv-config");
+    if (fs.existsSync(mpvConfigSrc)) {
+      try { fs.rmSync(mpvConfigDest, { recursive: true, force: true }); } catch { /* ignore */ }
+      copyDirectoryRecursive(mpvConfigSrc, mpvConfigDest);
+      console.log("prepare-mpv-sidecar: refreshed mpv-config.");
+    }
+    return;
+  }
+
   const candidates = [];
   const envExe = process.env.PITFLIX_MPV_EXE?.trim();
   if (envExe) candidates.push(envExe);

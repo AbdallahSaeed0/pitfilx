@@ -9,8 +9,8 @@ public static class ImageUrls
 {
     public static string ImagesRoot => ImageCacheService.CacheRoot;
 
-    /// <summary>Base URL with no trailing slash (e.g. http://localhost:5001).</summary>
-    public static string PublicBase { get; set; } = "http://localhost:5001";
+    /// <summary>Base URL with no trailing slash (e.g. http://localhost:5280).</summary>
+    public static string PublicBase { get; set; } = "http://localhost:5280";
 
     /// <summary>
     /// Maps paths under the image cache to <c>/images/...</c>. Uses relative path when possible
@@ -126,7 +126,8 @@ public static class ImageUrls
             SelectedBackdropPath = ToImageUrl(d.SelectedBackdropPath),
             MediaFilePath = d.MediaFilePath,
             TmdbMediaType = d.TmdbMediaType,
-            PosterRemoteUrl = d.PosterRemoteUrl
+            PosterRemoteUrl = d.PosterRemoteUrl,
+            ImdbId = d.ImdbId
         };
 
     public static Movie MapMovie(Movie m) =>

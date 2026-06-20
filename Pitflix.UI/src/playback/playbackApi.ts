@@ -29,6 +29,7 @@ export type PlayerCommand =
   | { type: "SetAid"; payload: number }
   | { type: "AddSubDelay"; payload: number }
   | { type: "SubAddSelect"; payload: string }
+  | { type: "SetSpeed"; payload: number }
   | { type: "Stop" };
 
 export type LoadEpisodePolRequest = {
@@ -119,4 +120,9 @@ export async function playbackOpenFile(payload: PlayerOpenPayload): Promise<void
 
 export async function playbackClose(): Promise<void> {
   await invoke("player2_close");
+}
+
+export async function playbackSetSpeed(speed: number): Promise<void> {
+  const cmd: PlayerCommand = { type: "SetSpeed", payload: speed };
+  await invoke("player2_send", { cmd });
 }

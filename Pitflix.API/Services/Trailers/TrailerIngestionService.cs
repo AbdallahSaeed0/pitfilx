@@ -102,23 +102,22 @@ public sealed class TrailerIngestionService
             }
         }
 
-        // YouTube API is optional if TMDB native is enabled
-        var youtubeRequired = !enableTmdbNative;
-        if (youtubeRequired && string.IsNullOrWhiteSpace(apiKey))
-        {
-            _log.LogWarning("Trailers ingestion skipped: YouTube API key is not configured");
-            return new TrailerIngestionRunResult(0, 0, 0, 0, 0, "missing_youtube_api_key", false, 0, 0);
-        }
+        // YouTube API is optional — RSS is the no-key fallback.
+        // Previously this returned early with "missing_youtube_api_key", meaning production
+        // instances without a YouTube Data API key could never ingest any trailers.
+        var hasYoutubeKey = !string.IsNullOrWhiteSpace(apiKey);
+        if (!hasYoutubeKey && !enableTmdbNative)
+            _log.LogInformation("Trailers ingestion: No YouTube API key — will use public RSS feeds as fallback.");
 
         var channels = await _channelsProvider.GetChannelsAsync(ct).ConfigureAwait(false);
-        if (youtubeRequired && channels.Count == 0)
+        if (!hasYoutubeKey && !enableTmdbNative && channels.Count == 0)
         {
-            _log.LogWarning("Trailers ingestion skipped: no official channels configured");
-            return new TrailerIngestionRunResult(0, 0, 0, 0, 0, "missing_channels_config", false, 0, 0);
+            _log.LogWarning("Trailers ingestion skipped: no YouTube API key and no official channels configured for RSS fallback");
+            return new TrailerIngestionRunResult(0, 0, 0, 0, 0, "missing_youtube_api_key_and_channels", false, 0, 0);
         }
 
         // If TMDB native found trailers and YouTube is not required, skip YouTube and use TMDB-only
-        if (!youtubeRequired && tmdbNativeTrailers.Count > 0 && string.IsNullOrWhiteSpace(apiKey))
+        if (enableTmdbNative && tmdbNativeTrailers.Count > 0 && string.IsNullOrWhiteSpace(apiKey))
         {
             _log.LogInformation(
                 "Trailers ingestion: TMDB-only mode (no YouTube API), persisting {Count} TMDB native trailers",
@@ -201,7 +200,7 @@ public sealed class TrailerIngestionService
         var fallbackUsed = false;
 
         // Try YouTube API if key exists, but gracefully handle quota exceeded
-        if (!string.IsNullOrEmpty(apiKey))
+        if (hasYoutubeKey)
         {
             foreach (var ch in channelsToPoll)
             {
@@ -210,7 +209,7 @@ public sealed class TrailerIngestionService
                 channelsPolled++;
                 _log.LogInformation("Trailers channel uploads sync start Channel={Channel} ChannelId={ChannelId}", ch.Name,
                     ch.ChannelId);
-                var (uploads, hitQ, newSince) = await FetchNewUploadsFromChannelAsync(apiKey, ch, ct).ConfigureAwait(false);
+                var (uploads, hitQ, newSince) = await FetchNewUploadsFromChannelAsync(apiKey!, ch, ct).ConfigureAwait(false);
                 newUploadsSinceWatermark += newSince;
                 uploadCandidates.AddRange(uploads);
                 if (hitQ)
@@ -232,7 +231,7 @@ public sealed class TrailerIngestionService
                 {
                     if (quotaStop)
                         break;
-                    var (videos, hitQuota) = await FetchFromChannelSearchAsync(apiKey, ch, ct).ConfigureAwait(false);
+                    var (videos, hitQuota) = await FetchFromChannelSearchAsync(apiKey!, ch, ct).ConfigureAwait(false);
                     if (hitQuota)
                     {
                         quotaStop = true;
@@ -243,9 +242,51 @@ public sealed class TrailerIngestionService
                 }
             }
         }
-        else
+
+        // RSS fallback: runs when no YouTube API key OR when quota was hit mid-poll.
+        // Public YouTube RSS feeds require no authentication and return the last ~15 videos
+        // per channel — enough to catch recent trailer drops from all official channels.
+        var useRss = !hasYoutubeKey || quotaStop;
+        if (useRss && channelsToPoll.Count > 0)
         {
-            _log.LogInformation("Trailers ingestion: No YouTube API key configured, skipping YouTube API methods.");
+            _log.LogInformation("Trailers ingestion: fetching from YouTube RSS (no-key fallback) for {Count} channels", channelsToPoll.Count);
+            var channelLookup = channelsToPoll.ToDictionary(c => c.ChannelId, StringComparer.Ordinal);
+            using var rssHttp = _httpFactory.CreateClient();
+            rssHttp.DefaultRequestHeaders.UserAgent.ParseAdd("Pitflix/1.0 (trailer-rss)");
+            var channelIds = channelsToPoll.Select(c => c.ChannelId).ToList();
+            var (rssItems, rssErrors) = await YoutubeRssTrailerDiscovery.FetchRecentFromChannelsAsync(
+                rssHttp, channelIds, maxEntriesPerChannel: 25, ct).ConfigureAwait(false);
+            foreach (var err in rssErrors)
+                _log.LogWarning("Trailers RSS fetch error: {Error}", err);
+
+            var publishedAfterRss = DateTime.UtcNow.AddDays(-YoutubeFetchPublishedAfterDays);
+            foreach (var r in rssItems)
+            {
+                var vidId = YoutubeRssTrailerDiscovery.TryExtractVideoId(r.SourceUrl);
+                if (string.IsNullOrWhiteSpace(vidId)) continue;
+                if (uploadCandidates.Any(u => u.VideoId == vidId)) continue; // already from API
+                var pub = r.PublishedAtUtc ?? DateTime.UtcNow;
+                if (pub < publishedAfterRss) continue;
+                // Extract channel ID from source name "youtube-rss:{channelId}"
+                var sourceName = r.SourceName ?? "";
+                var chanId = sourceName.StartsWith("youtube-rss:", StringComparison.Ordinal)
+                    ? sourceName["youtube-rss:".Length..]
+                    : "";
+                channelLookup.TryGetValue(chanId, out var chanEntry);
+                uploadCandidates.Add(new YoutubeVideoCandidate(
+                    VideoId: vidId,
+                    Title: r.RawTitle,
+                    ChannelName: chanEntry?.Name ?? chanId,
+                    ChannelId: chanId,
+                    PublishedAtUtc: pub,
+                    ChannelPriority: chanEntry?.Priority ?? 50,
+                    TrustTier: chanEntry?.TrustTier ?? 3,
+                    IngestionSourceTag: "yt_rss",
+                    MediaFocusHint: chanEntry?.MediaFocus ?? "both"
+                ));
+                channelsPolled++;
+            }
+            _log.LogInformation("Trailers ingestion: RSS yielded {Count} additional candidates", uploadCandidates.Count);
         }
 
         var byVideoId = new Dictionary<string, YoutubeVideoCandidate>(StringComparer.Ordinal);
@@ -1080,7 +1121,7 @@ public sealed class TrailerIngestionService
         text = Regex.Replace(text, @"(?i)\btrailer\s*#?\s*[2-9]\b", " ", RegexOptions.IgnoreCase);
         text = Regex.Replace(text, @"(?i)\b#shorts?\b", " ");
         text = Regex.Replace(text,
-            @"(?i)\b(only\s+on\s+)?(prime\s*video|amazon\s*studios|amazon\s*mgm(\s+studios?)?|disney\+|disney\s*plus|apple\s*tv\+?|netflix|hulu|peacock|\bhbo\s*max\b|max\s*originals?)\b",
+            @"(?i)\b(only\s+on\s+)?(prime\s*video|amazon\s*studios|amazon\s*mgm(\s+studios?)?|disney\+|disney\s*plus|apple\s*tv\+?|netflix|hulu|peacock|hbo\s*max|hbo|max\s*originals?|\bmax\b)\b",
             " ");
         text = Regex.Replace(text, @"(?i)\b(s\d{1,2})\s*(e\d{1,2})\b", " ", RegexOptions.IgnoreCase);
         text = Regex.Replace(text, @"\[[^\]]+\]", " ");

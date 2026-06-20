@@ -25,10 +25,22 @@ import { SeasonDetailPage } from "./pages/SeasonDetailPage";
 import { TrailersPage } from "./pages/TrailersPage";
 import { NextEpisodesPage } from "./pages/NextEpisodesPage";
 import { PlayerPage } from "./pages/PlayerPage";
+import { PlaylistPopoutPage } from "./pages/PlaylistPopoutPage";
+import { RemotePlayerPage } from "./pages/RemotePlayerPage";
 import { OnlineStreamPage } from "./pages/OnlineStreamPage";
 import { StreamPlayerPage } from "./pages/StreamPlayerPage";
 import { StreamingDetailsPage } from "./pages/StreamingDetailsPage";
+import { GenreBrowsePage } from "./pages/GenreBrowsePage";
+import { AllCategoriesPage } from "./pages/AllCategoriesPage";
+import { DecadeBrowsePage } from "./pages/DecadeBrowsePage";
+import { KeywordBrowsePage } from "./pages/KeywordBrowsePage";
+import { StreamingCollectionPage } from "./pages/StreamingCollectionPage";
+import { StreamSeasonPage } from "./pages/StreamSeasonPage";
+import { DuplicatesPage } from "./pages/DuplicatesPage";
 import { BackgroundTasksProvider } from "./context/BackgroundTasksContext";
+import { GitHubUpdaterProvider } from "./context/GitHubUpdaterContext";
+import { GitHubUpdaterHost } from "./components/updater/GitHubUpdaterHost";
+import { NowPlayingBar } from "./components/NowPlayingBar";
 
 function PlaybackPolListenerHost() {
   useEffect(() => startPlaybackPolEventListener(), []);
@@ -42,6 +54,19 @@ function LegacyShowRedirect() {
 }
 
 function App() {
+  // Popout windows (e.g. the docked playlist) share the same React bundle but
+  // shouldn't boot the full provider chain or wait on the settings query.
+  if (
+    typeof window !== "undefined" &&
+    window.location.pathname === "/playlist-popout"
+  ) {
+    return (
+      <div className="min-h-screen bg-pitflix-bg text-white">
+        <PlaylistPopoutPage />
+      </div>
+    );
+  }
+
   const { data, isLoading, isError } = useQuery({
     queryKey: ["settings"],
     queryFn: getSettings,
@@ -61,7 +86,7 @@ function App() {
       <div className="flex min-h-screen flex-col items-center justify-center gap-2 bg-pitflix-bg px-6 text-center">
         <p className="text-sm font-medium text-white">Could not reach Pitflix</p>
         <p className="max-w-sm text-xs text-pitflix-subtle">
-          Start the API (desktop app starts it automatically) or check your connection on port 5001.
+          Start the API (desktop app starts it automatically) or check your connection on port 5280.
         </p>
       </div>
     );
@@ -71,9 +96,13 @@ function App() {
   return (
     <BrowserRouter>
       <PlaybackPolListenerHost />
+      <GitHubUpdaterProvider>
+        <GitHubUpdaterHost />
       <BackgroundTasksProvider>
         <Routes>
         <Route path="/player" element={<PlayerPage />} />
+        <Route path="/playlist-popout" element={<PlaylistPopoutPage />} />
+        <Route path="/player-remote" element={<RemotePlayerPage />} />
         <Route path="/stream-player" element={<StreamPlayerPage />} />
         <Route element={<MainLayout />}>
           <Route index element={<HomePage />} />
@@ -87,6 +116,7 @@ function App() {
           <Route path="trailers" element={<TrailersPage />} />
           <Route path="online-stream" element={<OnlineStreamPage />} />
           <Route path="stream-details" element={<StreamingDetailsPage />} />
+          <Route path="stream-season" element={<StreamSeasonPage />} />
           <Route path="next-episodes" element={<NextEpisodesPage />} />
           <Route path="awards" element={<AwardsPage />} />
           <Route path="awards/:awardId/:year" element={<AwardEditionPage />} />
@@ -98,10 +128,18 @@ function App() {
           <Route path="stats" element={<StatsPage />} />
           <Route path="settings" element={<SettingsPage />} />
           <Route path="person/:tmdbId" element={<PersonPage />} />
+          <Route path="genre/:genreName" element={<GenreBrowsePage />} />
+          <Route path="browse/decade/:decade" element={<DecadeBrowsePage />} />
+          <Route path="browse/keyword/:keyword" element={<KeywordBrowsePage />} />
+          <Route path="stream-collection" element={<StreamingCollectionPage />} />
+          <Route path="categories" element={<AllCategoriesPage />} />
+          <Route path="duplicates" element={<DuplicatesPage />} />
           <Route path="*" element={<Navigate to="/" replace />} />
         </Route>
         </Routes>
       </BackgroundTasksProvider>
+      </GitHubUpdaterProvider>
+      <NowPlayingBar />
     </BrowserRouter>
   );
 }

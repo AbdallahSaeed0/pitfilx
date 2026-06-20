@@ -12,6 +12,8 @@ export type LibraryTitleRow = {
   id: number;
   title: string;
   year?: number | null;
+  /** Poster URL returned by the search endpoint (may be absent on older API versions). */
+  posterUrl?: string | null;
 };
 
 export const cleanupLibrary = () =>
@@ -30,9 +32,12 @@ export type RefreshArtworkResult = {
 export const refreshLibraryArtwork = () =>
   api.post<RefreshArtworkResult>("/library/refresh-artwork").then((r) => r.data);
 
-export const searchLibraryTitles = (q: string) =>
+export const searchLibraryTitles = (q: string, signal?: AbortSignal) =>
   api
-    .get<{ movies: LibraryTitleRow[]; shows: LibraryTitleRow[] }>("/library/title-search", { params: { q } })
+    .get<{ movies: LibraryTitleRow[]; shows: LibraryTitleRow[] }>("/library/title-search", {
+      params: { q },
+      signal,
+    })
     .then((r) => r.data);
 
 export const removeLibraryMovie = (id: number) => api.delete(`/library/movie/${id}`).then((r) => r.data);
@@ -176,6 +181,50 @@ export async function prefetchLibraryMetadataStream(
     }
   }
 }
+
+export type DuplicateMovieCopy = {
+  id: number;
+  filePath: string;
+  fileExists: boolean;
+  fileSize: number | null;
+  dateAdded: string;
+  watchStatus: string;
+};
+
+export type DuplicateMovieGroup = {
+  tmdbId: number;
+  title: string;
+  year: number | null;
+  posterUrl: string | null;
+  copies: DuplicateMovieCopy[];
+};
+
+export type DuplicateEpisodeCopy = {
+  id: number;
+  filePath: string;
+  fileExists: boolean;
+  fileSize: number | null;
+  watchStatus: string;
+};
+
+export type DuplicateEpisodeGroup = {
+  showId: number;
+  showTitle: string;
+  season: number;
+  episodeNumber: number;
+  episodeTitle: string | null;
+  copies: DuplicateEpisodeCopy[];
+};
+
+export type DuplicatesResult = {
+  movieDuplicates: DuplicateMovieGroup[];
+  episodeDuplicates: DuplicateEpisodeGroup[];
+  totalMovieDuplicateGroups: number;
+  totalEpisodeDuplicateGroups: number;
+};
+
+export const getDuplicates = () =>
+  api.get<DuplicatesResult>("/library/duplicates").then((r) => r.data);
 
 export const deleteMediaFromDevice = (body: {
   path: string;

@@ -15,7 +15,7 @@ export default {
           accent: "#A855F7",
           muted: "#B3B3B3",
           subtle: "#666666",
-          
+
           // Cinematic design system tokens
           "bg-base": "#0A0A0A",
           "bg-elevated": "#141414",

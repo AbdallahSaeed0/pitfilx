@@ -1,0 +1,36 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 60 100" fill="none">
+  <defs>
+    <linearGradient id="sv" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" stop-color="#E0E0E0"/>
+      <stop offset="50%" stop-color="#A8A8A8"/>
+      <stop offset="100%" stop-color="#686868"/>
+    </linearGradient>
+    <linearGradient id="gv" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" stop-color="#F5C842"/>
+      <stop offset="100%" stop-color="#A07010"/>
+    </linearGradient>
+  </defs>
+  <!-- Base -->
+  <ellipse cx="30" cy="94" rx="18" ry="5" fill="#686868"/>
+  <rect x="12" y="82" width="36" height="12" rx="3" fill="url(#sv)"/>
+  <ellipse cx="30" cy="82" rx="18" ry="5" fill="#C8C8C8"/>
+  <!-- Stem -->
+  <rect x="26" y="64" width="8" height="20" rx="2" fill="url(#sv)"/>
+  <ellipse cx="30" cy="64" rx="12" ry="3.5" fill="#C8C8C8"/>
+  <!-- Figure base -->
+  <ellipse cx="30" cy="54" rx="15" ry="4" fill="#A0A0A0"/>
+  <!-- Body -->
+  <path d="M22 54 Q22 44 30 42 Q38 44 38 54 Z" fill="url(#sv)"/>
+  <!-- Big wings - Emmy's most recognizable feature -->
+  <path d="M22 50 Q8 42 4 26 Q4 18 10 18 Q16 20 18 32 Q19 40 21 46 Z" fill="url(#gv)"/>
+  <path d="M38 50 Q52 42 56 26 Q56 18 50 18 Q44 20 42 32 Q41 40 39 46 Z" fill="url(#gv)"/>
+  <!-- Neck -->
+  <rect x="27" y="37" width="6" height="6" rx="3" fill="url(#sv)"/>
+  <!-- Head -->
+  <ellipse cx="30" cy="30" rx="9" ry="10" fill="url(#sv)"/>
+  <!-- Atom held above head -->
+  <circle cx="30" cy="12" r="9" fill="none" stroke="#F5C842" stroke-width="2"/>
+  <ellipse cx="30" cy="12" rx="9" ry="4" fill="none" stroke="#F5C842" stroke-width="1.5" transform="rotate(-35 30 12)"/>
+  <ellipse cx="30" cy="12" rx="9" ry="4" fill="none" stroke="#F5C842" stroke-width="1.5" transform="rotate(35 30 12)"/>
+  <circle cx="30" cy="12" r="2.5" fill="#F5C842"/>
+</svg>

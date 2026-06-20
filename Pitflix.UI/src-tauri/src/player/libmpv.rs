@@ -219,8 +219,20 @@ impl MpvClient {
     // mpv 0.38+: background is a mode (color/tiles/none); color goes in background-color.
     let _ = opt(&api, handle, "background", "color")?;
     let _ = opt(&api, handle, "background-color", "#000000")?;
-    // Software decode first — rules out GPU/driver hwdec failures when diagnosing black video.
+    // hwdec disabled: WGL render context has no D3D/DXVA GPU interop — auto-safe still
+    // triggers the hardware path and corrupts the stack (STATUS_STACK_BUFFER_OVERRUN).
     let _ = opt(&api, handle, "hwdec", "no")?;
+    Ok(Self { api, handle })
+  }
+
+  /// Create handle with **no** vo/render forcing — caller sets `wid`, `vo=gpu`,
+  /// `gpu-api=d3d11`, etc. before `initialize()`. Matches Harbor's Windows path.
+  pub fn create_minimal(path: &Path) -> Result<Self, String> {
+    let api = Arc::new(LibMpv::load_at(path)?);
+    let handle = unsafe { (api.mpv_create)() };
+    if handle.is_null() {
+      return Err("mpv_create returned null".to_string());
+    }
     Ok(Self { api, handle })
   }
 
@@ -321,6 +333,16 @@ impl MpvClient {
     let rc = unsafe { (self.api.mpv_observe_property)(self.handle, id, n.as_ptr(), format) };
     if rc < 0 {
       return Err(format!("mpv_observe_property failed: {rc}"));
+    }
+    Ok(())
+  }
+
+  pub fn set_option_string(&self, key: &str, val: &str) -> Result<(), String> {
+    let k = CString::new(key).map_err(|e| e.to_string())?;
+    let v = CString::new(val).map_err(|e| e.to_string())?;
+    let rc = unsafe { (self.api.mpv_set_option_string)(self.handle, k.as_ptr(), v.as_ptr()) };
+    if rc < 0 {
+      return Err(format!("mpv_set_option_string {key} failed: {rc}"));
     }
     Ok(())
   }

@@ -52,12 +52,20 @@ public static class PersistedTrailerUiFeed
                 ? Array.Empty<TrailerCardUiRow>()
                 : rows.Select(r => ToRowWithoutTmdb(r)).ToList();
 
-        var cache = new Dictionary<(int TmdbId, string MtKey), TmdbDiscoverItem?>();
-        foreach (var key in rows.Select(r => (r.TmdbId, MtKey: NormalizeMtKey(r.MediaType))).Distinct())
+        var keys = rows.Select(r => (r.TmdbId, MtKey: NormalizeMtKey(r.MediaType))).Distinct().ToList();
+        var cacheEntries = new System.Collections.Concurrent.ConcurrentDictionary<(int, string), TmdbDiscoverItem?>();
+        var sem = new SemaphoreSlim(6, 6);
+        await Task.WhenAll(keys.Select(async key =>
         {
-            var d = await tmdb.TryGetDiscoverItemAsync(key.TmdbId, key.MtKey, cancellationToken).ConfigureAwait(false);
-            cache[key] = d;
-        }
+            await sem.WaitAsync(cancellationToken).ConfigureAwait(false);
+            try
+            {
+                var d = await tmdb.TryGetDiscoverItemAsync(key.TmdbId, key.MtKey, cancellationToken).ConfigureAwait(false);
+                cacheEntries[key] = d;
+            }
+            finally { sem.Release(); }
+        })).ConfigureAwait(false);
+        var cache = new Dictionary<(int TmdbId, string MtKey), TmdbDiscoverItem?>(cacheEntries);
 
         var list = new List<TrailerCardUiRow>(rows.Count);
         foreach (var r in rows)

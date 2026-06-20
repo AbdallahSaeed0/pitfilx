@@ -1,4 +1,5 @@
 import api from "./client";
+import type { MediaVideoItem } from "./movies";
 
 export type SeriesListParams = Record<string, string | number | undefined>;
 
@@ -15,6 +16,7 @@ export type SeasonSummary = {
   airDate: string | null;
   episodeCount: number;
   tmdbEpisodeCount: number;
+  voteAverage?: number | null;
   /** False when the season exists on TMDB but you have no episodes locally yet */
   inLibrary?: boolean;
 };
@@ -31,6 +33,9 @@ export type ShowDetailResponse = {
 
 export const getShowSeason = (libraryShowId: number, seasonNumber: number) =>
   api.get(`/series/${libraryShowId}/season/${seasonNumber}`).then((r) => r.data);
+
+export const getShowVideos = (id: number): Promise<{ videos: MediaVideoItem[] }> =>
+  api.get(`/series/${id}/videos`).then((r) => r.data as { videos: MediaVideoItem[] });
 
 export type NextLibraryEpisode = {
   id: number;

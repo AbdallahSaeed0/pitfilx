@@ -18,8 +18,8 @@ import { cn } from "../../utils/cn";
 import {
   nomineeMediaKind,
   nomineeMediaTypeLabel,
-  tmdbWebPath,
 } from "../../utils/awardNomineeMedia";
+import type { StreamingDetailsLocationState } from "../../pages/StreamingDetailsPage";
 import { resolveTmdbIdFromTitleYear } from "../../utils/awardNomineeResolve";
 import { toPosterSrc } from "../../utils/posterSrc";
 import { youtubeKeyFromWatchOrEmbedUrl } from "../../utils/youtubeUrl";
@@ -198,7 +198,24 @@ export function AwardNomineeCard({
       let tid = effectiveTmdbId;
       if (!tid) tid = await resolveTmdbIdFromTitleYear(title, ceremonyYear, mtLabel);
       if (!tid) throw new Error("no-tmdb");
-      return addListItem(watchlist.id, { tmdbId: tid, mediaType: mtLabel });
+      // Fetch imdbId to enable streaming from My List later
+      let storedImdbId: string | null = null;
+      try {
+        const r = await getStreamImdbId(tid, mtLabel);
+        storedImdbId = r.imdbId ?? null;
+        if (!storedImdbId) {
+          const alt = mtLabel === "Movie" ? "Series" : "Movie";
+          const r2 = await getStreamImdbId(tid, alt);
+          storedImdbId = r2.imdbId ?? null;
+        }
+      } catch { /* non-fatal */ }
+      return addListItem(watchlist.id, {
+        tmdbId: tid,
+        mediaType: mtLabel,
+        title,
+        posterRemoteUrl: nominee.posterUrl ?? undefined,
+        imdbId: storedImdbId ?? undefined,
+      });
     },
     onSuccess: () => {
       showToast(`Added to ${watchlist?.name ?? "list"}.`);
@@ -207,20 +224,22 @@ export function AwardNomineeCard({
     onError: () => showToast("Could not add to list."),
   });
 
-  const detailHref = useMemo(() => {
+  // Resolve where "Details" should navigate:
+  // - Library match → internal library route
+  // - TMDB match, not in library → stream-details page
+  // - No TMDB id → nothing (button hidden)
+  const detailTarget = useMemo(() => {
     const tid = effectiveTmdbId;
-    if (!tid) {
-      return `https://www.themoviedb.org/search?query=${encodeURIComponent(title)}`;
-    }
+    if (!tid) return null;
     if (kind === "movie") {
-      const id = libraryIndex?.movieByTmdb.get(tid);
-      return id != null ? `/movie/${id}` : tmdbWebPath("movie", tid);
+      const libId = libraryIndex?.movieByTmdb.get(tid);
+      if (libId != null) return { kind: "library" as const, href: `/movie/${libId}` };
+      return { kind: "stream" as const, tmdbId: tid, mediaType: "Movie" as const };
     }
-    const id = libraryIndex?.seriesByTmdb.get(tid);
-    return id != null ? `/series/${id}` : tmdbWebPath("tv", tid);
-  }, [effectiveTmdbId, kind, libraryIndex, title]);
-
-  const detailIsInternal = detailHref.startsWith("/");
+    const libId = libraryIndex?.seriesByTmdb.get(tid);
+    if (libId != null) return { kind: "library" as const, href: `/series/${libId}` };
+    return { kind: "stream" as const, tmdbId: tid, mediaType: "Series" as const };
+  }, [effectiveTmdbId, kind, libraryIndex]);
 
   const btnClass =
     "pointer-events-auto relative z-[2] inline-flex shrink-0 items-center justify-center gap-1 rounded-lg border border-white/[0.08] bg-black/25 px-2 py-1.5 text-[10px] font-semibold uppercase tracking-wide text-pitflix-muted transition-colors hover:border-pitflix-primary/45 hover:text-white disabled:cursor-not-allowed disabled:opacity-40 sm:text-[11px]";
@@ -332,27 +351,37 @@ export function AwardNomineeCard({
               {listMut.isPending ? <Loader2 className="h-3 w-3 animate-spin" /> : <ListPlus className="h-3 w-3" />}
               Watchlist
             </button>
-            {detailIsInternal ? (
+            {detailTarget?.kind === "library" ? (
               <Link
-                to={detailHref}
+                to={detailTarget.href}
                 onClick={(e) => e.stopPropagation()}
                 className={cn(btnClass, "border-emerald-500/20 text-emerald-100/90")}
               >
                 <Info className="h-3 w-3" />
                 Details
               </Link>
-            ) : (
-              <a
-                href={detailHref}
-                target="_blank"
-                rel="noreferrer"
-                onClick={(e) => e.stopPropagation()}
+            ) : detailTarget?.kind === "stream" ? (
+              <button
+                type="button"
+                onClick={(e) => {
+                  e.preventDefault();
+                  e.stopPropagation();
+                  navigate("/stream-details", {
+                    state: {
+                      tmdbId: detailTarget.tmdbId,
+                      mediaType: detailTarget.mediaType,
+                      title,
+                      posterUrl: nominee.posterUrl,
+                      year: ceremonyYear ? String(ceremonyYear) : null,
+                    } satisfies StreamingDetailsLocationState,
+                  });
+                }}
                 className={cn(btnClass, "border-emerald-500/20 text-emerald-100/90")}
               >
                 <Info className="h-3 w-3" />
                 Details
-              </a>
-            )}
+              </button>
+            ) : null}
           </div>
 
           {toast ? (

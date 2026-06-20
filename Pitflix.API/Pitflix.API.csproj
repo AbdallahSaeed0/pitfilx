@@ -5,6 +5,7 @@
   </ItemGroup>
 
   <ItemGroup>
+    <PackageReference Include="LibMpv.Client" Version="1.0.0" />
     <PackageReference Include="Newtonsoft.Json" Version="13.0.4" />
     <PackageReference Include="Microsoft.EntityFrameworkCore.Design" Version="8.0.11">
       <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
@@ -14,9 +15,9 @@
   </ItemGroup>
 
   <PropertyGroup>
-    <Version>0.3.8</Version>
-    <AssemblyVersion>0.3.8.0</AssemblyVersion>
-    <FileVersion>0.3.8.0</FileVersion>
+    <Version>0.4.6</Version>
+    <AssemblyVersion>0.4.6.0</AssemblyVersion>
+    <FileVersion>0.4.6.0</FileVersion>
     <TargetFramework>net8.0-windows</TargetFramework>
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>

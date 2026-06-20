@@ -1,0 +1,92 @@
+<?xml version="1.0"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 231 110" width="693" height="330">
+  <defs>
+    
+
+    
+    <clipPath id="fill-bounds">
+      <rect x="-10" y="26" width="2000" height="70"></rect>
+    </clipPath>
+
+    
+    <clipPath id="cp-p">
+      <path transform="translate(0,26) scale(0.7)" clip-rule="evenodd" d="M 0,0 L 0,100 L 12,100 L 12,54 C 32,54 54,46 54,27 C 54,8 32,0 12,0 Z M 15,8 L 15,46 L 46,27 Z"></path>
+    </clipPath>
+
+    
+    <clipPath id="cp-i1">
+      <text x="40" y="96" font-family="&#39;Bebas Neue&#39;,Impact,sans-serif" font-size="100" letter-spacing="0">I</text>
+    </clipPath>
+    
+    <clipPath id="cp-t">
+      <text x="59.206" y="96" font-family="&#39;Bebas Neue&#39;,Impact,sans-serif" font-size="100" letter-spacing="0">T</text>
+    </clipPath>
+    
+    <clipPath id="cp-f">
+      <text x="95.609" y="96" font-family="&#39;Bebas Neue&#39;,Impact,sans-serif" font-size="100" letter-spacing="0">F</text>
+    </clipPath>
+    
+    <clipPath id="cp-l">
+      <text x="130.022" y="96" font-family="&#39;Bebas Neue&#39;,Impact,sans-serif" font-size="100" letter-spacing="0">L</text>
+    </clipPath>
+    
+    <clipPath id="cp-i2">
+      <text x="164.425" y="96" font-family="&#39;Bebas Neue&#39;,Impact,sans-serif" font-size="100" letter-spacing="0">I</text>
+    </clipPath>
+    
+    <clipPath id="cp-x">
+      <text x="183.632" y="96" font-family="&#39;Bebas Neue&#39;,Impact,sans-serif" font-size="100" letter-spacing="0">X</text>
+    </clipPath>
+  </defs>
+
+  
+  <rect width="231" height="110" fill="#0a0916"></rect>
+
+  
+  <g transform="translate(0,26) scale(0.7)" opacity="0.14">
+    <path fill-rule="evenodd" fill="#7c3aed" d="M 0,0 L 0,100 L 12,100 L 12,54 C 32,54 54,46 54,27 C 54,8 32,0 12,0 Z M 15,8 L 15,46 L 46,27 Z"></path>
+  </g>
+
+  
+  <text x="40" y="96" font-family="&#39;Bebas Neue&#39;,Impact,sans-serif" font-size="100" fill="none" stroke="#7c3aed" stroke-width="1" opacity="0.14">ITFLIX</text>
+
+  
+  <g clip-path="url(#fill-bounds)">
+
+    
+    <rect x="0" y="26" width="38" height="70" fill="#7c3aed" clip-path="url(#cp-p)">
+      
+    </rect>
+
+    
+    <rect x="39" y="26" width="21.2" height="70" fill="#7c3aed" clip-path="url(#cp-i1)">
+      
+    </rect>
+
+    
+    <rect x="58.2" y="26" width="38.4" height="70" fill="#7c3aed" clip-path="url(#cp-t)">
+      
+    </rect>
+
+    
+    <rect x="94.6" y="26" width="36.4" height="70" fill="#7c3aed" clip-path="url(#cp-f)">
+      
+    </rect>
+
+    
+    <rect x="129" y="26" width="36.4" height="70" fill="#7c3aed" clip-path="url(#cp-l)">
+      
+    </rect>
+
+    
+    <rect x="163.4" y="26" width="21.2" height="70" fill="#7c3aed" clip-path="url(#cp-i2)">
+      
+    </rect>
+
+    
+    <rect x="182.6" y="26" width="42.6" height="70" fill="#7c3aed" clip-path="url(#cp-x)">
+      
+    </rect>
+
+  </g>
+</svg>

@@ -8,6 +8,7 @@ export type ComingSoonItem = {
   posterUrl: string | null;
   overview: string | null;
   voteAverage: number;
+  seasonNumber?: number | null;
 };
 
 export const getComingSoon = () =>

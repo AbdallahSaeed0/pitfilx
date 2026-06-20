@@ -91,8 +91,13 @@ export function MediaImage({
 
   return (
     <div className={cn("relative overflow-hidden", className)}>
+      {/* Blurred placeholder — matches spoiler-protection blur visually so the
+          loading state reads as "image incoming" instead of a flat gray block. */}
       {!loaded ? (
-        <div className="absolute inset-0 z-10 animate-pulse rounded-[inherit] bg-zinc-900" />
+        <div
+          className="absolute inset-0 z-10 animate-pulse rounded-[inherit] bg-gradient-to-br from-zinc-700/70 via-zinc-800/60 to-zinc-900/80"
+          style={{ filter: "blur(12px)" }}
+        />
       ) : null}
       <img
         ref={imgRef}
@@ -100,8 +105,8 @@ export function MediaImage({
         src={displaySrc}
         alt={alt}
         className={cn(
-          "h-full w-full object-cover transition-opacity duration-300",
-          loaded ? "opacity-100" : "opacity-0",
+          "h-full w-full object-cover transition-[opacity,filter] duration-500 ease-out",
+          loaded ? "opacity-100 blur-0" : "opacity-30 blur-xl",
         )}
         loading={loading}
         onLoad={() => setLoaded(true)}

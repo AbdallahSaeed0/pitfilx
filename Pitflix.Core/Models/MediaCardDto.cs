@@ -23,4 +23,7 @@ public sealed class MediaCardDto
 
     /// <summary>HTTPS TMDB poster when nothing is cached locally.</summary>
     public string? PosterRemoteUrl { get; set; }
+
+    /// <summary>IMDb ID stored at add-time for streaming/awards list items.</summary>
+    public string? ImdbId { get; set; }
 }

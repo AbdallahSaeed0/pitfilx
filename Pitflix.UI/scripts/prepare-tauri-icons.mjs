@@ -24,7 +24,12 @@ const generatedDir = path.join(tauriRoot, "icons", ".generated");
 const masterOut = path.join(generatedDir, "icon-master-1024.png");
 
 const SIZE = 1024;
-const SAFE = 0.86; // leave ~7% margin on each side inside the square
+// The current source (pitflix-app-icon.png) is already a full-bleed rounded-square
+// tile with its own internal margin baked in by the designer — SAFE=1 avoids
+// shrinking it further, which made the taskbar glyph look noticeably smaller
+// than other apps' icons. Drop back below 1 only if a future source icon is a
+// bare glyph without its own background/margin.
+const SAFE = 1;
 
 async function main() {
   if (!fs.existsSync(sourcePng)) {

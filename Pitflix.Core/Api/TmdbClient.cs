@@ -1,4 +1,4 @@
-using System.Text.RegularExpressions;
+﻿using System.Text.RegularExpressions;
 using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
 using Pitflix.Core.Models;
@@ -13,6 +13,17 @@ public sealed class TmdbClient
 
     private readonly HttpClient _http;
     private readonly string _apiKey;
+
+    // Keyed by "Movie:123" or "Series:456". Null sentinel = TMDB returned nothing.
+    private static readonly System.Collections.Concurrent.ConcurrentDictionary<string, (string PosterPath, string BackdropPath)?>
+        _artworkCache = new(StringComparer.OrdinalIgnoreCase);
+
+    // Same key scheme as _artworkCache.
+    private static readonly System.Collections.Concurrent.ConcurrentDictionary<string, TmdbDiscoverItem?>
+        _discoverCache = new(StringComparer.OrdinalIgnoreCase);
+
+    private static readonly System.Collections.Concurrent.ConcurrentDictionary<int, TmdbPersonDetails?>
+        _personCache = new();
 
     public TmdbClient(HttpClient http, string apiKey)
     {
@@ -51,7 +62,7 @@ public sealed class TmdbClient
     }
 
     /// <summary>TV season episode list (fast path to get stills for a whole season).</summary>
-    public async Task<IReadOnlyDictionary<int, (string? Name, string? StillPath, double? VoteAverage)>?> TryGetTvSeasonEpisodesAsync(
+    public async Task<IReadOnlyDictionary<int, (string? Name, string? StillPath, double? VoteAverage, string? Overview)>?> TryGetTvSeasonEpisodesAsync(
         int tvTmdbId, int seasonNumber, CancellationToken cancellationToken = default)
     {
         if (tvTmdbId <= 0 || seasonNumber < 0)
@@ -65,9 +76,9 @@ public sealed class TmdbClient
             var root = JObject.Parse(json);
             var eps = root["episodes"] as JArray;
             if (eps == null || eps.Count == 0)
-                return new Dictionary<int, (string?, string?, double?)>();
+                return new Dictionary<int, (string?, string?, double?, string?)>();
 
-            var map = new Dictionary<int, (string? Name, string? StillPath, double? VoteAverage)>();
+            var map = new Dictionary<int, (string? Name, string? StillPath, double? VoteAverage, string? Overview)>();
             foreach (var t in eps)
             {
                 var num = (int?)t?["episode_number"] ?? 0;
@@ -76,9 +87,11 @@ public sealed class TmdbClient
                 var name = (string?)t?["name"];
                 var still = (string?)t?["still_path"];
                 var vote = (double?)t?["vote_average"];
+                var overview = (string?)t?["overview"];
                 map[num] = (string.IsNullOrWhiteSpace(name) ? null : name.Trim(),
                     string.IsNullOrWhiteSpace(still) ? null : still,
-                    vote is > 0 ? vote : null);
+                    vote is > 0 ? vote : null,
+                    string.IsNullOrWhiteSpace(overview) ? null : overview.Trim());
             }
 
             return map;
@@ -110,7 +123,7 @@ public sealed class TmdbClient
     }
 
     /// <summary>Season poster, title, air date, and counts from <c>tv/{{id}}/season/{{n}}</c>.</summary>
-    public async Task<(string Name, string? PosterPath, string? AirDate, int EpisodeCount)?> TryGetTvSeasonHeaderAsync(
+    public async Task<(string Name, string? PosterPath, string? AirDate, int EpisodeCount, double? VoteAverage)?> TryGetTvSeasonHeaderAsync(
         int tvTmdbId, int seasonNumber, CancellationToken cancellationToken = default)
     {
         if (tvTmdbId <= 0 || seasonNumber < 0)
@@ -126,10 +139,12 @@ public sealed class TmdbClient
             var poster = (string?)root["poster_path"];
             var air = (string?)root["air_date"];
             var epCount = (int?)root["episode_count"] ?? (root["episodes"] is JArray ja ? ja.Count : 0);
+            var voteAvg = (double?)root["vote_average"];
             return (name.Trim(),
                 string.IsNullOrWhiteSpace(poster) ? null : poster,
                 string.IsNullOrWhiteSpace(air) ? null : air,
-                epCount);
+                epCount,
+                voteAvg is > 0 ? voteAvg : null);
         }
         catch
         {
@@ -279,7 +294,7 @@ public sealed class TmdbClient
             $"vote_count.gte={minVoteCount}",
             $"page={Math.Clamp(page, 1, 500)}"
         };
-        // Pipe = OR: match any seed genre/keyword (comma = AND and is usually too strict for “similar”).
+        // Pipe = OR: match any seed genre/keyword (comma = AND and is usually too strict for "similar").
         if (genreIds.Count > 0)
             q.Add($"with_genres={string.Join("|", genreIds.Distinct())}");
         if (keywordIds.Count > 0)
@@ -503,6 +518,46 @@ public sealed class TmdbClient
         }
     }
 
+    /// <summary>TMDB <c>movie/{{id}}/similar</c> — metadata-based similarity (complementary to /recommendations).</summary>
+    public async Task<List<TmdbDiscoverItem>> GetMovieSimilarAsync(int movieTmdbId, int page,
+        CancellationToken cancellationToken = default)
+    {
+        if (movieTmdbId <= 0)
+            return new List<TmdbDiscoverItem>();
+
+        var url = AbsoluteApiUrl(
+            $"movie/{movieTmdbId}/similar?api_key={Uri.EscapeDataString(_apiKey)}&language=en-US&page={Math.Clamp(page, 1, 500)}");
+        try
+        {
+            var json = await _http.GetStringAsync(url, cancellationToken).ConfigureAwait(false);
+            return ParseDiscoverMovies(json, excludeTmdbId: movieTmdbId);
+        }
+        catch
+        {
+            return new List<TmdbDiscoverItem>();
+        }
+    }
+
+    /// <summary>TMDB <c>tv/{{id}}/similar</c> — metadata-based similarity.</summary>
+    public async Task<List<TmdbDiscoverItem>> GetTvSimilarAsync(int tvTmdbId, int page,
+        CancellationToken cancellationToken = default)
+    {
+        if (tvTmdbId <= 0)
+            return new List<TmdbDiscoverItem>();
+
+        var url = AbsoluteApiUrl(
+            $"tv/{tvTmdbId}/similar?api_key={Uri.EscapeDataString(_apiKey)}&language=en-US&page={Math.Clamp(page, 1, 500)}");
+        try
+        {
+            var json = await _http.GetStringAsync(url, cancellationToken).ConfigureAwait(false);
+            return ParseDiscoverTv(json, excludeTmdbId: tvTmdbId);
+        }
+        catch
+        {
+            return new List<TmdbDiscoverItem>();
+        }
+    }
+
     public async Task<List<TmdbDiscoverItem>> GetNowPlayingMoviesAsync(int page,
         CancellationToken cancellationToken = default)
     {
@@ -519,7 +574,7 @@ public sealed class TmdbClient
         }
     }
 
-    /// <summary>Popular movies (no release-date filter) — broad pool for “latest trailer” discovery by video <c>published_at</c>.</summary>
+    /// <summary>Popular movies (no release-date filter) — broad pool for "latest trailer" discovery by video <c>published_at</c>.</summary>
     public async Task<List<TmdbDiscoverItem>> DiscoverPopularMoviesAsync(int page,
         CancellationToken cancellationToken = default)
     {
@@ -555,7 +610,7 @@ public sealed class TmdbClient
         }
     }
 
-    /// <summary>Movies whose primary release date is on or after <paramref name="fromYyyyMmDd"/> — for “recent” trailer grids.</summary>
+    /// <summary>Movies whose primary release date is on or after <paramref name="fromYyyyMmDd"/> — for "recent" trailer grids.</summary>
     public async Task<List<TmdbDiscoverItem>> DiscoverMoviesPrimaryReleaseFromAsync(string fromYyyyMmDd, int page,
         CancellationToken cancellationToken = default)
     {
@@ -600,6 +655,26 @@ public sealed class TmdbClient
         var url = AbsoluteApiUrl(
             $"discover/tv?api_key={Uri.EscapeDataString(_apiKey)}&language=en-US" +
             $"&sort_by=first_air_date.asc&first_air_date.gte={Uri.EscapeDataString(fromYyyyMmDd)}" +
+            $"&page={Math.Clamp(page, 1, 500)}");
+        try
+        {
+            var json = await _http.GetStringAsync(url, cancellationToken).ConfigureAwait(false);
+            return ParseDiscoverTv(json, excludeTmdbId: null);
+        }
+        catch
+        {
+            return new List<TmdbDiscoverItem>();
+        }
+    }
+
+    /// <summary>TV shows that have episodes airing between <paramref name="fromYyyyMmDd"/> and <paramref name="toYyyyMmDd"/> (catches new seasons of existing shows).</summary>
+    public async Task<List<TmdbDiscoverItem>> DiscoverTvAiringInRangeAsync(string fromYyyyMmDd, string toYyyyMmDd, int page,
+        CancellationToken cancellationToken = default)
+    {
+        var url = AbsoluteApiUrl(
+            $"discover/tv?api_key={Uri.EscapeDataString(_apiKey)}&language=en-US" +
+            $"&sort_by=popularity.desc&air_date.gte={Uri.EscapeDataString(fromYyyyMmDd)}" +
+            $"&air_date.lte={Uri.EscapeDataString(toYyyyMmDd)}" +
             $"&page={Math.Clamp(page, 1, 500)}");
         try
         {
@@ -1021,12 +1096,17 @@ public sealed class TmdbClient
         }
     }
 
-    /// <summary>Poster and backdrop paths only — no credits (avoids N× cast image downloads for bulk refresh).</summary>
+    /// <summary>Poster and backdrop paths only — no credits (avoids N× cast image downloads for bulk refresh).
+    /// Results are cached in-process so repeated calls for the same TMDB ID are instant.</summary>
     public async Task<(string PosterPath, string BackdropPath)?> GetArtworkPathsAsync(int tmdbId, string mediaType,
         CancellationToken cancellationToken = default)
     {
         if (tmdbId <= 0)
             return null;
+
+        var cacheKey = $"{mediaType}:{tmdbId}";
+        if (_artworkCache.TryGetValue(cacheKey, out var cached))
+            return cached;
 
         var isMovie = mediaType.Equals("Movie", StringComparison.OrdinalIgnoreCase);
         var path = isMovie ? $"movie/{tmdbId}" : $"tv/{tmdbId}";
@@ -1037,17 +1117,21 @@ public sealed class TmdbClient
             var root = JObject.Parse(json);
             var poster = (string?)root["poster_path"] ?? "";
             var backdrop = (string?)root["backdrop_path"] ?? "";
-            return (poster, backdrop);
+            var result = (poster, backdrop);
+            _artworkCache[cacheKey] = result;
+            return result;
         }
         catch
         {
+            _artworkCache[cacheKey] = null;
             return null;
         }
     }
 
     /// <summary>
     /// Minimal title + dates + vote/popularity fields shaped like a discover row.
-    /// Used for curated trailer priority injection so we can merge “must-consider” titles into the same pipeline.
+    /// Used for curated trailer priority injection so we can merge "must-consider" titles into the same pipeline.
+    /// Results are cached in-process so repeated calls for the same TMDB ID are instant.
     /// </summary>
     public async Task<TmdbDiscoverItem?> TryGetDiscoverItemAsync(int tmdbId, string mediaType,
         CancellationToken cancellationToken = default)
@@ -1061,6 +1145,10 @@ public sealed class TmdbClient
                    mediaType.Equals("tv", StringComparison.OrdinalIgnoreCase);
         if (!isMovie && !isTv)
             return null;
+
+        var cacheKey = $"{(isMovie ? "movie" : "tv")}:{tmdbId}";
+        if (_discoverCache.TryGetValue(cacheKey, out var cached))
+            return cached;
 
         var path = isMovie ? $"movie/{tmdbId}" : $"tv/{tmdbId}";
         var url = AbsoluteApiUrl($"{path}?api_key={Uri.EscapeDataString(_apiKey)}&language=en-US");
@@ -1086,7 +1174,7 @@ public sealed class TmdbClient
                 }
             }
 
-            return new TmdbDiscoverItem
+            var result = new TmdbDiscoverItem
             {
                 Id = tmdbId,
                 MediaType = isMovie ? "movie" : "tv",
@@ -1098,9 +1186,12 @@ public sealed class TmdbClient
                 VoteCount = voteCount,
                 GenreIds = genreIds
             };
+            _discoverCache[cacheKey] = result;
+            return result;
         }
         catch
         {
+            _discoverCache[cacheKey] = null;
             return null;
         }
     }
@@ -1390,6 +1481,9 @@ public sealed class TmdbClient
         if (personId <= 0)
             return null;
 
+        if (_personCache.TryGetValue(personId, out var cachedPerson))
+            return cachedPerson;
+
         var url = AbsoluteApiUrl(
             $"person/{personId}?api_key={Uri.EscapeDataString(_apiKey)}&language=en-US&append_to_response=combined_credits");
         string json;
@@ -1399,6 +1493,7 @@ public sealed class TmdbClient
         }
         catch
         {
+            _personCache[personId] = null;
             return null;
         }
 
@@ -1459,6 +1554,7 @@ public sealed class TmdbClient
                 .GetOrDownloadAsync(_http, p.ProfilePath, "Person", "w185", cancellationToken).ConfigureAwait(false);
         }
 
+        _personCache[personId] = p;
         return p;
     }
 
@@ -1663,6 +1759,200 @@ public sealed class TmdbClient
             .ToList();
     }
 
+    /// <summary>Keyword id+name pairs from <c>movie/{{id}}/keywords</c> or <c>tv/{{id}}/keywords</c>.</summary>
+    public async Task<IReadOnlyList<(int Id, string Name)>> TryGetKeywordsWithNamesAsync(
+        int tmdbId, string mediaType, CancellationToken cancellationToken = default, int maxKeywords = 15)
+    {
+        if (tmdbId <= 0 || maxKeywords <= 0)
+            return Array.Empty<(int, string)>();
+
+        var isMovie = mediaType.Equals("Movie", StringComparison.OrdinalIgnoreCase);
+        var path = isMovie ? $"movie/{tmdbId}/keywords" : $"tv/{tmdbId}/keywords";
+        var url = AbsoluteApiUrl($"{path}?api_key={Uri.EscapeDataString(_apiKey)}");
+        try
+        {
+            var json = await _http.GetStringAsync(url, cancellationToken).ConfigureAwait(false);
+            var root = JObject.Parse(json);
+            var keywords = root["keywords"] as JArray ?? root["results"] as JArray;
+            if (keywords == null || keywords.Count == 0)
+                return Array.Empty<(int, string)>();
+
+            var result = new List<(int Id, string Name)>(maxKeywords);
+            foreach (var t in keywords)
+            {
+                var id = (int?)t?["id"] ?? 0;
+                var name = (string?)t?["name"];
+                if (id <= 0 || string.IsNullOrWhiteSpace(name))
+                    continue;
+                result.Add((id, name.Trim()));
+                if (result.Count >= maxKeywords)
+                    break;
+            }
+            return result;
+        }
+        catch
+        {
+            return Array.Empty<(int, string)>();
+        }
+    }
+
+    /// <summary>Reads <c>belongs_to_collection</c> from a movie's TMDB details page.</summary>
+    public async Task<(int CollectionId, string CollectionName)?> TryGetMovieCollectionInfoAsync(
+        int movieTmdbId, CancellationToken cancellationToken = default)
+    {
+        if (movieTmdbId <= 0)
+            return null;
+        var url = AbsoluteApiUrl($"movie/{movieTmdbId}?api_key={Uri.EscapeDataString(_apiKey)}&language=en-US");
+        try
+        {
+            var json = await _http.GetStringAsync(url, cancellationToken).ConfigureAwait(false);
+            var root = JObject.Parse(json);
+            if (root["belongs_to_collection"] is not JObject col)
+                return null;
+            var cid = (int?)col["id"] ?? 0;
+            var cname = (string?)col["name"] ?? "";
+            return cid > 0 ? (cid, cname.Trim()) : null;
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    /// <summary>US theatrical certification (e.g. "PG-13") from <c>movie/{{id}}/release_dates</c>.</summary>
+    public async Task<string?> TryGetMovieCertificationAsync(
+        int tmdbId, string country = "US", CancellationToken cancellationToken = default)
+    {
+        if (tmdbId <= 0) return null;
+        var url = AbsoluteApiUrl($"movie/{tmdbId}/release_dates?api_key={Uri.EscapeDataString(_apiKey)}");
+        try
+        {
+            var json = await _http.GetStringAsync(url, cancellationToken).ConfigureAwait(false);
+            var root = JObject.Parse(json);
+            if (root["results"] is not JArray results) return null;
+            foreach (var entry in results)
+            {
+                if (!string.Equals((string?)entry["iso_3166_1"], country, StringComparison.OrdinalIgnoreCase))
+                    continue;
+                if (entry["release_dates"] is not JArray dates) continue;
+                // Prefer type 3 (theatrical), then any non-empty certification
+                string? best = null;
+                foreach (var d in dates)
+                {
+                    var cert = (string?)d["certification"];
+                    if (string.IsNullOrWhiteSpace(cert)) continue;
+                    if ((int?)d["type"] == 3) return cert.Trim(); // theatrical is authoritative
+                    best ??= cert.Trim();
+                }
+                if (best != null) return best;
+            }
+            return null;
+        }
+        catch { return null; }
+    }
+
+    /// <summary>TV content rating (e.g. "TV-14") from <c>tv/{{id}}/content_ratings</c>.</summary>
+    public async Task<string?> TryGetTvCertificationAsync(
+        int tmdbId, string country = "US", CancellationToken cancellationToken = default)
+    {
+        if (tmdbId <= 0) return null;
+        var url = AbsoluteApiUrl($"tv/{tmdbId}/content_ratings?api_key={Uri.EscapeDataString(_apiKey)}");
+        try
+        {
+            var json = await _http.GetStringAsync(url, cancellationToken).ConfigureAwait(false);
+            var root = JObject.Parse(json);
+            if (root["results"] is not JArray results) return null;
+            foreach (var entry in results)
+            {
+                if (!string.Equals((string?)entry["iso_3166_1"], country, StringComparison.OrdinalIgnoreCase))
+                    continue;
+                var rating = (string?)entry["rating"];
+                if (!string.IsNullOrWhiteSpace(rating)) return rating.Trim();
+            }
+            return null;
+        }
+        catch { return null; }
+    }
+
+    /// <summary>
+    /// Videos (featurettes, behind-the-scenes, clips) from <c>movie/{{id}}/videos</c> or <c>tv/{{id}}/videos</c>.
+    /// Trailers and teasers are excluded — those live on the Trailers page.
+    /// </summary>
+    public async Task<IReadOnlyList<TmdbVideoItem>> GetMediaExtrasAsync(
+        int tmdbId, string mediaType, CancellationToken cancellationToken = default)
+    {
+        if (tmdbId <= 0) return Array.Empty<TmdbVideoItem>();
+        var isMovie = mediaType.Equals("Movie", StringComparison.OrdinalIgnoreCase);
+        var path = isMovie ? $"movie/{tmdbId}/videos" : $"tv/{tmdbId}/videos";
+        var url = AbsoluteApiUrl($"{path}?api_key={Uri.EscapeDataString(_apiKey)}&language=en-US");
+        try
+        {
+            var json = await _http.GetStringAsync(url, cancellationToken).ConfigureAwait(false);
+            var root = JObject.Parse(json);
+            if (root["results"] is not JArray results) return Array.Empty<TmdbVideoItem>();
+
+            // Exclude trailers/teasers — those belong to the Trailers page
+            static bool IsExtra(string? type) => type is not null &&
+                !type.Equals("Trailer", StringComparison.OrdinalIgnoreCase) &&
+                !type.Equals("Teaser", StringComparison.OrdinalIgnoreCase);
+
+            var items = new List<TmdbVideoItem>();
+            foreach (var v in results)
+            {
+                var site = (string?)v["site"] ?? "";
+                var key = (string?)v["key"] ?? "";
+                var name = (string?)v["name"] ?? "";
+                var type = (string?)v["type"] ?? "";
+                if (string.IsNullOrEmpty(key) || string.IsNullOrEmpty(name)) continue;
+                if (!IsExtra(type)) continue;
+                // Only YouTube for now (Vimeo thumbnails differ and are rarely used)
+                if (!site.Equals("YouTube", StringComparison.OrdinalIgnoreCase)) continue;
+                var thumb = $"https://img.youtube.com/vi/{key}/hqdefault.jpg";
+                items.Add(new TmdbVideoItem(key, name, type, site, thumb));
+            }
+            return items;
+        }
+        catch { return Array.Empty<TmdbVideoItem>(); }
+    }
+
+    /// <summary>TMDB <c>collection/{{id}}</c> — returns name, overview, and all parts ordered by release date.</summary>
+    public async Task<TmdbCollectionResult?> TryGetCollectionAsync(
+        int collectionId, CancellationToken cancellationToken = default)
+    {
+        if (collectionId <= 0)
+            return null;
+        var url = AbsoluteApiUrl($"collection/{collectionId}?api_key={Uri.EscapeDataString(_apiKey)}&language=en-US");
+        try
+        {
+            var json = await _http.GetStringAsync(url, cancellationToken).ConfigureAwait(false);
+            var root = JObject.Parse(json);
+            var name = (string?)root["name"] ?? "";
+            var overview = (string?)root["overview"];
+            var poster = (string?)root["poster_path"];
+            var backdrop = (string?)root["backdrop_path"];
+            var parts = new List<TmdbCollectionPart>();
+            if (root["parts"] is JArray partsArr)
+            {
+                foreach (var p in partsArr)
+                {
+                    var pid = (int?)p?["id"] ?? 0;
+                    var ptitle = (string?)p?["title"] ?? "";
+                    var pposter = (string?)p?["poster_path"];
+                    var pdate = (string?)p?["release_date"];
+                    var pvote = (double?)p?["vote_average"] ?? 0;
+                    if (pid > 0 && !string.IsNullOrEmpty(ptitle))
+                        parts.Add(new TmdbCollectionPart(pid, ptitle, pposter, pdate, pvote));
+                }
+                parts.Sort((a, b) => string.Compare(a.ReleaseDate ?? "", b.ReleaseDate ?? "", StringComparison.Ordinal));
+            }
+            return new TmdbCollectionResult(collectionId, name, overview, poster, backdrop, parts);
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
     private static IEnumerable<TmdbImage> ParseImageArray(JArray? array)
     {
         if (array == null)
@@ -1684,3 +1974,15 @@ public sealed class TmdbClient
         }
     }
 }
+
+public sealed record TmdbVideoItem(string Key, string Name, string Type, string Site, string ThumbnailUrl);
+
+public sealed record TmdbCollectionPart(int Id, string Title, string? PosterPath, string? ReleaseDate, double VoteAverage);
+
+public sealed record TmdbCollectionResult(
+    int Id,
+    string Name,
+    string? Overview,
+    string? PosterPath,
+    string? BackdropPath,
+    IReadOnlyList<TmdbCollectionPart> Parts);

@@ -117,9 +117,19 @@ public sealed class PinnedFolderScanService : BackgroundService
                 matched = p.LibraryNotificationMatched
             }, CancellationToken.None);
         });
-        await pipeline.RunScanOnFilesAsync(distinct, progress, cancellationToken, libraryNotifications: notifyDesktop,
-                skipUnchangedUnmatchedScanLogs: true)
+        var result = await pipeline.RunScanOnFilesAsync(distinct, progress, cancellationToken,
+                libraryNotifications: notifyDesktop, skipUnchangedUnmatchedScanLogs: true)
             .ConfigureAwait(false);
         _ratingsRefreshQueue.TryEnqueueStaleSweep();
+
+        if (result.Matched > 0 || result.Unmatched > 0)
+        {
+            _ = _scanRuntime.BroadcastAsync(new
+            {
+                type = "libraryUpdated",
+                matched = result.Matched,
+                unmatched = result.Unmatched
+            }, CancellationToken.None);
+        }
     }
 }

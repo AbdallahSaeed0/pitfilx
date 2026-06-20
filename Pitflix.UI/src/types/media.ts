@@ -22,6 +22,8 @@ export type MediaCard = {
   folderPath?: string | null;
   /** "Movie" | "Series" from API card payloads. */
   tmdbMediaType?: string | null;
+  /** IMDb ID stored at add-time for streaming/awards list items. */
+  imdbId?: string | null;
 };
 
 export type Stats = {

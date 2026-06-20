@@ -1,0 +1,31 @@
+<Window x:Class="PitflixPlayer.MainWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:local="clr-namespace:PitflixPlayer"
+        Title="PitflixPlayer"
+        Icon="PitflixPlayer.ico"
+        WindowStyle="None"
+        WindowState="Normal"
+        WindowStartupLocation="CenterScreen"
+        Width="1280" Height="720"
+        ResizeMode="CanResize"
+        Background="Black"
+        AllowsTransparency="False"
+        UseLayoutRounding="True"
+        SnapsToDevicePixels="True"
+        TextOptions.TextFormattingMode="Display"
+        TextOptions.TextRenderingMode="ClearType"
+        Focusable="True"
+        KeyboardNavigation.DirectionalNavigation="None"
+        PreviewMouseWheel="OnScrollWheel"
+        PreviewMouseRightButtonUp="OnRightClick">
+
+    <!--
+        Layer 1 only: the native video surface.
+        No WPF elements are drawn over the HwndHost here — that causes the
+        WPF airspace crash.  All controls live in a sibling ControlsWindow.
+    -->
+    <local:VideoHwndHost x:Name="VideoPanel"
+                         HorizontalAlignment="Stretch"
+                         VerticalAlignment="Stretch"/>
+</Window>

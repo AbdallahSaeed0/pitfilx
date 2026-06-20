@@ -1,0 +1,80 @@
+[19:35:46.000] App starting
+[19:35:46.363] OnLoadedCore start
+[19:35:48.478] ChildHwnd = 0x1F1146
+[19:35:48.478] Calling AttachAsync
+[19:35:48.924] AttachAsync succeeded
+[19:35:49.094] OnLoadedCore complete
+[19:37:15.686] Window closed
+[23:13:43.231] App starting
+[23:13:44.093] Keyboard hook handle: 0x1103C
+[23:13:44.095] OnLoadedCore start
+[23:13:46.754] ChildHwnd = 0x20B0F12
+[23:13:46.754] Calling AttachAsync
+[23:13:47.306] AttachAsync succeeded
+[23:13:47.874] OnLoadedCore complete
+[23:24:55.502] Window closed
+[23:44:34.116] App starting
+[23:44:37.032] Keyboard hook handle: 0x686104E
+[23:44:37.034] OnLoadedCore start
+[23:44:39.593] ChildHwnd = 0x121072
+[23:44:39.594] Calling AttachAsync
+[23:44:40.705] AttachAsync succeeded
+[23:44:41.204] OnLoadedCore complete
+[23:44:56.764] Session stopped — closing
+[23:44:56.822] Window closed
+[23:45:55.754] App starting
+[23:45:56.563] Keyboard hook handle: 0x14113F
+[23:45:56.564] OnLoadedCore start
+[23:45:59.163] ChildHwnd = 0x50AA0
+[23:45:59.163] Calling AttachAsync
+[23:45:59.752] AttachAsync succeeded
+[23:46:00.096] OnLoadedCore complete
+[23:46:25.138] Window closed
+[01:50:14.459] App starting
+[01:50:15.482] Keyboard hook handle: 0x291187
+[01:50:15.483] OnLoadedCore start
+[01:50:18.211] ChildHwnd = 0x1E0105A
+[01:50:18.211] Calling AttachAsync
+[01:50:19.056] AttachAsync succeeded
+[01:50:19.549] OnLoadedCore complete
+[02:03:23.964] Window closed
+[02:17:30.460] App starting
+[02:17:31.608] Keyboard hook handle: 0x211CE
+[02:17:31.610] OnLoadedCore start
+[02:17:34.459] ChildHwnd = 0x51198
+[02:17:34.459] Calling AttachAsync
+[02:17:35.264] AttachAsync succeeded
+[02:17:35.696] OnLoadedCore complete
+[02:19:19.686] Window closed
+[08:17:11.111] App starting
+[08:17:11.502] Keyboard hook handle: 0x1891052
+[08:17:11.503] OnLoadedCore start
+[08:17:13.622] ChildHwnd = 0x1130C54
+[08:17:13.622] Calling AttachAsync
+[08:17:14.122] AttachAsync succeeded
+[08:17:14.270] OnLoadedCore complete
+[08:37:51.841] Window closed
+[08:45:00.642] App starting
+[08:45:01.073] Keyboard hook handle: 0x941235
+[08:45:01.074] OnLoadedCore start
+[08:45:03.197] ChildHwnd = 0xB0D90
+[08:45:03.197] Calling AttachAsync
+[08:45:03.668] AttachAsync succeeded
+[08:45:03.845] OnLoadedCore complete
+[08:57:39.877] Window closed
+[09:12:59.973] App starting
+[09:13:00.373] Keyboard hook handle: 0x41561
+[09:13:00.374] OnLoadedCore start
+[09:13:02.499] ChildHwnd = 0x3151A
+[09:13:02.500] Calling AttachAsync
+[09:13:02.961] AttachAsync succeeded
+[09:13:03.133] OnLoadedCore complete
+[09:13:42.573] Window closed
+[04:35:35.036] App starting
+[04:35:35.416] Keyboard hook handle: 0x70FA7
+[04:35:35.418] OnLoadedCore start
+[04:35:37.544] ChildHwnd = 0x910B6
+[04:35:37.544] Calling AttachAsync
+[04:35:38.025] AttachAsync succeeded
+[04:35:38.195] OnLoadedCore complete
+[04:36:16.943] Window closed

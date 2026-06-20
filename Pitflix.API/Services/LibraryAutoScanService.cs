@@ -102,6 +102,53 @@ public sealed class LibraryAutoScanService : BackgroundService
             return;
         }
 
+        // ── Incremental filter ────────────────────────────────────────────────
+        // For the hourly auto-scan, only process files that are:
+        //   (a) not yet in the library (brand-new), OR
+        //   (b) modified since the last successful auto-scan.
+        // This makes the auto-scan nearly instant when the library is stable.
+        var lastScanAt = await repo.GetLastAutoScanAtAsync(cancellationToken).ConfigureAwait(false);
+        if (lastScanAt.HasValue)
+        {
+            LibraryPathPresenceIndex? presenceIndex = null;
+            try
+            {
+                presenceIndex = await repo.CreateLibraryPathPresenceIndexAsync(cancellationToken)
+                    .ConfigureAwait(false);
+            }
+            catch { /* fall back to full list if index fails */ }
+
+            if (presenceIndex != null)
+            {
+                // Always include a 2-minute buffer to tolerate clock skew / in-flight copies.
+                var cutoff = lastScanAt.Value.AddMinutes(-2);
+                var before = distinct.Count;
+                distinct = distinct.Where(f =>
+                {
+                    // New file not yet in library → always process.
+                    var norm = MediaPathNormalizer.PreferredPhysicalPath(f);
+                    if (!string.IsNullOrEmpty(norm) && !presenceIndex.IsPhysicalPathInLibrary(norm))
+                        return true;
+                    // Already in library but recently modified → process in case metadata changed.
+                    try { return File.GetLastWriteTimeUtc(f) > cutoff; }
+                    catch { return true; }
+                }).ToList();
+
+                _logger.LogInformation(
+                    "Library auto-scan incremental filter: {Before} → {After} files (last scan {LastScanAt:u}).",
+                    before, distinct.Count, lastScanAt.Value);
+            }
+        }
+        // ─────────────────────────────────────────────────────────────────────
+
+        if (distinct.Count == 0)
+        {
+            // Nothing to process — update the timestamp so the next scan uses a fresh cutoff.
+            await repo.SetLastAutoScanAtAsync(DateTime.UtcNow, cancellationToken).ConfigureAwait(false);
+            _logger.LogInformation("Library auto-scan: all files already up-to-date, nothing to process.");
+            return;
+        }
+
         var notifyDesktop = await repo.GetLibraryScanDesktopToastsEnabledAsync(cancellationToken).ConfigureAwait(false);
         var pipeline = new ScanPipeline(new FileScanner(), tmdb, repo);
         var progress = new Progress<ScanProgress>(p =>
@@ -117,9 +164,25 @@ public sealed class LibraryAutoScanService : BackgroundService
                 matched = p.LibraryNotificationMatched
             }, CancellationToken.None);
         });
-        await pipeline.RunScanOnFilesAsync(distinct, progress, cancellationToken, libraryNotifications: notifyDesktop,
-                skipUnchangedUnmatchedScanLogs: true)
+        var result = await pipeline.RunScanOnFilesAsync(distinct, progress, cancellationToken,
+                libraryNotifications: notifyDesktop, skipUnchangedUnmatchedScanLogs: true)
             .ConfigureAwait(false);
+
+        // Stamp the successful completion time so the next auto-scan can skip unchanged files.
+        await repo.SetLastAutoScanAtAsync(DateTime.UtcNow, cancellationToken).ConfigureAwait(false);
+
         _ratingsRefreshQueue.TryEnqueueStaleSweep();
+
+        // Always broadcast a lightweight "libraryUpdated" so the UI can refresh queries,
+        // even when desktop toasts are disabled and no libraryNotification events were emitted.
+        if (result.Matched > 0 || result.Unmatched > 0)
+        {
+            _ = _scanRuntime.BroadcastAsync(new
+            {
+                type = "libraryUpdated",
+                matched = result.Matched,
+                unmatched = result.Unmatched
+            }, CancellationToken.None);
+        }
     }
 }

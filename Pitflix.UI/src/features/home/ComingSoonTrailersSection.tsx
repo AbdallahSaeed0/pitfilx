@@ -4,6 +4,7 @@ import { useState } from "react";
 import { Link } from "react-router-dom";
 import { getUpcomingTrailers, type TrailerCard } from "../../api/homeDiscover";
 import { TrailerModal } from "../../components/trailers/TrailerModal";
+import { HorizontalScrollRow } from "../../components/ui/HorizontalScrollRow";
 import { MediaImage } from "../../components/ui/MediaImage";
 import { Spinner } from "../../components/ui/Spinner";
 
@@ -14,8 +15,9 @@ export function ComingSoonTrailersSection({ embedded = false }: Props) {
   const q = useQuery({
     queryKey: ["home-trailers-upcoming"],
     queryFn: getUpcomingTrailers,
-    staleTime: 180_000,
+    staleTime: 5 * 60_000,
     gcTime: 30 * 60_000,
+    refetchInterval: 10 * 60_000,
   });
 
   const refreshing = q.isFetching && !q.isPending;
@@ -80,7 +82,7 @@ export function ComingSoonTrailersSection({ embedded = false }: Props) {
           </Link>
         </div>
       )}
-      <div className="flex gap-3 overflow-x-auto pb-2">
+      <HorizontalScrollRow hideHeader className="mb-0" contentClassName="gap-3 pb-2">
         {list.map((t) => {
           const youtubeThumb = `https://img.youtube.com/vi/${t.youtubeKey}/hqdefault.jpg`;
           const thumb = youtubeThumb || t.posterUrl || t.backdropUrl;
@@ -102,7 +104,7 @@ export function ComingSoonTrailersSection({ embedded = false }: Props) {
             </button>
           );
         })}
-      </div>
+      </HorizontalScrollRow>
       <TrailerModal open={!!active} onClose={() => setActive(null)} trailer={active} />
     </div>
   );

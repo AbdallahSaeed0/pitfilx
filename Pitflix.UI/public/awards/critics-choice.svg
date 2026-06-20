@@ -1,0 +1,39 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 60 100" fill="none">
+  <defs>
+    <linearGradient id="gv" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" stop-color="#F5C842"/>
+      <stop offset="60%" stop-color="#C9920A"/>
+      <stop offset="100%" stop-color="#8B6000"/>
+    </linearGradient>
+    <linearGradient id="gh" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" stop-color="#A07010"/>
+      <stop offset="40%" stop-color="#F5C842"/>
+      <stop offset="70%" stop-color="#D4A020"/>
+      <stop offset="100%" stop-color="#8B6000"/>
+    </linearGradient>
+    <radialGradient id="star" cx="50%" cy="40%" r="60%">
+      <stop offset="0%" stop-color="#FFEF90"/>
+      <stop offset="100%" stop-color="#C9920A"/>
+    </radialGradient>
+  </defs>
+  <!-- Base -->
+  <ellipse cx="30" cy="94" rx="19" ry="5" fill="#7A5600"/>
+  <rect x="11" y="82" width="38" height="12" rx="3" fill="url(#gv)"/>
+  <ellipse cx="30" cy="82" rx="19" ry="5" fill="#F5C842"/>
+  <!-- Stem - wide at top, tapers -->
+  <path d="M24 82 Q22 72 24 62 L36 62 Q38 72 36 82 Z" fill="url(#gv)"/>
+  <!-- Cup base collar -->
+  <ellipse cx="30" cy="62" rx="16" ry="4.5" fill="#F5C842"/>
+  <!-- Trophy cup body -->
+  <path d="M14 46 Q13 30 16 22 Q20 14 30 12 Q40 14 44 22 Q47 30 46 46 Q38 54 30 54 Q22 54 14 46 Z" fill="url(#gh)"/>
+  <!-- Cup handles -->
+  <path d="M14 40 Q4 40 4 30 Q4 22 14 26" fill="none" stroke="url(#gh)" stroke-width="5" stroke-linecap="round"/>
+  <path d="M46 40 Q56 40 56 30 Q56 22 46 26" fill="none" stroke="url(#gh)" stroke-width="5" stroke-linecap="round"/>
+  <!-- Cup rim -->
+  <ellipse cx="30" cy="12" rx="18" ry="5" fill="#F5C842" opacity="0.7"/>
+  <!-- Star on front -->
+  <path d="M30 22 L32.5 29.5 L40.5 29.5 L34 34 L36.5 41.5 L30 37 L23.5 41.5 L26 34 L19.5 29.5 L27.5 29.5 Z"
+        fill="url(#star)" stroke="#C9920A" stroke-width="0.5"/>
+  <!-- Cup sheen -->
+  <path d="M18 28 Q24 18 30 16 Q30 20 26 30 Z" fill="#FFEF90" opacity="0.2"/>
+</svg>

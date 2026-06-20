@@ -1,6 +1,4 @@
 use std::{
-    fs::OpenOptions,
-    io::Write,
     net::TcpStream,
     path::PathBuf,
     process::{Child, Command, Stdio},
@@ -8,11 +6,25 @@ use std::{
     time::Duration,
 };
 
-use tauri::{image::Image, App, Manager, RunEvent};
+use tauri::{image::Image, App, Emitter, Manager, RunEvent};
 
 mod player;
+mod remote_player;
 
 use player::{playback_orchestrator, PlayerHost, PlayerHostState};
+#[cfg(windows)]
+use player::libmpv_session::{
+    player2_libmpv_close, player2_libmpv_open, player2_libmpv_send, player2_libmpv_set_bounds,
+    LibMpvHostState,
+};
+#[cfg(windows)]
+use player::thumbs::{thumb_at, thumb_note_current, thumb_poster};
+#[cfg(windows)]
+use player::playlist_window::{
+    install_main_window_follower, playlist_window_close, playlist_window_open,
+    playlist_window_resync, PlaylistWindowState,
+};
+use remote_player::{remote_open, remote_play_pause, remote_seek, remote_close};
 use player::tauri_commands::{
     append_player_debug_log,
     playback_pol_cancel_next_countdown,
@@ -23,15 +35,18 @@ use player::tauri_commands::{
     playback_pol_set_extension_skip_intro,
     playback_pol_set_extension_thumbnails,
     playback_pol_set_next_autoplay,
+    playback_pol_set_final_position,
+    playback_pol_set_subtitle_pick,
+    playback_pol_get_subtitle_pick,
     playback_pol_show_next_countdown,
     playback_pol_tick_next_countdown,
     player2_close, player2_debug_log, player2_get_state, player2_list_external_subtitle_files, player2_open,
+    player3_open,
     player2_pause, player2_resume, player2_send, player2_set_video_bounds,
     player2_test_ipc_osd, player2_test_toggle_pause, player2_recover, player2_recover_no_config, player2_get_last_mpv_exit_report,
     player2_open_detached_no_wid,
     player2_set_embedded_safe_mode,
     player2_open_detached,
-    player2_open_embedded_minimal_no_config,
     get_subtitle_tracks,
     extract_subtitle,
     translate_srt_to_arabic,
@@ -73,6 +88,69 @@ fn shutdown_for_external_installer(app: &tauri::AppHandle) {
 #[tauri::command]
 fn prepare_update_exit(app: tauri::AppHandle) {
     shutdown_for_external_installer(&app);
+}
+
+/// Download an installer from `url` to `%TEMP%\\PitflixUpdates\\<file_name>` via the Rust backend
+/// (avoids the CORS block that GitHub's CDN applies to webview `fetch` calls).
+/// Emits `installer-download-progress` events with `number | null` payload (null = unknown size).
+#[tauri::command]
+async fn download_installer_with_progress(
+    app: tauri::AppHandle,
+    url: String,
+    file_name: String,
+) -> Result<String, String> {
+    use futures_util::StreamExt;
+
+    let safe_name = sanitize_installer_file_name(&file_name);
+    let temp_dir = std::env::temp_dir().join("PitflixUpdates");
+    std::fs::create_dir_all(&temp_dir).map_err(|e| format!("Cannot create update dir: {e}"))?;
+    let dest = temp_dir.join(&safe_name);
+
+    let client = reqwest::Client::builder()
+        .redirect(reqwest::redirect::Policy::limited(10))
+        .user_agent("PitflixApp")
+        .build()
+        .map_err(|e| format!("HTTP client error: {e}"))?;
+
+    let response = client
+        .get(&url)
+        .send()
+        .await
+        .map_err(|e| format!("Request failed: {e}"))?;
+
+    if !response.status().is_success() {
+        return Err(format!("Download failed ({})", response.status()));
+    }
+
+    let total = response.content_length();
+    let mut file = std::fs::File::create(&dest).map_err(|e| format!("Cannot create file: {e}"))?;
+    let mut received: u64 = 0;
+    let mut stream = response.bytes_stream();
+
+    while let Some(chunk) = stream.next().await {
+        let chunk = chunk.map_err(|e| format!("Stream error: {e}"))?;
+        std::io::Write::write_all(&mut file, &chunk).map_err(|e| format!("Write error: {e}"))?;
+        received += chunk.len() as u64;
+        let percent: Option<u32> = total
+            .filter(|&t| t > 0)
+            .map(|t| ((received * 100) / t).min(100) as u32);
+        let _ = app.emit("installer-download-progress", percent);
+    }
+
+    if received == 0 {
+        return Err("Downloaded file is empty.".into());
+    }
+
+    Ok(dest.to_string_lossy().into_owned())
+}
+
+fn sanitize_installer_file_name(name: &str) -> String {
+    let s: String = name
+        .chars()
+        .map(|c| if matches!(c, '/' | '\\' | ':' | '?' | '*' | '"' | '<' | '>' | '|') { '_' } else { c })
+        .collect();
+    let s = s.trim().to_string();
+    if s.is_empty() { "Pitflix-setup.exe".into() } else { s }
 }
 
 /// Launch a downloaded NSIS installer from `%TEMP%\\PitflixUpdates\\` and exit so the installer can replace files.
@@ -133,21 +211,87 @@ fn skip_bundled_api() -> bool {
         .unwrap_or(false)
 }
 
+/// No-op — log file removed per user request. Kept as a stub so call sites compile.
+#[allow(dead_code)]
 fn sidecar_log_path() -> Option<PathBuf> {
-    let Some(base) = std::env::var_os("LOCALAPPDATA") else {
-        return None;
-    };
-    Some(PathBuf::from(base).join("Pitflix").join("sidecar.log"))
+    None
 }
 
-fn log_to_sidecar_file(msg: &str) {
-    let Some(p) = sidecar_log_path() else {
+/// No-op — log file removed per user request. Kept as a stub so call sites compile.
+#[allow(unused_variables)]
+fn log_to_sidecar_file(_msg: &str) {}
+
+/// Tails a plain-text log file and re-prints new lines to this process's stderr
+/// (prefixed with `tag`), so they show up in the `tauri dev` terminal instead of
+/// needing a separate file open in a text editor. Waits (polling) for the first
+/// existing candidate path if none exist yet, starts reading at end-of-file (never
+/// replays history on launch), and handles truncation/rotation by restarting from 0.
+fn spawn_log_tail(tag: &'static str, candidates: Vec<PathBuf>) {
+    std::thread::spawn(move || {
+        let path = loop {
+            if let Some(p) = candidates.iter().find(|p| p.exists()) {
+                break p.clone();
+            }
+            std::thread::sleep(Duration::from_secs(2));
+        };
+
+        eprintln!("[{tag}] tailing {}", path.display());
+
+        let mut last_len: u64 = std::fs::metadata(&path).map(|m| m.len()).unwrap_or(0);
+        loop {
+            std::thread::sleep(Duration::from_millis(400));
+            let Ok(meta) = std::fs::metadata(&path) else { continue };
+            let len = meta.len();
+            if len < last_len {
+                last_len = 0;
+            }
+            if len == last_len {
+                continue;
+            }
+
+            if let Ok(mut file) = std::fs::File::open(&path) {
+                use std::io::{Read, Seek, SeekFrom};
+                if file.seek(SeekFrom::Start(last_len)).is_ok() {
+                    let mut buf = String::new();
+                    if file.read_to_string(&mut buf).is_ok() {
+                        for line in buf.lines() {
+                            if !line.trim().is_empty() {
+                                eprintln!("[{tag}] {line}");
+                            }
+                        }
+                    }
+                }
+            }
+            last_len = len;
+        }
+    });
+}
+
+/// `PitflixPlayer.log` — the WPF companion's own plain-text debug log, written by
+/// `App.Log` (PitflixPlayer/App.xaml.cs). Distinct tag from `[pitflix-player]`
+/// (used by `player2_debug_log` for the React side) to keep the sources apparent.
+/// `skip-debug.log` — Pitflix.API's dedicated, low-noise log for just the
+/// intro/outro skip-detection services (SkipDebugFileLoggerProvider.cs); the main
+/// API console is too drowned in EF Core SQL logging to spot anything in.
+/// Dev-path resolution only — mirrors the candidate search in
+/// `PlayerService.FindCompanionExe` on the .NET side, which also only
+/// special-cases the dev build/Debug-or-Release-output layout.
+fn spawn_dotnet_log_tails() {
+    let Some(exe_dir) = std::env::current_exe().ok().and_then(|p| p.parent().map(|p| p.to_path_buf())) else {
         return;
     };
-    let Ok(mut f) = OpenOptions::new().create(true).append(true).open(&p) else {
-        return;
-    };
-    let _ = writeln!(f, "{msg}");
+    let up4 = exe_dir.join("..").join("..").join("..").join("..");
+
+    spawn_log_tail("pitflixplayer.log", vec![
+        exe_dir.join("PitflixPlayer.log"),
+        up4.join("PitflixPlayer").join("bin").join("Debug").join("net8.0-windows").join("PitflixPlayer.log"),
+        up4.join("PitflixPlayer").join("bin").join("Release").join("net8.0-windows").join("PitflixPlayer.log"),
+    ]);
+
+    spawn_log_tail("skip.log", vec![
+        up4.join("Pitflix.API").join("bin").join("Debug").join("net8.0-windows").join("skip-debug.log"),
+        up4.join("Pitflix.API").join("bin").join("Release").join("net8.0-windows").join("skip-debug.log"),
+    ]);
 }
 
 fn find_sidecar_exe(app: &App) -> Option<PathBuf> {
@@ -237,18 +381,13 @@ fn spawn_api_process(exe: &std::path::Path) -> std::io::Result<Child> {
 
     let workdir = exe.parent().map(PathBuf::from).unwrap_or_else(|| exe.into());
 
-    // Capture stdout/stderr to a file so packaged builds can be debugged.
-    let log_path = sidecar_log_path().unwrap_or_else(|| PathBuf::from("sidecar.log"));
-    let stdout = OpenOptions::new().create(true).append(true).open(&log_path)?;
-    let stderr = OpenOptions::new().create(true).append(true).open(&log_path)?;
-
     Command::new(exe)
         .current_dir(workdir)
-        .env("ASPNETCORE_URLS", "http://127.0.0.1:5001")
+        .env("ASPNETCORE_URLS", "http://127.0.0.1:5280")
         .env("DOTNET_ENVIRONMENT", "Production")
         .stdin(Stdio::null())
-        .stdout(Stdio::from(stdout))
-        .stderr(Stdio::from(stderr))
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
         .creation_flags(CREATE_NO_WINDOW)
         .spawn()
 }
@@ -257,23 +396,19 @@ fn spawn_api_process(exe: &std::path::Path) -> std::io::Result<Child> {
 fn spawn_api_process(exe: &std::path::Path) -> std::io::Result<Child> {
     let workdir = exe.parent().map(PathBuf::from).unwrap_or_else(|| exe.into());
 
-    let log_path = sidecar_log_path().unwrap_or_else(|| PathBuf::from("sidecar.log"));
-    let stdout = OpenOptions::new().create(true).append(true).open(&log_path)?;
-    let stderr = OpenOptions::new().create(true).append(true).open(&log_path)?;
-
     Command::new(exe)
         .current_dir(workdir)
-        .env("ASPNETCORE_URLS", "http://127.0.0.1:5001")
+        .env("ASPNETCORE_URLS", "http://127.0.0.1:5280")
         .env("DOTNET_ENVIRONMENT", "Production")
         .stdin(Stdio::null())
-        .stdout(Stdio::from(stdout))
-        .stderr(Stdio::from(stderr))
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
         .spawn()
 }
 
 fn wait_for_api_port() {
     for _ in 0..80 {
-        if TcpStream::connect("127.0.0.1:5001").is_ok() {
+        if TcpStream::connect("127.0.0.1:5280").is_ok() {
             return;
         }
         std::thread::sleep(Duration::from_millis(250));
@@ -375,7 +510,7 @@ fn device_read_dir(path: String) -> Result<Vec<DeviceFsEntry>, String> {
     Ok(out)
 }
 
-const PITFLIX_BUILD_MARKER: &str = "0.3.6-detached-revert-2";
+const PITFLIX_BUILD_MARKER: &str = "0.4.3";
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -383,6 +518,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             device_read_dir,
             prepare_update_exit,
+            download_installer_with_progress,
             launch_downloaded_installer_and_exit,
             player2_open,
             player2_send,
@@ -401,7 +537,6 @@ pub fn run() {
             player2_open_detached_no_wid,
             player2_set_embedded_safe_mode,
             player2_open_detached,
-            player2_open_embedded_minimal_no_config,
             playback_pol_load_episode_context,
             playback_pol_get_snapshot,
             playback_pol_resume_hints_for_key,
@@ -410,17 +545,37 @@ pub fn run() {
             playback_pol_show_next_countdown,
             playback_pol_tick_next_countdown,
             playback_pol_persist_progress,
+            playback_pol_set_final_position,
             playback_pol_set_extension_thumbnails,
+            playback_pol_set_subtitle_pick,
+            playback_pol_get_subtitle_pick,
             playback_pol_set_extension_skip_intro,
             get_subtitle_tracks,
             extract_subtitle,
             translate_srt_to_arabic,
             generate_arabic_subtitle,
+            player3_open,
+            player2_libmpv_open,
+            player2_libmpv_send,
+            player2_libmpv_set_bounds,
+            player2_libmpv_close,
+            thumb_note_current,
+            thumb_at,
+            thumb_poster,
+            playlist_window_open,
+            playlist_window_close,
+            playlist_window_resync,
+            remote_open,
+            remote_play_pause,
+            remote_seek,
+            remote_close,
         ])
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_fs::init())
         .plugin(tauri_plugin_process::init())
+        .plugin(tauri_plugin_global_shortcut::Builder::new().build())
+        .plugin(tauri_plugin_notification::init())
         .plugin(
             tauri_plugin_autostart::Builder::new()
                 .app_name("Pitflix")
@@ -428,26 +583,20 @@ pub fn run() {
         )
         .setup(|app| {
             cleanup_broken_autostart_registry_entries();
+            spawn_dotnet_log_tails();
             let mut child: Option<Child> = None;
             if skip_bundled_api() {
                 log_to_sidecar_file("Pitflix: PITFLIX_SKIP_BUNDLED_API=true, not starting bundled API.");
             }
-            else if TcpStream::connect("127.0.0.1:5001").is_ok() {
+            else if TcpStream::connect("127.0.0.1:5280").is_ok() {
                 log_to_sidecar_file(
-                    "Pitflix: 127.0.0.1:5001 already in use; skipping bundled sidecar (use that API or stop it).",
+                    "Pitflix: 127.0.0.1:5280 already in use; skipping bundled sidecar (use that API or stop it).",
                 );
             }
             else {
                 log_to_sidecar_file("Pitflix: skip_bundled_api=false, attempting start bundled API.");
                 log_to_sidecar_file("Pitflix: attempting to start bundled API sidecar...");
                 if let Some(exe) = find_sidecar_exe(app) {
-                    log_to_sidecar_file(&format!("Pitflix: will spawn sidecar path: {}", exe.display()));
-                    log_to_sidecar_file(&format!("Pitflix: found sidecar exe: {}", exe.display()));
-                    let log = sidecar_log_path();
-                    if let Some(log_path) = log.as_ref() {
-                        let _ = std::fs::create_dir_all(log_path.parent().unwrap_or(log_path.as_path()));
-                    }
-
                     match spawn_api_process(&exe) {
                         Ok(c) => {
                             log_to_sidecar_file(&format!("Pitflix: sidecar spawned. child started."));
@@ -455,9 +604,9 @@ pub fn run() {
                             let mut c = c;
                             wait_for_api_port();
                             // After wait, verify it actually bound.
-                            let ok = TcpStream::connect("127.0.0.1:5001").is_ok();
+                            let ok = TcpStream::connect("127.0.0.1:5280").is_ok();
                             log_to_sidecar_file(&format!(
-                                "Pitflix: API port readiness (5001): {}",
+                                "Pitflix: API port readiness (5280): {}",
                                 if ok { "OK" } else { "NOT READY" }
                             ));
                             if !ok {
@@ -490,6 +639,12 @@ pub fn run() {
                 pol.set_app_paths(app.handle());
             }
             app.manage(PlayerHostState(Mutex::new(Some(PlayerHost::new(app.handle().clone())))));
+            #[cfg(windows)]
+            app.manage(LibMpvHostState::default());
+            #[cfg(windows)]
+            app.manage(PlaylistWindowState::default());
+            #[cfg(windows)]
+            install_main_window_follower(app.handle());
 
             let exe_path = std::env::current_exe()
                 .map(|p| p.to_string_lossy().to_string())

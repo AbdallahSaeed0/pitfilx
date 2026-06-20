@@ -9,7 +9,47 @@ public sealed class FileAwardsDataProvider : IAwardsDataProvider
 
     public FileAwardsDataProvider(IWebHostEnvironment env)
     {
-        _dataRoot = Path.Combine(env.ContentRootPath, "Data", "Awards");
+        _dataRoot = ResolveDataRoot(env);
+    }
+
+    /// <summary>
+    /// Resolves the <c>Data/Awards</c> directory.
+    /// In dev the content root is the project directory and works directly.
+    /// In a single-file production build the JSON content files are extracted by the
+    /// runtime to <see cref="AppContext.BaseDirectory"/>, which differs from
+    /// <c>env.ContentRootPath</c> (the process working-directory set by Tauri).
+    /// We try both so the provider works in every launch mode.
+    /// </summary>
+    private static string ResolveDataRoot(IWebHostEnvironment env)
+    {
+        var fromContentRoot = Path.Combine(env.ContentRootPath, "Data", "Awards");
+        if (Directory.Exists(fromContentRoot))
+            return fromContentRoot;
+
+        var fromBaseDir = Path.Combine(AppContext.BaseDirectory, "Data", "Awards");
+        if (Directory.Exists(fromBaseDir))
+            return fromBaseDir;
+
+        // Tauri NSIS installer places resources under binaries\ relative to the install dir
+        var fromBaseDirBinaries = Path.Combine(AppContext.BaseDirectory, "binaries", "Data", "Awards");
+        if (Directory.Exists(fromBaseDirBinaries))
+            return fromBaseDirBinaries;
+
+        // Try next to the running exe (handles non-single-file sidecar layouts)
+        var exeDir = Path.GetDirectoryName(Environment.ProcessPath ?? "");
+        if (!string.IsNullOrEmpty(exeDir))
+        {
+            var fromExeDir = Path.Combine(exeDir, "Data", "Awards");
+            if (Directory.Exists(fromExeDir))
+                return fromExeDir;
+
+            var fromExeDirBinaries = Path.Combine(exeDir, "binaries", "Data", "Awards");
+            if (Directory.Exists(fromExeDirBinaries))
+                return fromExeDirBinaries;
+        }
+
+        // Fall back to ContentRootPath even if absent — callers handle missing files gracefully.
+        return fromContentRoot;
     }
 
     public Task<IReadOnlyList<int>> ListYearsAsync(string awardId, CancellationToken ct)

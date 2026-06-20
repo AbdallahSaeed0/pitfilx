@@ -58,6 +58,31 @@ public sealed class RatingsSnapshotRepository
             .ConfigureAwait(false);
     }
 
+    public async Task<RatingsCoverageStats> GetCoverageStatsAsync(CancellationToken cancellationToken = default)
+    {
+        var total = await _db.RatingsSnapshots.AsNoTracking().CountAsync(cancellationToken).ConfigureAwait(false);
+        if (total == 0)
+            return new RatingsCoverageStats(0, 0, 0, 0, 0);
+
+        var withImdb = await _db.RatingsSnapshots.AsNoTracking()
+            .CountAsync(x => x.ImdbRating != null && x.ImdbRating != "", cancellationToken)
+            .ConfigureAwait(false);
+        var withRt = await _db.RatingsSnapshots.AsNoTracking()
+            .CountAsync(x => x.RottenTomatoesCritics != null && x.RottenTomatoesCritics != "" &&
+                             x.RottenTomatoesCritics != "N/A" && x.RottenTomatoesCritics != "N/A%",
+                cancellationToken)
+            .ConfigureAwait(false);
+        var tmdbOnly = await _db.RatingsSnapshots.AsNoTracking()
+            .CountAsync(x => x.SourceMask == RatingsSourceMask.Tmdb, cancellationToken)
+            .ConfigureAwait(false);
+        var missingScore = await _db.RatingsSnapshots.AsNoTracking()
+            .CountAsync(x => (x.ImdbRating == null || x.ImdbRating == "") &&
+                             x.ImdbId != null && x.ImdbId != "", cancellationToken)
+            .ConfigureAwait(false);
+
+        return new RatingsCoverageStats(total, withImdb, withRt, tmdbOnly, missingScore);
+    }
+
     public async Task<IReadOnlyList<(int TmdbId, string MediaType)>> GetStaleSnapshotKeysAsync(DateTime nowUtc,
         int limit, CancellationToken cancellationToken = default)
     {

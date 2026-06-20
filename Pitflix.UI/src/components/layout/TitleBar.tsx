@@ -1,86 +1,61 @@
 import { isTauri } from "@tauri-apps/api/core";
 import { getCurrentWindow } from "@tauri-apps/api/window";
-import { Minus, Square, X } from "lucide-react";
-import { cn } from "../../utils/cn";
+import { Minus, Square, WifiOff, X } from "lucide-react";
+import { useAppPrefsStore } from "../../store/appPrefsStore";
 
 export function TitleBar() {
+  const offlineMode = useAppPrefsStore((s) => s.offlineMode);
+
   if (!isTauri()) {
-    return (
-      <div
-        className={cn(
-          "flex h-9 shrink-0 items-center border-b border-pitflix-card bg-pitflix-surface px-3",
-        )}
-      >
-        <img
-          src="/pitflix_icon_final.svg"
-          alt=""
-          className="h-6 w-6 shrink-0"
-          draggable={false}
-        />
-        <span className="ml-1.5 text-xs font-bold text-pitflix-primary">Pitflix</span>
-        <span className="ml-2 text-[10px] text-pitflix-subtle">(Vite preview)</span>
-      </div>
-    );
+    return offlineMode ? (
+      <span className="fixed left-3 top-2 z-[9999] flex items-center gap-1 rounded-full bg-orange-500/15 px-2 py-0.5 text-[10px] font-semibold text-orange-400">
+        <WifiOff className="h-3 w-3" />
+        OFFLINE
+      </span>
+    ) : null;
   }
 
   const appWindow = getCurrentWindow();
 
   return (
-    <div
-      data-tauri-drag-region
-      className={cn(
-        "flex h-9 shrink-0 select-none items-center justify-between border-b border-pitflix-card",
-        "bg-pitflix-surface px-3",
-      )}
-    >
-      <span
+    <>
+      {/* Transparent drag strip — lets the user drag the window from the top */}
+      <div
         data-tauri-drag-region
-        className="flex items-center text-xs font-bold tracking-tight text-pitflix-primary"
-      >
-        <img
-          src="/pitflix_icon_final.svg"
-          alt=""
-          className="mr-1.5 h-6 w-6 shrink-0"
-          draggable={false}
-        />
-        Pitflix
-      </span>
-      <div data-tauri-drag-region className="h-full min-h-8 min-w-0 flex-1" />
-      <div className="titlebar-no-drag flex gap-0.5">
+        className="fixed left-0 right-28 top-0 z-[9998] h-2"
+        style={{ cursor: "move" }}
+      />
+
+      {/* Floating window controls pill */}
+      <div className="titlebar-no-drag fixed right-3 top-2 z-[9999] flex items-center gap-0.5 rounded-lg border border-white/[0.08] bg-black/40 p-0.5 backdrop-blur-xl">
+        {offlineMode && (
+          <span className="mr-1 flex items-center gap-1 rounded-full bg-orange-500/15 px-2 py-0.5 text-[10px] font-semibold text-orange-400">
+            <WifiOff className="h-3 w-3" />
+            OFFLINE
+          </span>
+        )}
         <button
           type="button"
-          className="titlebar-no-drag flex h-7 w-9 items-center justify-center rounded text-pitflix-muted hover:bg-pitflix-card"
-          onClick={(e) => {
-            e.preventDefault();
-            e.stopPropagation();
-            void appWindow.minimize();
-          }}
+          className="titlebar-no-drag flex h-6 w-8 items-center justify-center rounded text-white/40 transition hover:bg-white/10 hover:text-white/80"
+          onClick={(e) => { e.preventDefault(); e.stopPropagation(); void appWindow.minimize(); }}
         >
-          <Minus className="h-3.5 w-3.5" strokeWidth={2} />
+          <Minus className="h-3 w-3" strokeWidth={2} />
         </button>
         <button
           type="button"
-          className="titlebar-no-drag flex h-7 w-9 items-center justify-center rounded text-pitflix-muted hover:bg-pitflix-card"
-          onClick={(e) => {
-            e.preventDefault();
-            e.stopPropagation();
-            void appWindow.toggleMaximize();
-          }}
+          className="titlebar-no-drag flex h-6 w-8 items-center justify-center rounded text-white/40 transition hover:bg-white/10 hover:text-white/80"
+          onClick={(e) => { e.preventDefault(); e.stopPropagation(); void appWindow.toggleMaximize(); }}
         >
-          <Square className="h-3 w-3" strokeWidth={2} />
+          <Square className="h-2.5 w-2.5" strokeWidth={2} />
         </button>
         <button
           type="button"
-          className="titlebar-no-drag flex h-7 w-9 items-center justify-center rounded text-pitflix-muted hover:bg-red-600 hover:text-white"
-          onClick={(e) => {
-            e.preventDefault();
-            e.stopPropagation();
-            void appWindow.close();
-          }}
+          className="titlebar-no-drag flex h-6 w-8 items-center justify-center rounded text-white/40 transition hover:bg-red-600 hover:text-white"
+          onClick={(e) => { e.preventDefault(); e.stopPropagation(); void appWindow.close(); }}
         >
-          <X className="h-3.5 w-3.5" strokeWidth={2} />
+          <X className="h-3 w-3" strokeWidth={2} />
         </button>
       </div>
-    </div>
+    </>
   );
 }

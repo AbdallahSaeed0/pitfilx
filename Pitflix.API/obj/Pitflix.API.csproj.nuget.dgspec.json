@@ -5,7 +5,7 @@
   },
   "projects": {
     "F:\\PitFilx-app\\Pitflix.API\\Pitflix.API.csproj": {
-      "version": "0.3.8",
+      "version": "0.4.6",
       "restore": {
         "projectUniqueName": "F:\\PitFilx-app\\Pitflix.API\\Pitflix.API.csproj",
         "projectName": "Pitflix.API",
@@ -50,6 +50,10 @@
         "net8.0-windows7.0": {
           "targetAlias": "net8.0-windows",
           "dependencies": {
+            "LibMpv.Client": {
+              "target": "Package",
+              "version": "[1.0.0, )"
+            },
             "Microsoft.EntityFrameworkCore.Design": {
               "include": "Runtime, Build, Native, ContentFiles, Analyzers, BuildTransitive",
               "suppressParent": "All",
@@ -110,7 +114,7 @@
       }
     },
     "F:\\PitFilx-app\\Pitflix.Core\\Pitflix.Core.csproj": {
-      "version": "0.3.8",
+      "version": "0.4.6",
       "restore": {
         "projectUniqueName": "F:\\PitFilx-app\\Pitflix.Core\\Pitflix.Core.csproj",
         "projectName": "Pitflix.Core",

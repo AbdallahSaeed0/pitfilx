@@ -1,20 +1,23 @@
 //! Path B player host: Pitflix-owned window + stable command/event boundary.
 
 pub mod commands;
-#[cfg(windows)]
-pub mod d3d11;
 pub mod events;
 pub mod playback_orchestrator;
-pub mod libmpv;
-#[cfg(windows)]
-pub mod mpv_gl_win;
-#[cfg(windows)]
-pub mod windows_libmpv_host;
+
 pub mod tauri_commands;
 pub mod subtitle_generator;
 
 #[cfg(windows)]
 pub mod windows_host;
+
+#[cfg(windows)]
+pub mod libmpv;
+#[cfg(windows)]
+pub mod libmpv_session;
+#[cfg(windows)]
+pub mod thumbs;
+#[cfg(windows)]
+pub mod playlist_window;
 
 use std::sync::Mutex;
 
@@ -116,6 +119,7 @@ impl PlayerHost {
     {
       Player2NativeState {
         session_active: false,
+        ipc_dead: false,
         backend: "none".to_string(),
         session_id: None,
         video_hwnd: None,
@@ -220,17 +224,6 @@ impl PlayerHost {
     }
   }
 
-  pub fn open_embedded_minimal_no_config(&self, payload: PlayerOpen) -> Result<(), String> {
-    #[cfg(windows)]
-    {
-      return self.windows.open_embedded_minimal_no_config(payload);
-    }
-    #[cfg(not(windows))]
-    {
-      let _ = payload;
-      Err("Player Path B not implemented on this platform yet.".to_string())
-    }
-  }
 
   pub fn set_embedded_safe_mode(&self, enabled: bool) {
     #[cfg(windows)]

@@ -6,7 +6,7 @@
   "compilationOptions": {},
   "targets": {
     ".NETCoreApp,Version=v8.0": {
-      "Pitflix.Core/0.3.8": {
+      "Pitflix.Core/0.4.6": {
         "dependencies": {
           "Microsoft.EntityFrameworkCore.Design": "8.0.11",
           "Microsoft.EntityFrameworkCore.Sqlite": "8.0.11",
@@ -663,7 +663,7 @@
     }
   },
   "libraries": {
-    "Pitflix.Core/0.3.8": {
+    "Pitflix.Core/0.4.6": {
       "type": "project",
       "serviceable": false,
       "sha512": ""

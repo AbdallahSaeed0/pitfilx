@@ -1,10 +1,11 @@
-import { useQuery } from "@tanstack/react-query";
-import { CirclePlay, Search } from "lucide-react";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { CirclePlay, RefreshCw, Search, Settings } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 import {
   browseTrailers,
   getLatestTrailers,
+  runTrailerIngestion,
   type TrailerBrowseFilter,
   type TrailerCard,
 } from "../api/homeDiscover";
@@ -19,7 +20,7 @@ type PageMode = "latest" | "trending" | "upcoming";
 const defaultMode: PageMode = "latest";
 
 const modes: { id: PageMode; label: string }[] = [
-  { id: "latest", label: "Latest" },
+  { id: "latest", label: "Coming Soon" },
   { id: "trending", label: "Trending" },
   { id: "upcoming", label: "Upcoming" },
 ];
@@ -80,7 +81,10 @@ export function TrailersPage() {
   const [searchParams, setSearchParams] = useSearchParams();
   const mode = useMemo(() => modeFromParams(searchParams.get("mode")), [searchParams]);
   const [currentPage, setCurrentPage] = useState(1);
-  const itemsPerPage = 20;
+  const itemsPerPage = 30;
+  const qc = useQueryClient();
+  const [refreshing, setRefreshing] = useState(false);
+  const [refreshMsg, setRefreshMsg] = useState<string | null>(null);
 
   useEffect(() => {
     if (searchParams.get("mode")) return;
@@ -111,11 +115,26 @@ export function TrailersPage() {
     setSearchParams(p, { replace: true });
   };
 
+  const handleRefresh = async () => {
+    setRefreshing(true);
+    setRefreshMsg(null);
+    try {
+      const result = await runTrailerIngestion();
+      setRefreshMsg(result.message ?? "Trailers refreshed.");
+      void qc.invalidateQueries({ queryKey: ["trailers"] });
+    } catch {
+      setRefreshMsg("Refresh failed — check API connection.");
+    } finally {
+      setRefreshing(false);
+    }
+  };
+
   const latestQ = useQuery({
     queryKey: ["trailers", "latest-persisted"],
     queryFn: getLatestTrailers,
     staleTime: 5 * 60_000,
     gcTime: 30 * 60_000,
+    refetchInterval: 10 * 60_000,
     enabled: mode === "latest",
   });
 
@@ -166,10 +185,24 @@ export function TrailersPage() {
           <CirclePlay className="h-7 w-7 shrink-0 text-pitflix-primary md:h-8 md:w-8" />
           Trailers
         </h1>
-        <Link to="/" className="text-sm text-pitflix-primary hover:underline">
-          ← Home
-        </Link>
+        <div className="flex items-center gap-3">
+          <button
+            type="button"
+            disabled={refreshing}
+            onClick={() => void handleRefresh()}
+            className="inline-flex items-center gap-1.5 rounded-lg border border-pitflix-card bg-pitflix-surface px-3 py-1.5 text-xs font-semibold text-white hover:border-pitflix-primary/50 disabled:opacity-50"
+          >
+            <RefreshCw className={`h-3.5 w-3.5 ${refreshing ? "animate-spin" : ""}`} />
+            {refreshing ? "Refreshing…" : "Refresh trailers"}
+          </button>
+          <Link to="/" className="text-sm text-pitflix-primary hover:underline">
+            ← Home
+          </Link>
+        </div>
       </div>
+      {refreshMsg && (
+        <p className="text-xs text-pitflix-muted">{refreshMsg}</p>
+      )}
 
       <div className="flex flex-wrap gap-2 rounded-xl border border-pitflix-card/50 bg-pitflix-surface/40 p-3">
         {modes.map((m) => (
@@ -213,7 +246,7 @@ export function TrailersPage() {
           onChange={(e) => setSearchDraft(e.target.value)}
           placeholder={
             mode === "latest"
-              ? "Search this feed by title…"
+              ? "Search coming soon titles…"
               : "Search TMDB (trending / upcoming) — min 2 characters…"
           }
           className="w-full rounded-xl border border-pitflix-card bg-pitflix-surface/50 py-2.5 pl-10 pr-3 text-sm text-white placeholder:text-pitflix-muted focus:border-pitflix-primary focus:outline-none focus:ring-1 focus:ring-pitflix-primary/40"
@@ -232,7 +265,22 @@ export function TrailersPage() {
         <p className="text-sm text-rose-200/90">Could not load trailers. Is the API running?</p>
       ) : null}
 
-      {!initialLoading && !error && list.length === 0 ? (
+      {!initialLoading && !error && list.length === 0 && mode === "latest" && !debouncedSearch && filter === "all" ? (
+        <div className="flex flex-col items-center gap-4 py-16 text-center">
+          <p className="text-4xl">🎬</p>
+          <p className="text-lg font-semibold text-white">No upcoming trailers yet</p>
+          <p className="max-w-sm text-sm text-pitflix-subtle">
+            Add your TMDB API key in Settings, then click "Refresh trailers" to fetch trailers for upcoming releases.
+          </p>
+          <Link
+            to="/settings"
+            className="mt-2 inline-flex items-center gap-2 rounded-lg bg-pitflix-primary px-5 py-2.5 text-sm font-semibold text-white hover:bg-pitflix-light"
+          >
+            <Settings className="h-4 w-4" />
+            Open Settings
+          </Link>
+        </div>
+      ) : !initialLoading && !error && list.length === 0 ? (
         <p className="text-sm text-pitflix-subtle">No trailers matched this filter right now.</p>
       ) : null}
 
@@ -254,6 +302,12 @@ export function TrailersPage() {
                     <div className="absolute inset-0 flex items-center justify-center bg-black/30 opacity-90 transition-opacity group-hover:bg-black/45">
                       <CirclePlay className="h-10 w-10 text-white drop-shadow-md" />
                     </div>
+                    {/* Release date badge — shows when the movie/show is coming out */}
+                    {mode === "latest" && t.releaseDate ? (
+                      <span className="absolute left-1.5 top-1.5 rounded bg-pitflix-primary/90 px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wide text-white">
+                        {new Date(t.releaseDate).toLocaleDateString(undefined, { month: "short", year: "numeric" })}
+                      </span>
+                    ) : null}
                   </div>
                   <div className="space-y-0.5 p-2">
                     <p className="line-clamp-2 text-xs font-semibold text-white">{t.title}</p>

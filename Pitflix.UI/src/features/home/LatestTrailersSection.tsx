@@ -4,6 +4,7 @@ import { useState } from "react";
 import { Link } from "react-router-dom";
 import { getLatestTrailers, type TrailerCard } from "../../api/homeDiscover";
 import { TrailerModal } from "../../components/trailers/TrailerModal";
+import { HorizontalScrollRow } from "../../components/ui/HorizontalScrollRow";
 import { MediaImage } from "../../components/ui/MediaImage";
 import { Spinner } from "../../components/ui/Spinner";
 
@@ -14,11 +15,11 @@ export function LatestTrailersSection({ embedded = false }: LatestTrailersProps)
   const q = useQuery({
     queryKey: ["home-trailers", "persisted-v1"],
     queryFn: getLatestTrailers,
-    staleTime: 180_000,
-    gcTime: 30 * 60_000,
+    staleTime: 30 * 60_000,   // trailers list is stable; show cached data for 30 min
+    gcTime: 2 * 60 * 60_000,  // keep in memory for 2 hours
+    refetchInterval: 30 * 60_000, // background poll every 30 min
+    refetchOnMount: false,     // never block on mount if data is already in cache
   });
-
-  const refreshing = q.isFetching && !q.isPending;
 
   if (q.isPending)
     return (
@@ -68,11 +69,6 @@ export function LatestTrailersSection({ embedded = false }: LatestTrailersProps)
         <div className="mb-4 flex flex-wrap items-center gap-2">
           <Play className="h-5 w-5 shrink-0 text-pitflix-primary" />
           <h2 className="text-lg font-bold text-white">Latest trailers</h2>
-          {refreshing ? (
-            <span className="inline-flex items-center gap-1 text-[11px] text-pitflix-muted">
-              <Spinner className="h-3.5 w-3.5" /> Updating…
-            </span>
-          ) : null}
           <span className="text-xs text-pitflix-subtle">Official-channel ingest, newest YouTube publish first</span>
           <Link
             to="/trailers?mode=latest"
@@ -83,7 +79,7 @@ export function LatestTrailersSection({ embedded = false }: LatestTrailersProps)
           </Link>
         </div>
       )}
-      <div className="flex gap-3 overflow-x-auto pb-2">
+      <HorizontalScrollRow hideHeader className="mb-0" contentClassName="gap-3 pb-2">
         {list.map((t) => {
           // Trailer row should look like trailer media, not wallpaper.
           const youtubeThumb = `https://img.youtube.com/vi/${t.youtubeKey}/hqdefault.jpg`;
@@ -116,7 +112,7 @@ export function LatestTrailersSection({ embedded = false }: LatestTrailersProps)
             </button>
           );
         })}
-      </div>
+      </HorizontalScrollRow>
       <TrailerModal open={!!active} onClose={() => setActive(null)} trailer={active} />
     </div>
   );

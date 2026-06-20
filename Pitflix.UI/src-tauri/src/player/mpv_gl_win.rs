@@ -470,9 +470,12 @@ impl MpvGlRenderer {
       session_id,
     });
     let update_ctx_ptr = Box::into_raw(update_ctx);
-    unsafe {
-      (api.mpv_render_context_set_update_callback)(render, Some(mpv_on_update), update_ctx_ptr as *mut c_void);
-    }
+    // Do NOT set the update callback here. It must be armed only AFTER mpv_initialize()
+    // returns. If the callback is live during mpv_initialize(), COM audio init pumps the
+    // Win32 message queue, dispatching the already-queued WM_MPV_RENDER back into
+    // on_wm_mpv_render → mpv_render_context_render while mpv_initialize() is still on the
+    // call stack → undefined behaviour → STATUS_STACK_BUFFER_OVERRUN.
+    // Call arm_update_callback() after mpv_initialize() to enable rendering.
 
     Ok(Self {
       api,
@@ -482,6 +485,20 @@ impl MpvGlRenderer {
       session_id,
       update_ctx: update_ctx_ptr,
     })
+  }
+
+  /// Arm the mpv render-update callback. **Must** be called after `mpv_initialize()` to
+  /// prevent re-entrant `WM_MPV_RENDER` dispatch inside `mpv_initialize()` (see `new()`).
+  ///
+  /// # Safety
+  /// Caller must ensure `mpv_initialize()` has already completed successfully.
+  pub unsafe fn arm_update_callback(&self) {
+    (self.api.mpv_render_context_set_update_callback)(
+      self.render,
+      Some(mpv_on_update),
+      self.update_ctx as *mut c_void,
+    );
+    libmpv_render_diag_log("[libmpv-render-path] arm_update_callback: update callback registered (after mpv_initialize)");
   }
 
   #[inline]

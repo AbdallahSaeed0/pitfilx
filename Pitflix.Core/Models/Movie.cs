@@ -31,6 +31,12 @@ public class Movie
     /// <summary>Timestamp of last successful metadata refresh from TMDB (used to skip re-downloading already prefetched items).</summary>
     public DateTime? MetadataRefreshedAt { get; set; }
 
+    /// <summary>JSON array of {id,name} keyword objects from TMDB (populated lazily on first detail page visit).</summary>
+    public string? KeywordsJson { get; set; }
+
+    /// <summary>US content/age rating from TMDB (e.g. "PG-13", "R"). Populated lazily on first detail page visit.</summary>
+    public string? ContentRating { get; set; }
+
     /// <summary>API-only JSON: TMDB poster when cache paths are empty.</summary>
     [NotMapped]
     public string? PosterRemoteUrl { get; set; }

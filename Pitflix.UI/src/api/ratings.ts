@@ -120,6 +120,31 @@ export type QueueLibraryRatingsResult = {
   cap: number;
 };
 
+export type RatingsQueueStatus = {
+  ok: boolean;
+  active: boolean;
+  queueDepth: number;
+  isProcessing: boolean;
+  processedTotal: number;
+  lastProcessedUtc: string | null;
+  lastError: string | null;
+  coverage: {
+    total: number;
+    withImdb: number;
+    withRottenTomatoes: number;
+    tmdbOnly: number;
+    hasImdbIdButNoImdbScore: number;
+  };
+};
+
+export const getRatingsQueueStatus = async (): Promise<RatingsQueueStatus | null> => {
+  const res = await api.get<RatingsQueueStatus>("/ratings/queue/status", {
+    validateStatus: (s) => s === 200 || s === 404,
+  });
+  if (res.status === 404) return null;
+  return res.data;
+};
+
 /** Queues enrichment for matched library titles (split movies / TV, capped). Same optional auth as re-enrich. */
 export const queueRatingsLibraryBackfill = (opts?: { limit?: number; maintenanceKey?: string }) =>
   api

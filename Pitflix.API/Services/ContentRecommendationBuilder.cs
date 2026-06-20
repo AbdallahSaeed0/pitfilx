@@ -27,7 +27,7 @@ public static class ContentRecommendationBuilder
 
         var genreIds = await tmdb.GetGenreIdsAsync(seedTmdbId, isMovieSeed ? "Movie" : "Series", ct)
             .ConfigureAwait(false);
-        var keywordIds = await tmdb.GetKeywordIdsAsync(seedTmdbId, isMovieSeed ? "Movie" : "Series", ct, 8)
+        var keywordIds = await tmdb.GetKeywordIdsAsync(seedTmdbId, isMovieSeed ? "Movie" : "Series", ct, 12)
             .ConfigureAwait(false);
         var seedGenres = genreIds.ToHashSet();
         var seedHasAnimation = seedGenres.Contains(AnimationGenreId);
@@ -78,13 +78,19 @@ public static class ContentRecommendationBuilder
             }
         }
 
-        // 1) TMDB “because you watched X” — usually the best similarity.
+        // 1) TMDB “because you watched X” (recommendations) + /similar — both are directly content-tied.
         if (wantMovie && isMovieSeed)
         {
             for (var p = 1; p <= 3; p++)
             {
                 var rec = await tmdb.GetMovieApiRecommendationsAsync(seedTmdbId, p, ct).ConfigureAwait(false);
                 foreach (var x in rec)
+                    TryAdd(x, 0);
+            }
+            for (var p = 1; p <= 2; p++)
+            {
+                var sim = await tmdb.GetMovieSimilarAsync(seedTmdbId, p, ct).ConfigureAwait(false);
+                foreach (var x in sim)
                     TryAdd(x, 0);
             }
         }
@@ -95,6 +101,12 @@ public static class ContentRecommendationBuilder
             {
                 var rec = await tmdb.GetTvApiRecommendationsAsync(seedTmdbId, p, ct).ConfigureAwait(false);
                 foreach (var x in rec)
+                    TryAdd(x, 0);
+            }
+            for (var p = 1; p <= 2; p++)
+            {
+                var sim = await tmdb.GetTvSimilarAsync(seedTmdbId, p, ct).ConfigureAwait(false);
+                foreach (var x in sim)
                     TryAdd(x, 0);
             }
         }
@@ -160,11 +172,21 @@ public static class ContentRecommendationBuilder
                 var x = p.Item;
                 var overlapNum = GenreOverlap(x);
                 var tier = p.Tier;
-                // Score: prioritize tier, then shared genres, then votes.
-                var score = tier * -1_000_000
-                            + overlapNum * 10_000
-                            + x.VoteAverage * 100
-                            + Math.Min(x.VoteCount, 50_000) / 1000.0;
+
+                // Score formula (higher = better rank):
+                //   1. Tier (TMDB recs > keyword discover > genre discover) — hard separation
+                //   2. Rating  — primary quality signal within a tier
+                //   3. Vote count (log-scaled) — credibility / avoids obscure low-count spikes
+                //   4. Genre overlap — content similarity
+                //   5. Recency bonus — prefer newer titles when all else is equal
+                var releaseYear = x.ReleaseDate.Length >= 4 &&
+                                  int.TryParse(x.ReleaseDate[..4], out var yr) ? yr : 1990;
+                var logVotes  = x.VoteCount > 0 ? Math.Log10(x.VoteCount) : 0;
+                var score = tier           * -10_000_000.0
+                            + x.VoteAverage * 1_000_000.0  // 0-10 → 0-10M
+                            + logVotes      *   100_000.0  // log10(50 000)≈4.7 → ~470K
+                            + overlapNum    *    80_000.0  // 3 shared genres → 240K (up from 20K for stronger content relevance)
+                            + releaseYear   *        10.0; // 2025 → 20 250, recency tie-break
                 return (x, score);
             })
             .OrderByDescending(s => s.score)
@@ -194,7 +216,7 @@ public static class ContentRecommendationBuilder
                 voteAverage = x.VoteAverage,
                 voteCount = x.VoteCount
             });
-            if (dtos.Count >= 24)
+            if (dtos.Count >= 48)
                 break;
         }
 

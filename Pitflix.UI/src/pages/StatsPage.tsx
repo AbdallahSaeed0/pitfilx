@@ -1,6 +1,7 @@
 import { useQuery } from "@tanstack/react-query";
 import { useNavigate } from "react-router-dom";
 import { getWatchStats } from "../api/watchStats";
+import { HorizontalScrollRow } from "../components/ui/HorizontalScrollRow";
 import { MediaImage } from "../components/ui/MediaImage";
 import { Spinner } from "../components/ui/Spinner";
 import type { MediaCard } from "../types/media";
@@ -233,7 +234,7 @@ export function StatsPage() {
           {(data.recentlyCompleted ?? []).length === 0 ? (
             <p className="text-sm text-pitflix-muted">Nothing finished recently — keep watching!</p>
           ) : (
-            <div className="scrollbar-hide flex gap-3 overflow-x-auto pb-2">
+            <HorizontalScrollRow hideHeader className="mb-0" contentClassName="gap-3 pb-2">
               {(data.recentlyCompleted ?? []).map((item: MediaCard) => (
                 <div key={`${item.id}-stat`} className="w-24 shrink-0">
                   <button
@@ -253,7 +254,7 @@ export function StatsPage() {
                   </button>
                 </div>
               ))}
-            </div>
+            </HorizontalScrollRow>
           )}
         </div>
       </div>

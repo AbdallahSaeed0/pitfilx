@@ -13,17 +13,20 @@ public sealed class RatingsAggregationService
     private readonly IMemoryCache _cache;
     private readonly OmdbRatingClient _omdb;
     private readonly PhpImdbGrabberClient _phpImdb;
+    private readonly MdbListService _mdbList;
     private readonly ILogger<RatingsAggregationService> _log;
 
     public RatingsAggregationService(
         IMemoryCache cache,
         OmdbRatingClient omdb,
         PhpImdbGrabberClient phpImdb,
+        MdbListService mdbList,
         ILogger<RatingsAggregationService> log)
     {
         _cache = cache;
         _omdb = omdb;
         _phpImdb = phpImdb;
+        _mdbList = mdbList;
         _log = log;
     }
 
@@ -230,41 +233,60 @@ public sealed class RatingsAggregationService
         return null;
     }
 
-    /// <summary>OMDb per-episode IMDb score (when API key is set). Cached independently from <see cref="TryEpisodeRatingAsync"/>.</summary>
+    /// <summary>Per-episode IMDb score. Tries OMDb first (if configured), then MDBList.</summary>
     public async Task<double?> TryGetEpisodeImdbRatingAsync(int tvTmdbId, int season, int episodeNumber,
         CancellationToken ct)
     {
-        if (!_omdb.IsConfigured || tvTmdbId <= 0 || season < 0 || episodeNumber <= 0)
-            return null;
+        if (tvTmdbId <= 0 || season < 0 || episodeNumber <= 0) return null;
 
         var key = $"ratings:imdbep:{tvTmdbId}:{season}:{episodeNumber}";
         if (_cache.TryGetValue(key, out double cachedHit))
             return cachedHit;
 
         var tmdb = TmdbClientFactory.Create();
-        if (tmdb == null)
-            return null;
+        if (tmdb == null) return null;
 
+        // Need the show's IMDb ID for both OMDb and MDBList
+        string? seriesImdb = null;
+        try { seriesImdb = await tmdb.TryGetImdbIdAsync(tvTmdbId, "Series", ct).ConfigureAwait(false); }
+        catch { /* non-fatal */ }
+
+        if (string.IsNullOrEmpty(seriesImdb)) return null;
+
+        // 1. OMDb (if configured)
+        if (_omdb.IsConfigured)
+        {
+            try
+            {
+                var o = await _omdb.TryGetEpisodeBySeriesImdbIdAsync(seriesImdb, season, episodeNumber, ct)
+                    .ConfigureAwait(false);
+                if (o != null &&
+                    double.TryParse(o.ImdbRatingOutOf10, System.Globalization.NumberStyles.Float,
+                        System.Globalization.CultureInfo.InvariantCulture, out var imdbEp))
+                {
+                    _cache.Set(key, imdbEp, new MemoryCacheEntryOptions { AbsoluteExpirationRelativeToNow = TimeSpan.FromHours(12) });
+                    return imdbEp;
+                }
+            }
+            catch (Exception ex)
+            {
+                _log.LogDebug(ex, "Ratings: OMDb episode IMDb rating failed for TV {Id} S{Season}E{Ep}", tvTmdbId, season, episodeNumber);
+            }
+        }
+
+        // 2. MDBList fallback
         try
         {
-            var seriesImdb = await tmdb.TryGetImdbIdAsync(tvTmdbId, "Series", ct).ConfigureAwait(false);
-            if (string.IsNullOrEmpty(seriesImdb))
-                return null;
-
-            var o = await _omdb.TryGetEpisodeBySeriesImdbIdAsync(seriesImdb, season, episodeNumber, ct)
-                .ConfigureAwait(false);
-            if (o != null &&
-                double.TryParse(o.ImdbRatingOutOf10, System.Globalization.NumberStyles.Float,
-                    System.Globalization.CultureInfo.InvariantCulture, out var imdbEp))
+            var mdbRating = await _mdbList.GetEpisodeRatingAsync(seriesImdb, season, episodeNumber, ct).ConfigureAwait(false);
+            if (mdbRating is > 0)
             {
-                _cache.Set(key, imdbEp, new MemoryCacheEntryOptions { AbsoluteExpirationRelativeToNow = TimeSpan.FromHours(12) });
-                return imdbEp;
+                _cache.Set(key, mdbRating.Value, new MemoryCacheEntryOptions { AbsoluteExpirationRelativeToNow = TimeSpan.FromHours(12) });
+                return mdbRating.Value;
             }
         }
         catch (Exception ex)
         {
-            _log.LogDebug(ex, "Ratings: OMDb episode IMDb rating failed for TV {Id} S{Season}E{Ep}", tvTmdbId,
-                season, episodeNumber);
+            _log.LogDebug(ex, "Ratings: MDBList episode IMDb rating failed for TV {Id} S{Season}E{Ep}", tvTmdbId, season, episodeNumber);
         }
 
         return null;

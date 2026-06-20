@@ -1,0 +1,51 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <UseWPF>true</UseWPF>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <AssemblyName>PitflixPlayer</AssemblyName>
+    <RootNamespace>PitflixPlayer</RootNamespace>
+    <AllowUnsafeBlocks>false</AllowUnsafeBlocks>
+    <!-- Sets both the .exe file icon (Explorer) and the taskbar thumbnail icon -->
+    <ApplicationIcon>PitflixPlayer.ico</ApplicationIcon>
+
+    <!-- ── Cold-start optimizations ──────────────────────────────────────
+         PublishReadyToRun: precompile IL → native code at publish time so
+         the WPF runtime + our own code skip the JIT warm-up cost on first
+         hit.  Roughly halves the time from PitflixPlayer.exe launching to
+         the first frame visible (.NET cold start is the single largest
+         component of the user's "open takes too long" complaint).
+
+         TieredCompilation + TieredPGO: dynamic profile-guided optimization
+         at runtime.  After the first few seconds of any given session, hot
+         methods get re-jitted with PGO data → smoother UI thread under
+         load (animations, slider drag, hover ticks).  Default-on in .NET
+         8 publish, but we make it explicit so dev/build configs also get
+         the benefit.
+
+         InvariantGlobalization: drops ~10 MB of culture data the player
+         doesn't need (we don't localize) → smaller working set, faster
+         startup.
+
+         ServerGarbageCollection=false: this is a WPF UI app, not a server.
+         The default workstation GC has lower latency for UI workloads
+         (no STW pauses long enough to drop frames during pause-icon flip
+         / hover / drag).  Stated explicitly so config drift doesn't flip
+         it accidentally.
+    -->
+    <PublishReadyToRun>true</PublishReadyToRun>
+    <PublishReadyToRunComposite>true</PublishReadyToRunComposite>
+    <TieredCompilation>true</TieredCompilation>
+    <TieredPGO>true</TieredPGO>
+    <InvariantGlobalization>true</InvariantGlobalization>
+    <ServerGarbageCollection>false</ServerGarbageCollection>
+    <ConcurrentGarbageCollection>true</ConcurrentGarbageCollection>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- Embed the icon as a WPF resource so Window.Icon can reference it -->
+    <Resource Include="PitflixPlayer.ico"/>
+  </ItemGroup>
+</Project>

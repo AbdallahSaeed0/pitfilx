@@ -364,9 +364,97 @@ public sealed class AwardsService
         };
     }
 
+    /// <summary>
+    /// Resolves the <c>Data/Awards</c> directory in the same multi-candidate way as
+    /// <see cref="FileAwardsDataProvider"/> so catalog.json is found in both dev and
+    /// single-file production builds.
+    /// </summary>
+    private string ResolveAwardsDataRoot()
+    {
+        var fromContentRoot = Path.Combine(_env.ContentRootPath, "Data", "Awards");
+        if (Directory.Exists(fromContentRoot))
+            return fromContentRoot;
+
+        var fromBaseDir = Path.Combine(AppContext.BaseDirectory, "Data", "Awards");
+        if (Directory.Exists(fromBaseDir))
+            return fromBaseDir;
+
+        // Tauri NSIS installer places resources under binaries\ relative to the install dir
+        var fromBaseDirBinaries = Path.Combine(AppContext.BaseDirectory, "binaries", "Data", "Awards");
+        if (Directory.Exists(fromBaseDirBinaries))
+            return fromBaseDirBinaries;
+
+        var exeDir = Path.GetDirectoryName(Environment.ProcessPath ?? "");
+        if (!string.IsNullOrEmpty(exeDir))
+        {
+            var fromExeDir = Path.Combine(exeDir, "Data", "Awards");
+            if (Directory.Exists(fromExeDir))
+                return fromExeDir;
+
+            var fromExeDirBinaries = Path.Combine(exeDir, "binaries", "Data", "Awards");
+            if (Directory.Exists(fromExeDirBinaries))
+                return fromExeDirBinaries;
+        }
+
+        return fromContentRoot;
+    }
+
+    public sealed record TitleNominationResult(
+        string AwardId, string AwardName, int Year, string CategoryId, string CategoryName, bool Winner);
+
+    /// <summary>
+    /// Scans the curated JSON files for nominations matching a given TMDB ID.
+    /// Works without cache preload — uses the tmdbId fields that are embedded in the JSON data.
+    /// </summary>
+    public async Task<IReadOnlyList<TitleNominationResult>> FindNominationsByTmdbIdAsync(int tmdbId, CancellationToken ct)
+    {
+        var catalog = await GetCatalogAsync(ct).ConfigureAwait(false);
+        var dataRoot = ResolveAwardsDataRoot();
+        var editionsRoot = Path.Combine(dataRoot, "editions");
+        if (!Directory.Exists(editionsRoot)) return Array.Empty<TitleNominationResult>();
+
+        var results = new List<TitleNominationResult>();
+        var jsonOpts = new JsonSerializerOptions { PropertyNameCaseInsensitive = true };
+        var nameMap = catalog.ToDictionary(x => x.Id, x => x.Name, StringComparer.OrdinalIgnoreCase);
+
+        static string FmtName(string id) =>
+            System.Globalization.CultureInfo.InvariantCulture.TextInfo
+                .ToTitleCase(id.Replace('-', ' ').Replace('_', ' '));
+
+        foreach (var awardDir in Directory.EnumerateDirectories(editionsRoot))
+        {
+            var awardId = Path.GetFileName(awardDir);
+            var awardName = nameMap.TryGetValue(awardId, out var n) ? n : FmtName(awardId);
+            foreach (var file in Directory.EnumerateFiles(awardDir, "*.json"))
+            {
+                if (!int.TryParse(Path.GetFileNameWithoutExtension(file), out var year)) continue;
+                ct.ThrowIfCancellationRequested();
+                try
+                {
+                    await using var fs = File.OpenRead(file);
+                    var edition = await JsonSerializer.DeserializeAsync<AwardEditionFileDto>(fs, jsonOpts, ct)
+                        .ConfigureAwait(false);
+                    if (edition?.Categories == null) continue;
+                    foreach (var cat in edition.Categories)
+                    {
+                        foreach (var nom in cat.Nominees)
+                        {
+                            if (nom.TmdbId == tmdbId)
+                                results.Add(new TitleNominationResult(awardId, awardName, year, cat.Id, cat.Name, nom.Winner));
+                        }
+                    }
+                }
+                catch { /* skip unreadable file */ }
+            }
+        }
+
+        results.Sort((a, b) => b.Year != a.Year ? b.Year.CompareTo(a.Year) : string.Compare(a.AwardId, b.AwardId, StringComparison.Ordinal));
+        return results;
+    }
+
     public async Task<IReadOnlyList<AwardCatalogEntryDto>> GetCatalogAsync(CancellationToken ct)
     {
-        var path = Path.Combine(_env.ContentRootPath, "Data", "Awards", "catalog.json");
+        var path = Path.Combine(ResolveAwardsDataRoot(), "catalog.json");
         if (!File.Exists(path))
             return Array.Empty<AwardCatalogEntryDto>();
 

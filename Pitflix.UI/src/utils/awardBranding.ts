@@ -1,25 +1,20 @@
-import oscars from "../assets/awards/oscars.png";
-import emmys from "../assets/awards/emmys.png";
-import bafta from "../assets/awards/bafta.png";
-import goldenGlobes from "../assets/awards/golden_globes.png";
-
-/** Local ceremony logos (Vite-bundled from <code>src/assets/awards/</code>). SVG fallbacks stay in <code>public/awards/branding/</code>. */
+/** New user-supplied images in /assets/awards/, existing fallbacks in /awards/branding/ */
 const BRANDING: Record<string, { primary: string; fallback?: string }> = {
   "academy-awards": {
-    primary: oscars,
-    fallback: "/awards/branding/academy-awards.svg",
+    primary: "/assets/awards/oscars.jpg",
+    fallback: "/awards/branding/oscars.png",
   },
   "primetime-emmys": {
-    primary: emmys,
-    fallback: "/awards/branding/primetime-emmys.svg",
+    primary: "/assets/awards/emmys.png",
+    fallback: "/awards/branding/emmys.png",
   },
   bafta: {
-    primary: bafta,
-    fallback: "/awards/branding/bafta.svg",
+    primary: "/assets/awards/bafta.png",
+    fallback: "/awards/branding/bafta.png",
   },
   "golden-globes": {
-    primary: goldenGlobes,
-    fallback: "/awards/branding/golden-globes.svg",
+    primary: "/assets/awards/golden-globes.png",
+    fallback: "/awards/branding/golden-globes.png",
   },
 };
 

@@ -43,6 +43,29 @@ public class WatchHistory
     /// <summary>When true, row is omitted from Continue watching / home history API (e.g. My Device stray files).</summary>
     public bool SuppressContinueWatching { get; set; }
 
+    // ── Unified watch-tracking fields (nullable so existing local rows stay valid) ──
+
+    /// <summary>TMDB id of the title — allows stats to survive after the local file is removed.</summary>
+    public int? TmdbId { get; set; }
+
+    /// <summary>IMDb id of the title (tt-prefixed).</summary>
+    public string? ImdbId { get; set; }
+
+    /// <summary>
+    /// Where the watch originated: "local" (VLC playback), "streaming" (online player),
+    /// or "manual" (user explicitly marked watched).
+    /// </summary>
+    public string Source { get; set; } = "local";
+
+    /// <summary>For series/episodes: season number.</summary>
+    public int? SeasonNumber { get; set; }
+
+    /// <summary>For series/episodes: episode number.</summary>
+    public int? EpisodeNumber { get; set; }
+
+    /// <summary>Poster URL (remote CDN) — stored so the row survives library deletion.</summary>
+    public string? PosterUrl { get; set; }
+
     /// <summary>API-only: merged best resume head (seconds) from MaxKnown / LastExplicit / Estimated, capped by duration.</summary>
     [NotMapped]
     public int TrustedResumeSeconds { get; set; }

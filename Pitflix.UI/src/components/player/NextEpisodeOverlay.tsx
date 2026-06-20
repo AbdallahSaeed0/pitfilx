@@ -37,7 +37,7 @@ export function NextEpisodeOverlay({
             <div>
               <p className="text-sm font-medium text-pitflix-text-secondary">Up next</p>
               <p className="text-micro text-pitflix-text-subtle">
-                ~{countdown > 0 ? `${countdown}s` : "—"} left in this episode · no auto-switch
+                {countdown > 0 ? `Playing next in ${countdown}s` : "Playing next…"}
               </p>
             </div>
           </div>

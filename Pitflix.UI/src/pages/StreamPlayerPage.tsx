@@ -8,6 +8,8 @@ import { Navigate, useLocation, useNavigate } from "react-router-dom";
 import { getLibraryWatchTarget } from "../api/library";
 import { setEpisodeWatchStatus } from "../api/episodes";
 import { setMovieWatchStatus } from "../api/watch";
+import { markWatchedEntry } from "../api/history";
+import { useAppPrefsStore } from "../store/appPrefsStore";
 
 export type StreamLibraryWatchMeta = {
   tmdbId: number;
@@ -16,16 +18,35 @@ export type StreamLibraryWatchMeta = {
   episode?: number;
 };
 
+export type StreamPlayerReturnToDetails = {
+  tmdbId: number;
+  mediaType: "Movie" | "Series";
+  title?: string;
+  posterUrl?: string | null;
+  year?: string | null;
+  imdbId?: string | null;
+};
+
 export type StreamPlayerLocationState = {
   streamUrl: string;
   title?: string;
   libraryWatchMeta?: StreamLibraryWatchMeta;
+  /** Poster URL — stored for unified watch tracking when item is not in library */
+  posterUrl?: string | null;
+  /** IMDb ID — passed through for unified watch tracking */
+  imdbId?: string | null;
+  /** When set, Back navigates directly to stream-details instead of history -1 */
+  returnToDetails?: StreamPlayerReturnToDetails;
 };
 
 function isAllowedStreamEmbedUrl(url: string): boolean {
   try {
     const u = new URL(url);
-    return u.protocol === "https:" && u.hostname === "streamimdb.ru" && u.pathname.startsWith("/embed/");
+    if (u.protocol !== "https:") return false;
+    if (u.hostname === "streamimdb.ru" && u.pathname.startsWith("/embed/")) return true;
+    if (u.hostname === "www.youtube.com" && u.pathname.startsWith("/embed/")) return true;
+    if (u.hostname === "corsflix.net") return true;
+    return false;
   } catch {
     return false;
   }
@@ -41,13 +62,17 @@ async function openExternal(url: string) {
 }
 
 export function StreamPlayerPage() {
+  const offlineMode = useAppPrefsStore((s) => s.offlineMode);
   const navigate = useNavigate();
   const location = useLocation();
   const qc = useQueryClient();
   const state = location.state as StreamPlayerLocationState | null;
-  const streamUrl = state?.streamUrl ?? "";
-  const title = state?.title?.trim() || "Online stream";
-  const libraryMeta = state?.libraryWatchMeta;
+  const streamUrl      = state?.streamUrl ?? "";
+  const title          = state?.title?.trim() || "Online stream";
+  const libraryMeta    = state?.libraryWatchMeta;
+  const posterUrl      = state?.posterUrl ?? null;
+  const imdbId         = state?.imdbId ?? null;
+  const returnToDetails = state?.returnToDetails ?? null;
 
   const [embedFailed, setEmbedFailed] = useState(false);
   const autoOpenedRef = useRef(false);
@@ -101,6 +126,7 @@ export function StreamPlayerPage() {
     if (!libraryMeta || markBusy) return;
     setMarkBusy(true);
     setMarkFeedback(null);
+    let markedInLibrary = false;
     try {
       const target = await getLibraryWatchTarget({
         tmdbId: libraryMeta.tmdbId,
@@ -108,34 +134,49 @@ export function StreamPlayerPage() {
         season: libraryMeta.season,
         episode: libraryMeta.episode,
       });
-      if (!target.matched) {
-        setMarkFeedback("Nothing in your library matched this stream.");
-        return;
-      }
-      if (libraryMeta.mediaType === "Movie") {
-        if (target.movieId == null) {
-          setMarkFeedback("Could not resolve this movie in your library.");
-          return;
+      if (target.matched) {
+        if (libraryMeta.mediaType === "Movie" && target.movieId != null) {
+          await setMovieWatchStatus(target.movieId, "Completed");
+          markedInLibrary = true;
+        } else if (libraryMeta.mediaType === "Series" && target.episodeId != null) {
+          await setEpisodeWatchStatus(target.episodeId, "Completed");
+          markedInLibrary = true;
         }
-        await setMovieWatchStatus(target.movieId, "Completed");
-      } else {
-        if (target.episodeId == null) {
-          setMarkFeedback("That episode is not in your library yet.");
-          return;
-        }
-        await setEpisodeWatchStatus(target.episodeId, "Completed");
       }
-      void qc.invalidateQueries({ queryKey: ["watch-stats"] });
-      void qc.invalidateQueries({ queryKey: ["stats"] });
+    } catch {
+      /* library update failed — still record in unified history below */
+    }
+
+    // Always record in unified watch history so stats count this watch
+    // even when the title is not (or no longer) in the library.
+    try {
+      await markWatchedEntry({
+        tmdbId: libraryMeta.tmdbId,
+        imdbId,
+        mediaType: libraryMeta.mediaType,
+        title,
+        posterUrl,
+        source: "streaming",
+        seasonNumber: libraryMeta.season ?? null,
+        episodeNumber: libraryMeta.episode ?? null,
+      });
+    } catch {
+      /* non-fatal */
+    }
+
+    void qc.invalidateQueries({ queryKey: ["watch-stats"] });
+    void qc.invalidateQueries({ queryKey: ["stats"] });
+    if (markedInLibrary) {
       void qc.invalidateQueries({ queryKey: ["movies"] });
       void qc.invalidateQueries({ queryKey: ["series"] });
-      setMarkFeedback("Marked watched — stats updated.");
-    } catch {
-      setMarkFeedback("Could not update your library.");
-    } finally {
-      setMarkBusy(false);
     }
-  }, [libraryMeta, markBusy, qc]);
+    setMarkFeedback(markedInLibrary ? "Marked watched — stats updated." : "Watch recorded in stats.");
+    setMarkBusy(false);
+  }, [libraryMeta, markBusy, qc, title, posterUrl, imdbId]);
+
+  if (offlineMode) {
+    return <Navigate to="/" replace />;
+  }
 
   if (!streamUrl || !isAllowedStreamEmbedUrl(streamUrl)) {
     return <Navigate to="/online-stream" replace />;
@@ -148,14 +189,20 @@ export function StreamPlayerPage() {
         <header className="flex shrink-0 flex-wrap items-center gap-2 border-b border-white/10 bg-pitflix-surface px-3 py-2">
           <button
             type="button"
-            onClick={() => navigate(-1)}
+            onClick={() => {
+              if (returnToDetails) {
+                navigate("/stream-details", { state: returnToDetails, replace: true });
+              } else {
+                navigate(-1);
+              }
+            }}
             className="inline-flex items-center gap-1 rounded-lg px-2 py-1.5 text-sm font-medium text-white hover:bg-white/10"
           >
             <ChevronLeft className="h-4 w-4" />
             Back
           </button>
           <div className="min-w-0 flex-1 truncate text-sm font-semibold text-white">{title}</div>
-          {libraryMeta ? (
+          {(libraryMeta != null) && (
             <button
               type="button"
               disabled={markBusy}
@@ -165,7 +212,7 @@ export function StreamPlayerPage() {
               <CheckCircle2 className="h-3.5 w-3.5" />
               {markBusy ? "Saving…" : "Mark watched"}
             </button>
-          ) : null}
+          )}
           <button
             type="button"
             onClick={() => void toggleFullscreen()}

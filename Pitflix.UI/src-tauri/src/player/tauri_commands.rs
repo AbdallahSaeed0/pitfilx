@@ -1,8 +1,4 @@
-use std::fs::OpenOptions;
-use std::io::Write;
-use std::path::PathBuf;
 use std::process::Command;
-use std::sync::Mutex;
 
 use serde::Deserialize;
 use tauri::Emitter;
@@ -20,45 +16,8 @@ use super::{
 };
 use super::windows_host::MpvExitReport;
 
-/// Serializes player debug log lines — `WM_MPV_RENDER` / mpv threads can log concurrently with the UI.
-static PLAYER_DEBUG_LOG_MUTEX: Mutex<()> = Mutex::new(());
-
-fn player_debug_log_path(app: Option<&tauri::AppHandle>) -> PathBuf {
-  if let Some(app) = app {
-    if let Ok(d) = app.path().app_log_dir() {
-      return d.join("pitflix-player-debug.log");
-    }
-  }
-  #[cfg(windows)]
-  {
-    if let Some(base) = std::env::var_os("LOCALAPPDATA") {
-      return PathBuf::from(base)
-        .join("Pitflix")
-        .join("logs")
-        .join("pitflix-player-debug.log");
-    }
-  }
-  #[cfg(not(windows))]
-  {
-    if let Some(h) = std::env::var_os("HOME") {
-      return PathBuf::from(h).join(".local/share/Pitflix/pitflix-player-debug.log");
-    }
-  }
-  PathBuf::from("pitflix-player-debug.log")
-}
-
-pub(crate) fn append_player_debug_log(app: Option<&tauri::AppHandle>, line: &str) {
-  let _lock = PLAYER_DEBUG_LOG_MUTEX
-    .lock()
-    .unwrap_or_else(|e| e.into_inner());
-  let path = player_debug_log_path(app);
-  if let Some(parent) = path.parent() {
-    let _ = std::fs::create_dir_all(parent);
-  }
-  let Ok(mut f) = OpenOptions::new().create(true).append(true).open(&path) else {
-    return;
-  };
-  let _ = writeln!(f, "{:?} {}", std::time::SystemTime::now(), line);
+pub(crate) fn append_player_debug_log(_app: Option<&tauri::AppHandle>, line: &str) {
+  eprintln!("[pitflix-player] {line}");
 }
 
 #[tauri::command]
@@ -228,15 +187,7 @@ pub fn player2_open_detached(app: tauri::AppHandle, state: State<'_, PlayerHostS
   host.open_detached(payload)
 }
 
-#[tauri::command]
-pub fn player2_open_embedded_minimal_no_config(app: tauri::AppHandle, state: State<'_, PlayerHostState>, payload: PlayerOpen) -> Result<(), String> {
-  append_player_debug_log(Some(&app), "[player2_open_embedded_minimal_no_config] invoked from frontend");
-  let g = (&*state).0.lock().map_err(|e| e.to_string())?;
-  let Some(host) = g.as_ref() else {
-    return Err("Player host not initialized".to_string());
-  };
-  host.open_embedded_minimal_no_config(payload)
-}
+
 
 #[tauri::command]
 pub fn player2_set_embedded_safe_mode(app: tauri::AppHandle, state: State<'_, PlayerHostState>, enabled: bool) -> Result<(), String> {
@@ -388,6 +339,60 @@ pub fn playback_pol_set_extension_skip_intro(
   Ok(())
 }
 
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SetFinalPositionRequest {
+  pub key: String,
+  pub time_pos: f64,
+  pub duration: f64,
+  #[serde(default)]
+  pub history_id: Option<i32>,
+}
+
+/// Persist an explicit final position by episode key — does not need an active session.
+/// Called from the close handler so the save doesn't race with `player2_close`/`clear_session`.
+#[tauri::command]
+pub fn playback_pol_set_final_position(
+  app: tauri::AppHandle,
+  pol: State<'_, PlaybackOrchestratorState>,
+  req: SetFinalPositionRequest,
+) -> Result<(), String> {
+  let mut g = pol.0.lock().map_err(|e| e.to_string())?;
+  if !g.resume_store_ready() {
+    g.set_app_paths(&app);
+  }
+  g.set_position_for_key(&req.key, req.time_pos, req.duration, req.history_id);
+  Ok(())
+}
+
+#[tauri::command]
+pub fn playback_pol_set_subtitle_pick(
+  app: tauri::AppHandle,
+  pol: State<'_, PlaybackOrchestratorState>,
+  key: String,
+  val: String,
+) -> Result<(), String> {
+  let mut g = pol.0.lock().map_err(|e| e.to_string())?;
+  if !g.resume_store_ready() {
+    g.set_app_paths(&app);
+  }
+  g.set_subtitle_pick(&key, &val);
+  Ok(())
+}
+
+#[tauri::command]
+pub fn playback_pol_get_subtitle_pick(
+  app: tauri::AppHandle,
+  pol: State<'_, PlaybackOrchestratorState>,
+  key: String,
+) -> Result<Option<String>, String> {
+  let mut g = pol.0.lock().map_err(|e| e.to_string())?;
+  if !g.resume_store_ready() {
+    g.set_app_paths(&app);
+  }
+  Ok(g.get_subtitle_pick(&key))
+}
+
 #[tauri::command]
 pub fn get_subtitle_tracks(video_path: String) -> Result<Vec<subtitle_generator::SubtitleTrack>, String> {
   subtitle_generator::get_subtitle_tracks(&video_path)
@@ -519,51 +524,55 @@ pub async fn generate_arabic_subtitle(
     // Merge fragmented cues with gaps ≤ 500 ms to reduce noise and improve translation context
     let cues = subtitle_generator::merge_short_gap_cues(cues, 500);
     eprintln!("[generate-arabic-subtitle] After merge: {} cues", cues.len());
-    eprintln!("[generate-arabic-subtitle] Sending cues to Python for translation...");
+    eprintln!("[generate-arabic-subtitle] Sending {} cues to Python for translation (single call)...", cues.len());
+
+    const SEP: &str = "\n<<<PITFLIX_SEP>>>\n";
+    let total_count = cues.len();
+
+    // Emit a "started" progress signal immediately so the UI transitions out of "Generating…"
+    let _ = app.emit("arabic-subtitle-progress", serde_json::json!({
+        "current": 0,
+        "total": total_count
+    }));
+
+    // Build ONE batch with ALL cues — one Python spawn instead of N, eliminating the
+    // per-chunk interpreter startup cost (~2-4 s each) that made the process so slow.
+    let mut batch_text = String::new();
+    for cue in &cues {
+        batch_text.push_str(&cue.text.replace('\n', " [BR] "));
+        batch_text.push_str(SEP);
+    }
+
+    let translated_batch = translate_batch_with_argos(&batch_text)?;
+
+    let translated_lines: Vec<String> = translated_batch
+        .split("<<<PITFLIX_SEP>>>")
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+        .collect();
 
     let mut translated_cues = Vec::new();
-
-    const CHUNK_SIZE: usize = 50;
-    const SEP: &str = "\n<<<PITFLIX_SEP>>>\n";
-
-    for chunk in cues.chunks(CHUNK_SIZE) {
-        let mut batch_text = String::new();
-        for cue in chunk {
-            batch_text.push_str(&cue.text.replace('\n', " [BR] "));
-            batch_text.push_str(SEP);
+    for (i, cue) in cues.iter().enumerate() {
+        if let Some(text) = translated_lines.get(i) {
+            let restored = text.replace("[BR]", "\n").replace(" [BR] ", "\n").trim().to_string();
+            let wrapped = subtitle_generator::wrap_arabic_text(&restored, 45);
+            translated_cues.push(subtitle_generator::SubtitleCue {
+                index: cue.index,
+                start: cue.start.clone(),
+                end: cue.end.clone(),
+                text: wrapped,
+            });
         }
-
-        let translated_batch = translate_batch_with_argos(&batch_text)?;
-
-        let translated_lines: Vec<String> = translated_batch
-            .split("<<<PITFLIX_SEP>>>")
-            .map(|s| s.trim().to_string())
-            .filter(|s| !s.is_empty())
-            .collect();
-
-        for (i, cue) in chunk.iter().enumerate() {
-            if let Some(text) = translated_lines.get(i) {
-                let restored = text.replace("[BR]", "\n").replace(" [BR] ", "\n").trim().to_string();
-                let wrapped = subtitle_generator::wrap_arabic_text(&restored, 45);
-                translated_cues.push(subtitle_generator::SubtitleCue {
-                    index: cue.index,
-                    start: cue.start.clone(),
-                    end: cue.end.clone(),
-                    text: wrapped,
-                });
-            }
+        // Emit progress every 10 cues so the frontend bar moves smoothly
+        if i % 10 == 0 || i == total_count - 1 {
+            let _ = app.emit("arabic-subtitle-progress", serde_json::json!({
+                "current": i + 1,
+                "total": total_count
+            }));
         }
-        
-        let current_count = translated_cues.len();
-        let total_count = cues.len();
-        eprintln!("[generate-arabic-subtitle] Translated {}/{} cues...", current_count, total_count);
-        
-        // Emit progress event to frontend
-        let _ = app.emit("arabic-subtitle-progress", serde_json::json!({
-            "current": current_count,
-            "total": total_count
-        }));
     }
+
+    eprintln!("[generate-arabic-subtitle] Translated {}/{} cues.", translated_cues.len(), total_count);
 
     if translated_cues.is_empty() {
         return Err("Translation resulted in empty cues".to_string());
@@ -576,5 +585,156 @@ pub async fn generate_arabic_subtitle(
 
     Ok(output_srt)
   }).join().map_err(|_| "Thread panicked".to_string())?
+}
+
+// ── player3_open: launch WPF companion PitflixPlayer.exe ─────────────────────
+//
+// Does NOT touch player2_open, player2_close, or any existing command.
+//
+// Optionally starts a backend session first (when file_path is provided), then:
+//   • minimises the Tauri window
+//   • launches PitflixPlayer.exe from the same directory as this executable
+//   • when the WPF process exits, restores (unminimises + focuses) the Tauri window
+
+#[derive(Debug, serde::Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct Player3OpenRequest {
+  #[serde(default)]
+  pub file_path: Option<String>,
+  #[serde(default)]
+  pub media_id: Option<i32>,
+  #[serde(default)]
+  pub episode_id: Option<i32>,
+  #[serde(default)]
+  pub start_position: Option<f64>,
+  #[serde(default)]
+  pub subtitle_track: Option<String>,
+}
+
+#[tauri::command]
+pub fn player3_open(
+  app: tauri::AppHandle,
+  #[allow(unused_variables)]
+  req: Player3OpenRequest,
+) -> Result<(), String> {
+  // 1. If a file path was supplied, start a backend session first via
+  //    POST http://localhost:5280/api/player/play
+  if let Some(ref file_path) = req.file_path {
+    let body = serde_json::json!({
+      "filePath":      file_path,
+      "mediaId":       req.media_id.unwrap_or(0),
+      "episodeId":     req.episode_id,
+      "startPosition": req.start_position.unwrap_or(0.0),
+      "subtitleTrack": req.subtitle_track,
+    });
+    player3_http_post("127.0.0.1:5280", "/api/player/play", &body.to_string())
+      .map_err(|e| format!("Failed to start backend session: {e}"))?;
+
+    // Give the backend 500 ms to finish setting up the mpv pipe before
+    // PitflixPlayer.exe starts and calls GET /api/player/session.
+    std::thread::sleep(std::time::Duration::from_millis(500));
+  }
+
+  // 2. Minimise the Tauri window
+  if let Some(window) = app.get_webview_window("main") {
+    let _ = window.minimize();
+  }
+
+  // 3. Locate PitflixPlayer.exe.
+  //
+  //    Search order (first path that exists wins):
+  //      [1] Production: same directory as this Tauri exe
+  //      [2] Dev Debug:  ../../../../PitflixPlayer/bin/Debug/net8.0-windows/
+  //      [3] Dev Release: ../../../../PitflixPlayer/bin/Release/net8.0-windows/
+  //
+  //    In dev mode the Tauri exe lives at:
+  //      …/Pitflix.UI/src-tauri/target/debug/Pitflix.exe
+  //    so four ".." levels reach the repo root, then into the WPF project's
+  //    build output.
+
+  let exe_dir = std::env::current_exe()
+    .ok()
+    .and_then(|p| p.parent().map(|d| d.to_path_buf()))
+    .unwrap_or_default();
+
+  let candidates = [
+    exe_dir.join("PitflixPlayer.exe"),                                                   // [1] production
+    exe_dir.join("..").join("..").join("..").join("..")
+           .join("PitflixPlayer").join("bin").join("Debug")
+           .join("net8.0-windows").join("PitflixPlayer.exe"),                            // [2] dev Debug
+    exe_dir.join("..").join("..").join("..").join("..")
+           .join("PitflixPlayer").join("bin").join("Release")
+           .join("net8.0-windows").join("PitflixPlayer.exe"),                            // [3] dev Release
+  ];
+
+  let player_exe = candidates.iter().find(|p| p.exists()).cloned().unwrap_or_else(|| {
+    // None found — emit a Tauri event so the frontend can show a friendly error,
+    // then return the first candidate path so the spawn error message is useful.
+    let msg = format!(
+      "PitflixPlayer.exe not found. Searched:\n{}",
+      candidates.iter().map(|p| format!("  {}", p.display())).collect::<Vec<_>>().join("\n")
+    );
+    eprintln!("[player3_open] {msg}");
+    let _ = app.emit("player3_error", &msg);
+    candidates[0].clone()
+  });
+
+  eprintln!("[player3_open] launching: {}", player_exe.display());
+
+  // 4. Launch PitflixPlayer.exe
+  let mut child = std::process::Command::new(&player_exe)
+    .spawn()
+    .map_err(|e| {
+      let msg = format!("Failed to launch PitflixPlayer.exe at {}: {e}", player_exe.display());
+      let _ = app.emit("player3_error", &msg);
+      msg
+    })?;
+
+  // 5. Background thread: when WPF exits → restore the Tauri window
+  let app_handle = app.clone();
+  std::thread::spawn(move || {
+    let _ = child.wait();
+    if let Some(window) = app_handle.get_webview_window("main") {
+      let _ = window.unminimize();
+      let _ = window.set_focus();
+    }
+  });
+
+  Ok(())
+}
+
+/// Minimal synchronous HTTP/1.0 POST to localhost — no external HTTP crate needed.
+fn player3_http_post(authority: &str, path: &str, json_body: &str) -> Result<(), String> {
+  use std::io::{Read, Write};
+  use std::net::TcpStream;
+  use std::time::Duration;
+
+  let mut stream = TcpStream::connect(authority)
+    .map_err(|e| format!("connect {authority}: {e}"))?;
+  stream.set_write_timeout(Some(Duration::from_secs(5))).ok();
+  stream.set_read_timeout(Some(Duration::from_secs(5))).ok();
+
+  let request = format!(
+    "POST {path} HTTP/1.0\r\nHost: {authority}\r\nContent-Type: application/json\r\nContent-Length: {len}\r\nConnection: close\r\n\r\n{body}",
+    len  = json_body.len(),
+    body = json_body,
+  );
+  stream.write_all(request.as_bytes()).map_err(|e| format!("write: {e}"))?;
+
+  let mut response = String::new();
+  let _ = stream.read_to_string(&mut response);
+
+  // Accept any 2xx status
+  if response.starts_with("HTTP/") {
+    let status_line = response.lines().next().unwrap_or("");
+    let ok = status_line.contains(" 200 ")
+      || status_line.contains(" 201 ")
+      || status_line.contains(" 204 ");
+    if !ok {
+      return Err(format!("Server responded: {status_line}"));
+    }
+  }
+
+  Ok(())
 }
 

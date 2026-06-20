@@ -41,12 +41,44 @@ public sealed class OfficialTrailersChannelProvider
         public List<string>? Aliases { get; set; }
     }
 
+    /// <summary>
+    /// Resolves the <c>Data/Trailers</c> directory using the same multi-candidate strategy
+    /// as <c>FileAwardsDataProvider</c> so data files are found in both dev and installed builds.
+    /// </summary>
+    private string ResolveTrailersDataRoot()
+    {
+        // 1. Dev: ContentRootPath is the project directory.
+        var fromContentRoot = Path.Combine(_env.ContentRootPath, "Data", "Trailers");
+        if (Directory.Exists(fromContentRoot)) return fromContentRoot;
+
+        // 2. Self-contained / framework-dependent publish: DLLs live in AppContext.BaseDirectory.
+        var fromBaseDir = Path.Combine(AppContext.BaseDirectory, "Data", "Trailers");
+        if (Directory.Exists(fromBaseDir)) return fromBaseDir;
+
+        // 3. Tauri NSIS installer: resources are placed under binaries\ next to the exe.
+        var fromBaseDirBinaries = Path.Combine(AppContext.BaseDirectory, "binaries", "Data", "Trailers");
+        if (Directory.Exists(fromBaseDirBinaries)) return fromBaseDirBinaries;
+
+        var exeDir = Path.GetDirectoryName(Environment.ProcessPath ?? "");
+        if (!string.IsNullOrEmpty(exeDir))
+        {
+            var fromExeDir = Path.Combine(exeDir, "Data", "Trailers");
+            if (Directory.Exists(fromExeDir)) return fromExeDir;
+
+            var fromExeDirBinaries = Path.Combine(exeDir, "binaries", "Data", "Trailers");
+            if (Directory.Exists(fromExeDirBinaries)) return fromExeDirBinaries;
+        }
+
+        // Fall back to ContentRootPath even if absent — callers handle missing files gracefully.
+        return fromContentRoot;
+    }
+
     public async Task<IReadOnlyList<OfficialChannelEntry>> GetChannelsAsync(CancellationToken ct)
     {
         if (_cached != null)
             return _cached;
 
-        var path = Path.Combine(_env.ContentRootPath, "Data", "Trailers", "official-channels.json");
+        var path = Path.Combine(ResolveTrailersDataRoot(), "official-channels.json");
         if (!File.Exists(path))
         {
             _log.LogWarning("Trailers channels config not found at {Path}", path);

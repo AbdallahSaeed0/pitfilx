@@ -1,0 +1,13 @@
+{
+  "default": null,
+  "permission": [
+    {
+      "identifier": "allow-download-installer",
+      "description": "Download GitHub release installer in-app with progress events",
+      "commands": {
+        "allow": ["download_installer_with_progress"],
+        "deny": []
+      }
+    }
+  ]
+}

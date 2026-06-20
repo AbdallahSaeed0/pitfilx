@@ -76,8 +76,12 @@ export type AwardsCachePreloadStatus = {
   totalNominees: number;
   successCount: number;
   failedCount: number;
+  /** Nominees belonging to editions already in cache — skipped during an incremental run. */
+  skippedNominees: number;
   cachedRowCount: number;
   lastError?: string | null;
+  /** ISO-8601 UTC timestamp of the last completed/cancelled/errored cache run. */
+  lastCompletedAt?: string | null;
 };
 
 export const getAwardsCacheStatus = () =>
@@ -91,3 +95,34 @@ export const clearAwardsCache = () =>
 
 export const cancelAwardsCachePreload = () =>
   api.post<{ ok: boolean }>("/awards/cache/cancel").then((r) => r.data);
+
+export type TitleNomination = {
+  awardId: string;
+  awardName: string;
+  year: number;
+  categoryId: string;
+  categoryName: string;
+  winner: boolean;
+};
+
+export type PersonNomination = {
+  awardId: string;
+  awardName: string;
+  year: number | null;
+  categoryName: string;
+  winner: boolean;
+  workTitle: string | null;
+  workTmdbMovieId: number | null;
+  workTmdbTvId: number | null;
+  posterUrl: string | null;
+};
+
+export const getPersonAwards = (tmdbId: number) =>
+  api
+    .get<{ nominations: PersonNomination[] }>("/awards/for-person", { params: { tmdbId } })
+    .then((r) => r.data.nominations);
+
+export const getTitleNominations = (tmdbId: number, mediaType: "movie" | "tv", imdbId?: string | null) =>
+  api
+    .get<{ nominations: TitleNomination[] }>("/awards/for-title", { params: { tmdbId, mediaType, imdbId: imdbId ?? undefined } })
+    .then((r) => r.data.nominations);

@@ -2,13 +2,13 @@ import axios from "axios";
 
 /**
  * Server origin only (scheme + host + optional port). No path, no `/api` suffix.
- * `VITE_API_ORIGIN` is often mis-set to `http://127.0.0.1:5001/api`; we strip a trailing `/api`
- * so axios `baseURL` stays `.../5001/api` and paths like `/home/trailers/latest` resolve to
+ * `VITE_API_ORIGIN` is often mis-set to `http://127.0.0.1:5280/api`; we strip a trailing `/api`
+ * so axios `baseURL` stays `.../5280/api` and paths like `/home/trailers/latest` resolve to
  * `/api/home/trailers/latest` (not `/api/api/...` → 404).
  */
 function normalizePitflixApiOrigin(raw: string | undefined): string {
   let s = (raw ?? "").trim();
-  if (!s) s = "http://127.0.0.1:5001";
+  if (!s) s = "http://127.0.0.1:5280";
   s = s.replace(/\/+$/, "");
   if (/\/api$/i.test(s)) s = s.replace(/\/api$/i, "");
   return s;

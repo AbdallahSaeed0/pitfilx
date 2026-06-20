@@ -1,7 +1,7 @@
-import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useQueryClient } from "@tanstack/react-query";
 import axios from "axios";
 import { useState } from "react";
-import { Heart, ListPlus, RefreshCw, Search, Sparkles, Trash2 } from "lucide-react";
+import { RefreshCw, Search, Trash2 } from "lucide-react";
 import {
   deleteMediaFromDevice,
   refreshMovieMetadata,
@@ -9,18 +9,14 @@ import {
   rematchMovieFromFile,
   rematchSeriesFromFolder,
 } from "../api/library";
-import { addListItem, getLists, listContains, removeListItem } from "../api/lists";
 import { PickTmdbTitleModal, type PickTmdbMatchTarget } from "./PickTmdbTitleModal";
-import { setMovieWatchStatus, setShowWatchStatus } from "../api/watch";
 import { cn } from "../utils/cn";
 import { pitflixConfirm } from "../utils/pitflixDialog";
-import { formatListMenuLabel, isFavoritesListName } from "../utils/listMarks";
 
 type DetailToolbarProps = {
   kind: "movie" | "series";
   libraryId: number;
   tmdbId: number;
-  watchStatus: string | undefined;
   /** Shown in the manual pick-title modal for context. */
   pickHint?: string;
   filePath?: string;
@@ -35,8 +31,7 @@ type DetailToolbarProps = {
 export function DetailToolbar({
   kind,
   libraryId,
-  tmdbId,
-  watchStatus,
+  tmdbId: _tmdbId,
   pickHint,
   filePath,
   folderPath,
@@ -45,7 +40,6 @@ export function DetailToolbar({
   onShowRematched,
 }: DetailToolbarProps) {
   const qc = useQueryClient();
-  const { data: lists } = useQuery({ queryKey: ["lists"], queryFn: getLists });
   const [actionMsg, setActionMsg] = useState<string | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
@@ -61,67 +55,12 @@ export function DetailToolbar({
     void qc.invalidateQueries({ queryKey: ["lists"] });
     void qc.invalidateQueries({ queryKey: ["list-contains"] });
     void qc.invalidateQueries({ queryKey: ["list-tmdb-ids"] });
+    void qc.invalidateQueries({ queryKey: [kind === "movie" ? "movie-videos" : "show-videos", libraryId] });
   };
-
-  const favoritesList = lists?.find((l) => isFavoritesListName(l.name));
-  const isCompleted = watchStatus === "Completed";
-
-  const { data: favState } = useQuery({
-    queryKey: ["list-contains", favoritesList?.id, tmdbId, mediaType],
-    queryFn: () => listContains(favoritesList!.id, { tmdbId, mediaType }),
-    enabled: !!favoritesList && tmdbId > 0,
-  });
-  const isFavorite = favState?.inList === true;
 
   const showToast = (msg: string) => {
     setActionMsg(msg);
     window.setTimeout(() => setActionMsg(null), 4000);
-  };
-
-  const onToggleWatched = () => {
-    const next = isCompleted ? "Unwatched" : "Completed";
-    setBusy("watch");
-    const req = kind === "movie" ? setMovieWatchStatus(libraryId, next) : setShowWatchStatus(libraryId, next);
-    void req
-      .then(() => {
-        showToast(next === "Completed" ? "Marked as watched." : "Marked as not watched.");
-        invalidate();
-      })
-      .catch(() => showToast("Could not update watch status."))
-      .finally(() => setBusy(null));
-  };
-
-  const onFavorite = () => {
-    if (!favoritesList) {
-      showToast("Lists are still loading.");
-      return;
-    }
-    setBusy("fav");
-    const run = isFavorite
-      ? removeListItem(favoritesList.id, tmdbId, mediaType).then(() => showToast("Removed from Favorites."))
-      : addListItem(favoritesList.id, { tmdbId, mediaType }).then(() => showToast("Added to Favorites."));
-    void run
-      .catch(() => showToast(isFavorite ? "Could not remove from Favorites." : "Could not add to Favorites."))
-      .finally(() => {
-        setBusy(null);
-        void qc.invalidateQueries({ queryKey: ["list-contains", favoritesList.id, tmdbId, mediaType] });
-        void qc.invalidateQueries({ queryKey: ["list-tmdb-ids"] });
-      });
-  };
-
-  const onAddToList = (listId: number) => {
-    if (!listId) return;
-    setBusy("list");
-    void addListItem(listId, { tmdbId, mediaType })
-      .then(() => {
-        showToast("Added to list.");
-        if (favoritesList && listId === favoritesList.id) {
-          void qc.invalidateQueries({ queryKey: ["list-tmdb-ids"] });
-          void qc.invalidateQueries({ queryKey: ["list-contains", favoritesList.id, tmdbId, mediaType] });
-        }
-      })
-      .catch(() => showToast("Could not add to that list."))
-      .finally(() => setBusy(null));
   };
 
   const onRefreshMetadata = () => {
@@ -146,16 +85,10 @@ export function DetailToolbar({
       showToast("No file path available.");
       return;
     }
-
     setBusy("delete");
     setShowDeleteConfirm(false);
-
     try {
-      await deleteMediaFromDevice({
-        path: pathToDelete,
-        mediaType,
-        libraryId,
-      });
+      await deleteMediaFromDevice({ path: pathToDelete, mediaType, libraryId });
       showToast("Deleted from device successfully.");
       invalidate();
       if (onDeleted) window.setTimeout(() => onDeleted(), 1500);
@@ -178,10 +111,7 @@ export function DetailToolbar({
     setBusy("rematch");
     void rematchMovieFromFile(libraryId)
       .then((r) => {
-        if (!r.success) {
-          showToast(r.error ?? "Re-match failed.");
-          return;
-        }
+        if (!r.success) { showToast(r.error ?? "Re-match failed."); return; }
         showToast("File matched again.");
         const nid = r.libraryId ?? libraryId;
         onMovieRematched?.(nid);
@@ -200,10 +130,7 @@ export function DetailToolbar({
     setBusy("rematch-series");
     void rematchSeriesFromFolder(libraryId)
       .then((r) => {
-        if (!r.success) {
-          showToast(r.error ?? "Re-match failed.");
-          return;
-        }
+        if (!r.success) { showToast(r.error ?? "Re-match failed."); return; }
         showToast("Series folder matched again.");
         const nid = r.libraryId ?? libraryId;
         onShowRematched?.(nid);
@@ -224,130 +151,76 @@ export function DetailToolbar({
     invalidate();
   };
 
-  const scrollSimilar = () =>
-    document.getElementById("detail-similar")?.scrollIntoView({ behavior: "smooth", block: "start" });
-
-  const btnClass =
-    "inline-flex shrink-0 items-center gap-1.5 rounded-lg border border-pitflix-card px-3 py-2.5 text-sm font-medium text-pitflix-muted transition-colors hover:border-pitflix-primary/50 hover:text-white disabled:opacity-45";
+  const mgmtBtn =
+    "inline-flex shrink-0 items-center gap-1.5 rounded-[7px] border border-white/[0.07] bg-white/[0.03] px-[13px] py-[7px] text-[12px] text-white/[0.38] transition hover:bg-white/[0.08] hover:text-white/[0.72] disabled:opacity-45";
 
   const hasPath = kind === "movie" ? !!filePath : !!folderPath;
 
   return (
-    <div className="mt-5 w-full min-w-0 space-y-3">
-      <div className="flex flex-col gap-3">
-        <div className="flex flex-wrap items-center gap-2 sm:gap-3">
-          <button
-            type="button"
-            className={cn(btnClass, isCompleted && "border-green-600/50 text-green-400")}
-            disabled={busy !== null}
-            onClick={() => onToggleWatched()}
-          >
-            {isCompleted ? "Mark not watched" : "Mark as watched"}
-          </button>
-          <button
-            type="button"
-            className={cn(
-              btnClass,
-              isFavorite && "border-red-500/60 bg-red-500/10 text-red-300 hover:border-red-400 hover:text-red-200",
-            )}
-            disabled={busy !== null}
-            onClick={() => void onFavorite()}
-          >
-            <Heart className={cn("h-4 w-4", isFavorite && "fill-current")} strokeWidth={2} />
-            {isFavorite ? "In favorites" : "Favorite"}
-          </button>
-          <div className="inline-flex min-w-0 items-center gap-2">
-            <ListPlus className="h-4 w-4 shrink-0 text-pitflix-subtle" strokeWidth={2} />
-            <select
-              className="max-w-[min(220px,100%)] rounded-lg border border-pitflix-card bg-pitflix-bg px-3 py-2.5 text-sm text-white focus:border-pitflix-primary focus:outline-none disabled:opacity-45"
-              disabled={busy !== null || !lists?.length}
-              defaultValue=""
-              onChange={(e) => {
-                const id = Number(e.target.value);
-                e.target.value = "";
-                onAddToList(id);
-              }}
-            >
-              <option value="">Add to list…</option>
-              {(lists ?? []).map((l) => (
-                <option key={l.id} value={l.id}>
-                  {formatListMenuLabel(l.name)} ({l.itemCount})
-                </option>
-              ))}
-            </select>
-          </div>
-        </div>
-        <div className="flex flex-wrap items-center gap-2 sm:gap-3">
-          <button type="button" className={btnClass} disabled={busy !== null} onClick={() => void onRefreshMetadata()}>
-            <RefreshCw className={cn("h-4 w-4", busy === "refresh" && "animate-spin")} strokeWidth={2} />
-            Refresh from TMDB
-          </button>
-          {kind === "movie" && (filePath || libraryId > 0) ? (
-            <>
-              <button
-                type="button"
-                className={btnClass}
-                disabled={busy !== null}
-                onClick={() => void onRematchFromFile()}
-              >
-                <RefreshCw className={cn("h-4 w-4", busy === "rematch" && "animate-spin")} strokeWidth={2} />
-                Re-match file
-              </button>
-              <button
-                type="button"
-                className={btnClass}
-                disabled={busy !== null}
-                onClick={() => setPickTarget({ kind: "movie", libraryId })}
-              >
-                <Search className="h-4 w-4" strokeWidth={2} />
-                Pick correct title…
-              </button>
-            </>
-          ) : null}
-          {kind === "series" && (folderPath || libraryId > 0) ? (
-            <>
-              <button
-                type="button"
-                className={btnClass}
-                disabled={busy !== null}
-                onClick={() => void onRematchSeriesFromFolder()}
-              >
-                <RefreshCw
-                  className={cn("h-4 w-4", busy === "rematch-series" && "animate-spin")}
-                  strokeWidth={2}
-                />
-                Re-match folder
-              </button>
-              <button
-                type="button"
-                className={btnClass}
-                disabled={busy !== null}
-                onClick={() => setPickTarget({ kind: "series", libraryId })}
-              >
-                <Search className="h-4 w-4" strokeWidth={2} />
-                Pick correct series…
-              </button>
-            </>
-          ) : null}
-          <button type="button" className={btnClass} onClick={() => scrollSimilar()}>
-            <Sparkles className="h-4 w-4" strokeWidth={2} />
-            More like this
-          </button>
-          {hasPath && (
+    <div className="w-full min-w-0">
+      <div className="flex flex-wrap items-center gap-2 px-12 py-4">
+        <button type="button" className={mgmtBtn} disabled={busy !== null} onClick={() => void onRefreshMetadata()}>
+          <RefreshCw className={cn("h-3.5 w-3.5", busy === "refresh" && "animate-spin")} strokeWidth={2} />
+          Refresh from TMDB
+        </button>
+        {kind === "movie" && (filePath || libraryId > 0) ? (
+          <>
             <button
               type="button"
-              className={cn(btnClass, "border-red-600/50 text-red-400 hover:border-red-500 hover:text-red-300")}
+              className={mgmtBtn}
               disabled={busy !== null}
-              onClick={() => setShowDeleteConfirm(true)}
+              onClick={() => void onRematchFromFile()}
             >
-              <Trash2 className="h-4 w-4" strokeWidth={2} />
-              Delete from device
+              <RefreshCw className={cn("h-3.5 w-3.5", busy === "rematch" && "animate-spin")} strokeWidth={2} />
+              Re-match file
             </button>
-          )}
-        </div>
+            <button
+              type="button"
+              className={mgmtBtn}
+              disabled={busy !== null}
+              onClick={() => setPickTarget({ kind: "movie", libraryId })}
+            >
+              <Search className="h-3.5 w-3.5" strokeWidth={2} />
+              Pick correct title…
+            </button>
+          </>
+        ) : null}
+        {kind === "series" && (folderPath || libraryId > 0) ? (
+          <>
+            <button
+              type="button"
+              className={mgmtBtn}
+              disabled={busy !== null}
+              onClick={() => void onRematchSeriesFromFolder()}
+            >
+              <RefreshCw className={cn("h-3.5 w-3.5", busy === "rematch-series" && "animate-spin")} strokeWidth={2} />
+              Re-match folder
+            </button>
+            <button
+              type="button"
+              className={mgmtBtn}
+              disabled={busy !== null}
+              onClick={() => setPickTarget({ kind: "series", libraryId })}
+            >
+              <Search className="h-3.5 w-3.5" strokeWidth={2} />
+              Pick correct series…
+            </button>
+          </>
+        ) : null}
+        {hasPath ? (
+          <button
+            type="button"
+            className="inline-flex shrink-0 items-center gap-1.5 rounded-[7px] border border-red-500/[0.14] bg-red-500/[0.06] px-[13px] py-[7px] text-[12px] text-red-500/[0.62] transition hover:bg-red-500/[0.13] hover:text-red-500/90 disabled:opacity-45"
+            disabled={busy !== null}
+            onClick={() => setShowDeleteConfirm(true)}
+          >
+            <Trash2 className="h-3.5 w-3.5" strokeWidth={2} />
+            Delete from device
+          </button>
+        ) : null}
       </div>
-      {actionMsg ? <p className="text-sm text-pitflix-muted">{actionMsg}</p> : null}
-      
+      {actionMsg ? <p className="px-12 pb-2 text-sm text-white/40">{actionMsg}</p> : null}
+
       <PickTmdbTitleModal
         open={pickTarget !== null}
         onClose={() => setPickTarget(null)}
@@ -364,14 +237,10 @@ export function DetailToolbar({
               This will permanently delete the {kind === "movie" ? "movie file" : "entire series folder"} from your device. This action cannot be undone.
             </p>
             {kind === "series" && folderPath && (
-              <p className="mt-2 text-xs text-zinc-500">
-                Folder: {folderPath}
-              </p>
+              <p className="mt-2 text-xs text-zinc-500">Folder: {folderPath}</p>
             )}
             {kind === "movie" && filePath && (
-              <p className="mt-2 text-xs text-zinc-500">
-                File: {filePath}
-              </p>
+              <p className="mt-2 text-xs text-zinc-500">File: {filePath}</p>
             )}
             <div className="mt-6 flex justify-end gap-3">
               <button

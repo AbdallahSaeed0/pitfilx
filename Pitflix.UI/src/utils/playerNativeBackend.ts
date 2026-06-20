@@ -1,6 +1,9 @@
 /**
  * Normalizes `player2_get_state().backend` from the Windows host.
- * Rust historically used `external_mpv_fallback` / `libmpv_embedded`; the UI must accept all aliases.
+ *
+ * Backend values:
+ *   "external_mpv"    — mpv in a detached window with uosc/scripts, companion UI
+ *   "libmpv"          — mpv embedded as a child HWND (--wid mode)
  */
 
 export function isNativeBackendExternal(backend: string | undefined | null): boolean {

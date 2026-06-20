@@ -113,3 +113,43 @@ f:\PitFilx-app\_b4out\Pitflix.Core.deps.json
 f:\PitFilx-app\_b4out\Pitflix.Core.runtimeconfig.json
 f:\PitFilx-app\_b4out\Pitflix.Core.dll
 f:\PitFilx-app\_b4out\Pitflix.Core.pdb
+F:\PitFilx-app\Pitflix.API\bin\build-check\Pitflix.Core.deps.json
+F:\PitFilx-app\Pitflix.API\bin\build-check\Pitflix.Core.runtimeconfig.json
+F:\PitFilx-app\Pitflix.API\bin\build-check\Pitflix.Core.dll
+F:\PitFilx-app\Pitflix.API\bin\build-check\Pitflix.Core.pdb
+C:\Users\Abd Allah\AppData\Local\Temp\pitflix-api-check\Pitflix.Core.deps.json
+C:\Users\Abd Allah\AppData\Local\Temp\pitflix-api-check\Pitflix.Core.runtimeconfig.json
+C:\Users\Abd Allah\AppData\Local\Temp\pitflix-api-check\Pitflix.Core.dll
+C:\Users\Abd Allah\AppData\Local\Temp\pitflix-api-check\Pitflix.Core.pdb
+C:\Users\Abd Allah\AppData\Local\Temp\pitflix-build-check\Pitflix.Core.deps.json
+C:\Users\Abd Allah\AppData\Local\Temp\pitflix-build-check\Pitflix.Core.runtimeconfig.json
+C:\Users\Abd Allah\AppData\Local\Temp\pitflix-build-check\Pitflix.Core.dll
+C:\Users\Abd Allah\AppData\Local\Temp\pitflix-build-check\Pitflix.Core.pdb
+C:\Users\Abd Allah\AppData\Local\Temp\pitflix-api-check2\Pitflix.Core.deps.json
+C:\Users\Abd Allah\AppData\Local\Temp\pitflix-api-check2\Pitflix.Core.runtimeconfig.json
+C:\Users\Abd Allah\AppData\Local\Temp\pitflix-api-check2\Pitflix.Core.dll
+C:\Users\Abd Allah\AppData\Local\Temp\pitflix-api-check2\Pitflix.Core.pdb
+C:\Users\Abd Allah\AppData\Local\Temp\pitflix-api-check3\Pitflix.Core.deps.json
+C:\Users\Abd Allah\AppData\Local\Temp\pitflix-api-check3\Pitflix.Core.runtimeconfig.json
+C:\Users\Abd Allah\AppData\Local\Temp\pitflix-api-check3\Pitflix.Core.dll
+C:\Users\Abd Allah\AppData\Local\Temp\pitflix-api-check3\Pitflix.Core.pdb
+C:\Users\Abd Allah\AppData\Local\Temp\pitflix-api-check4\Pitflix.Core.deps.json
+C:\Users\Abd Allah\AppData\Local\Temp\pitflix-api-check4\Pitflix.Core.runtimeconfig.json
+C:\Users\Abd Allah\AppData\Local\Temp\pitflix-api-check4\Pitflix.Core.dll
+C:\Users\Abd Allah\AppData\Local\Temp\pitflix-api-check4\Pitflix.Core.pdb
+C:\Users\Abd Allah\AppData\Local\Temp\pitflix-envelope-check\Pitflix.Core.deps.json
+C:\Users\Abd Allah\AppData\Local\Temp\pitflix-envelope-check\Pitflix.Core.runtimeconfig.json
+C:\Users\Abd Allah\AppData\Local\Temp\pitflix-envelope-check\Pitflix.Core.dll
+C:\Users\Abd Allah\AppData\Local\Temp\pitflix-envelope-check\Pitflix.Core.pdb
+C:\Users\Abd Allah\AppData\Local\Temp\pitflix-final-check\Pitflix.Core.deps.json
+C:\Users\Abd Allah\AppData\Local\Temp\pitflix-final-check\Pitflix.Core.runtimeconfig.json
+C:\Users\Abd Allah\AppData\Local\Temp\pitflix-final-check\Pitflix.Core.dll
+C:\Users\Abd Allah\AppData\Local\Temp\pitflix-final-check\Pitflix.Core.pdb
+C:\Users\Abd Allah\AppData\Local\Temp\pitflix-gap-check\Pitflix.Core.deps.json
+C:\Users\Abd Allah\AppData\Local\Temp\pitflix-gap-check\Pitflix.Core.runtimeconfig.json
+C:\Users\Abd Allah\AppData\Local\Temp\pitflix-gap-check\Pitflix.Core.dll
+C:\Users\Abd Allah\AppData\Local\Temp\pitflix-gap-check\Pitflix.Core.pdb
+C:\Users\Abd Allah\AppData\Local\Temp\pitflix-tune-check\Pitflix.Core.deps.json
+C:\Users\Abd Allah\AppData\Local\Temp\pitflix-tune-check\Pitflix.Core.runtimeconfig.json
+C:\Users\Abd Allah\AppData\Local\Temp\pitflix-tune-check\Pitflix.Core.dll
+C:\Users\Abd Allah\AppData\Local\Temp\pitflix-tune-check\Pitflix.Core.pdb

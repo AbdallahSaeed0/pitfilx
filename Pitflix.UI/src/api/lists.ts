@@ -30,8 +30,10 @@ export const deleteList = (id: number) =>
 export const getListItems = (id: number) =>
   api.get(`/lists/${id}/items`).then((r) => r.data);
 
-export const addListItem = (id: number, body: { tmdbId: number; mediaType: string }) =>
-  api.post(`/lists/${id}/items`, body).then((r) => r.data);
+export const addListItem = (
+  id: number,
+  body: { tmdbId: number; mediaType: string; title?: string; posterRemoteUrl?: string | null; imdbId?: string | null },
+) => api.post(`/lists/${id}/items`, body).then((r) => r.data);
 
 export const removeListItem = (listId: number, tmdbId: number, mediaType: string) =>
   api

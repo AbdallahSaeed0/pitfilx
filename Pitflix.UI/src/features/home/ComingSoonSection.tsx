@@ -1,23 +1,130 @@
-import { useQuery } from "@tanstack/react-query";
-import { useMemo } from "react";
-import { CalendarClock } from "lucide-react";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useMemo, useState } from "react";
+import { CalendarClock, Clapperboard, Pin, PinOff, X } from "lucide-react";
+import { useNavigate } from "react-router-dom";
 import { getComingSoon, type ComingSoonItem } from "../../api/homeDiscover";
+import { getComingSoon as getPinnedItems, pinComingSoon, unpinComingSoon } from "../../api/comingSoon";
+import { getTrailerEmbedUrl } from "../../api/trailers";
+import type { StreamPlayerLocationState } from "../../pages/StreamPlayerPage";
 import { AirDateCountdown } from "../../components/ui/AirDateCountdown";
+import { HorizontalScrollRow } from "../../components/ui/HorizontalScrollRow";
 import { MediaImage } from "../../components/ui/MediaImage";
 import { Spinner } from "../../components/ui/Spinner";
 import { formatRating } from "../../utils/format";
 
-function Card({ item }: { item: ComingSoonItem }) {
+const DISMISSED_KEY = "coming-soon-dismissed";
+
+function useDismissed() {
+  const [dismissed, setDismissed] = useState<Set<string>>(() => {
+    try {
+      const raw = localStorage.getItem(DISMISSED_KEY);
+      return raw ? new Set(JSON.parse(raw) as string[]) : new Set();
+    } catch {
+      return new Set();
+    }
+  });
+
+  const dismiss = (key: string) => {
+    setDismissed((prev) => {
+      const next = new Set(prev);
+      next.add(key);
+      try { localStorage.setItem(DISMISSED_KEY, JSON.stringify([...next])); } catch { /* ignore */ }
+      return next;
+    });
+  };
+
+  return { dismissed, dismiss };
+}
+
+function dismissKey(item: ComingSoonItem) {
+  return `${item.mediaType}-${item.tmdbId}`;
+}
+
+function Card({ item, pinnedId, onDismiss }: { item: ComingSoonItem; pinnedId: number | undefined; onDismiss: () => void }) {
+  const qc = useQueryClient();
+  const navigate = useNavigate();
+  const isPinned = pinnedId !== undefined;
+  const [trailerBusy, setTrailerBusy] = useState(false);
+
+  const pinMut = useMutation({
+    mutationFn: () =>
+      pinComingSoon({
+        tmdbId: item.tmdbId,
+        mediaType: item.mediaType,
+        title: item.title,
+        posterUrl: item.posterUrl,
+        releaseDate: item.releaseDate,
+        overview: item.overview,
+      }),
+    onSuccess: () => void qc.invalidateQueries({ queryKey: ["pinned-coming-soon"] }),
+  });
+
+  const unpinMut = useMutation({
+    mutationFn: () => unpinComingSoon(pinnedId!),
+    onSuccess: () => void qc.invalidateQueries({ queryKey: ["pinned-coming-soon"] }),
+  });
+
+  const busy = pinMut.isPending || unpinMut.isPending;
+
+  const handleTrailer = async () => {
+    if (trailerBusy) return;
+    setTrailerBusy(true);
+    try {
+      const res = await getTrailerEmbedUrl(item.tmdbId, item.mediaType);
+      const embedUrl = res.trailers?.[0]?.embedUrl ?? res.embedUrl;
+      if (!embedUrl) return;
+      const state: StreamPlayerLocationState = {
+        streamUrl: embedUrl,
+        title: `${item.title} — Trailer`,
+        posterUrl: item.posterUrl ?? undefined,
+      };
+      navigate("/stream-player", { state });
+    } catch {
+      // silently ignore — trailer not available
+    } finally {
+      setTrailerBusy(false);
+    }
+  };
+
   return (
-    <div className="w-[160px] shrink-0 overflow-hidden rounded-xl border border-pitflix-card/60 bg-pitflix-surface/50 shadow-md">
-      <MediaImage
-        src={item.posterUrl ?? undefined}
-        alt=""
-        className="aspect-[2/3] w-full object-cover"
-        fallbackText={item.title.slice(0, 2)}
-      />
+    <div className="group relative w-[160px] shrink-0 overflow-hidden rounded-xl border border-pitflix-card/60 bg-pitflix-surface/50 shadow-md">
+      <div className="relative">
+        <MediaImage
+          src={item.posterUrl ?? undefined}
+          alt=""
+          className="aspect-[2/3] w-full object-cover"
+          fallbackText={item.title.slice(0, 2)}
+        />
+        <button
+          type="button"
+          disabled={busy}
+          title={isPinned ? "Unpin from Coming Soon" : "Pin to Coming Soon"}
+          onClick={() => isPinned ? unpinMut.mutate() : pinMut.mutate()}
+          className="absolute right-1 top-1 z-10 flex h-6 w-6 items-center justify-center rounded-full bg-black/70 opacity-0 transition-opacity hover:bg-pitflix-primary/80 group-hover:opacity-100 disabled:opacity-40"
+        >
+          {isPinned
+            ? <PinOff className="h-3 w-3 text-pitflix-primary" />
+            : <Pin className="h-3 w-3 text-white" />
+          }
+        </button>
+        <button
+          type="button"
+          title="Hide from Coming Soon"
+          onClick={onDismiss}
+          className="absolute left-1 top-1 z-10 flex h-6 w-6 items-center justify-center rounded-full bg-black/70 opacity-0 transition-opacity hover:bg-rose-600/80 group-hover:opacity-100"
+        >
+          <X className="h-3 w-3 text-white" />
+        </button>
+      </div>
       <div className="space-y-1 p-2">
-        <p className="line-clamp-2 text-xs font-semibold text-white">{item.title}</p>
+        <div className="flex items-start justify-between gap-1">
+          <p className="line-clamp-2 text-xs font-semibold text-white">{item.title}</p>
+          {item.seasonNumber != null && (
+            <span className="shrink-0 rounded bg-pitflix-primary/20 px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wide text-pitflix-primary">
+              S{item.seasonNumber}
+            </span>
+          )}
+        </div>
         <p className="text-[10px] text-pitflix-subtle">
           {item.releaseDate} · ★ {formatRating(item.voteAverage)}
         </p>
@@ -25,41 +132,78 @@ function Card({ item }: { item: ComingSoonItem }) {
         <div className="w-full min-w-0">
           <AirDateCountdown airDate={item.releaseDate} layout="inline" compact />
         </div>
+        {/* Trailer button */}
+        <button
+          type="button"
+          disabled={trailerBusy}
+          onClick={() => void handleTrailer()}
+          className="mt-1 flex w-full items-center justify-center gap-1 rounded-lg border border-pitflix-primary/40 bg-pitflix-primary/10 py-1 text-[10px] font-semibold text-pitflix-primary transition-colors hover:bg-pitflix-primary/25 disabled:opacity-50"
+        >
+          {trailerBusy ? (
+            <Spinner className="h-3 w-3" />
+          ) : (
+            <Clapperboard className="h-3 w-3" />
+          )}
+          {trailerBusy ? "Loading…" : "Trailer"}
+        </button>
       </div>
     </div>
   );
 }
 
+/** Returns today's date at midnight (local time) as a Date object. */
+function todayMidnight() {
+  const d = new Date();
+  d.setHours(0, 0, 0, 0);
+  return d;
+}
+
 type ComingSoonProps = { embedded?: boolean };
 
 export function ComingSoonSection({ embedded = false }: ComingSoonProps) {
+  const { dismissed, dismiss } = useDismissed();
+
   const q = useQuery({
     queryKey: ["home-coming-soon"],
     queryFn: getComingSoon,
     staleTime: 120_000,
   });
 
-  const movies = useMemo(() => {
-    const list = [...(q.data?.movies ?? [])];
-    list.sort((a, b) => {
-      const da = a.releaseDate ?? "";
-      const db = b.releaseDate ?? "";
-      if (da !== db) return da.localeCompare(db);
-      return a.title.localeCompare(b.title, undefined, { sensitivity: "base" });
-    });
-    return list;
-  }, [q.data?.movies]);
+  const pinnedQ = useQuery({
+    queryKey: ["pinned-coming-soon"],
+    queryFn: getPinnedItems,
+    staleTime: 30_000,
+  });
 
-  const tv = useMemo(() => {
-    const list = [...(q.data?.tv ?? [])];
-    list.sort((a, b) => {
-      const da = a.releaseDate ?? "";
-      const db = b.releaseDate ?? "";
-      if (da !== db) return da.localeCompare(db);
-      return a.title.localeCompare(b.title, undefined, { sensitivity: "base" });
-    });
-    return list;
-  }, [q.data?.tv]);
+  const pinnedMap = useMemo(() => {
+    const m = new Map<number, number>();
+    for (const p of pinnedQ.data ?? []) m.set(p.tmdbId, p.id);
+    return m;
+  }, [pinnedQ.data]);
+
+  /** Filter helper: only items releasing today → +30 days, sorted by date then title, excluding dismissed. */
+  function filterAndSort(list: ComingSoonItem[]) {
+    const today = todayMidnight();
+    const cutoff = new Date(today);
+    cutoff.setDate(cutoff.getDate() + 30);
+
+    return [...list]
+      .filter((item) => {
+        if (!item.releaseDate) return false;
+        if (dismissed.has(dismissKey(item))) return false;
+        const d = new Date(item.releaseDate);
+        return d >= today && d <= cutoff;
+      })
+      .sort((a, b) => {
+        const da = a.releaseDate ?? "";
+        const db = b.releaseDate ?? "";
+        if (da !== db) return da.localeCompare(db);
+        return a.title.localeCompare(b.title, undefined, { sensitivity: "base" });
+      });
+  }
+
+  const movies = useMemo(() => filterAndSort(q.data?.movies ?? []), [q.data?.movies, dismissed]);
+  const tv = useMemo(() => filterAndSort(q.data?.tv ?? []), [q.data?.tv, dismissed]);
 
   const wrapClass = embedded
     ? ""
@@ -100,7 +244,7 @@ export function ComingSoonSection({ embedded = false }: ComingSoonProps) {
             : "rounded-2xl border border-dashed border-pitflix-card/50 bg-pitflix-bg/40 p-6 text-sm text-pitflix-subtle"
         }
       >
-        No upcoming listings from TMDB right now.
+        Nothing releasing in the next 30 days.
       </div>
     );
   }
@@ -111,32 +255,28 @@ export function ComingSoonSection({ embedded = false }: ComingSoonProps) {
         <div className="mb-4 flex items-center gap-2">
           <CalendarClock className="h-5 w-5 text-pitflix-primary" />
           <h2 className="text-lg font-bold text-white">Coming soon</h2>
-          <span className="text-xs text-pitflix-subtle">Upcoming releases only — future dates, not already out</span>
+          <span className="text-xs text-pitflix-subtle">Next 30 days</span>
         </div>
       )}
       <div className="space-y-4">
         {movies.length > 0 ? (
           <div>
             <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-pitflix-muted">Movies</p>
-            <div
-              className="flex gap-3 overflow-x-auto pb-2 [scrollbar-color:rgba(139,92,246,0.4)_rgba(15,15,20,0.85)] [scrollbar-width:thin] [&::-webkit-scrollbar]:h-2 [&::-webkit-scrollbar-thumb]:rounded-full [&::-webkit-scrollbar-thumb]:bg-violet-500/40 [&::-webkit-scrollbar-track]:rounded-full [&::-webkit-scrollbar-track]:bg-black/40"
-            >
+            <HorizontalScrollRow hideHeader className="mb-0" contentClassName="gap-3 pb-2">
               {movies.map((m) => (
-                <Card key={`m-${m.tmdbId}`} item={m} />
+                <Card key={`m-${m.tmdbId}`} item={m} pinnedId={pinnedMap.get(m.tmdbId)} onDismiss={() => dismiss(dismissKey(m))} />
               ))}
-            </div>
+            </HorizontalScrollRow>
           </div>
         ) : null}
         {tv.length > 0 ? (
           <div>
             <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-pitflix-muted">Series</p>
-            <div
-              className="flex gap-3 overflow-x-auto pb-2 [scrollbar-color:rgba(139,92,246,0.4)_rgba(15,15,20,0.85)] [scrollbar-width:thin] [&::-webkit-scrollbar]:h-2 [&::-webkit-scrollbar-thumb]:rounded-full [&::-webkit-scrollbar-thumb]:bg-violet-500/40 [&::-webkit-scrollbar-track]:rounded-full [&::-webkit-scrollbar-track]:bg-black/40"
-            >
+            <HorizontalScrollRow hideHeader className="mb-0" contentClassName="gap-3 pb-2">
               {tv.map((t) => (
-                <Card key={`t-${t.tmdbId}`} item={t} />
+                <Card key={`t-${t.tmdbId}`} item={t} pinnedId={pinnedMap.get(t.tmdbId)} onDismiss={() => dismiss(dismissKey(t))} />
               ))}
-            </div>
+            </HorizontalScrollRow>
           </div>
         ) : null}
       </div>

@@ -1,0 +1,24 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 80 80" fill="none">
+  <defs>
+    <radialGradient id="mask" cx="38%" cy="35%" r="65%">
+      <stop offset="0%" stop-color="#FFDF70"/>
+      <stop offset="55%" stop-color="#C9920A"/>
+      <stop offset="100%" stop-color="#8B6000"/>
+    </radialGradient>
+  </defs>
+  <!-- BAFTA mask body — wide oval with pointed chin -->
+  <path d="M40 8 Q62 8 68 28 Q72 44 68 56 Q62 70 40 72 Q18 70 12 56 Q8 44 12 28 Q18 8 40 8 Z" fill="url(#mask)"/>
+  <!-- Swept wings at top (BAFTA's distinctive feature) -->
+  <path d="M14 26 Q4 18 6 6 Q10 0 18 4 Q16 14 18 22 Z" fill="url(#mask)"/>
+  <path d="M66 26 Q76 18 74 6 Q70 0 62 4 Q64 14 62 22 Z" fill="url(#mask)"/>
+  <!-- Left eye hole -->
+  <ellipse cx="28" cy="38" rx="11" ry="9" fill="#111111"/>
+  <ellipse cx="28" cy="38" rx="8" ry="6.5" fill="#050505"/>
+  <!-- Right eye hole -->
+  <ellipse cx="52" cy="38" rx="11" ry="9" fill="#111111"/>
+  <ellipse cx="52" cy="38" rx="8" ry="6.5" fill="#050505"/>
+  <!-- Nose bridge -->
+  <path d="M34 50 Q40 54 46 50" stroke="#A07010" stroke-width="2" fill="none" stroke-linecap="round"/>
+  <!-- Highlight -->
+  <ellipse cx="32" cy="22" rx="9" ry="7" fill="#FFDF70" opacity="0.25"/>
+</svg>

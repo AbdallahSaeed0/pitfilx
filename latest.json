@@ -1,11 +1,11 @@
 {
-  "version": "0.3.9",
+  "version": "0.4.4",
   "notes": "New release for update.",
-  "pub_date": "2026-05-6T12:00:00Z",
+  "pub_date": "2026-05-20T12:00:00Z",
   "platforms": {
     "windows-x86_64": {
-      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVTbzhqUXl3T0s3bnJ3Qi9SRGUrVHg0TzJoWUkzV0tSNGQyUW15Rk9RQzBWdy9rZUphTEYyZFBJZkxFempBRVJtcHoxT1NJL01hb002azQ2c1JqaDVwY25LazNBVGFmWFFVPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzc4MDQwMDM3CWZpbGU6UGl0ZmxpeF8wLjMuOV94NjQtc2V0dXAuZXhlCnJLTnF5MHgwcnA4Q2RlM0NSd2dYcWFpbzFiOFluSjQ3QTdHY01RaCtLZWZ4Q0MzRUU4R2NBZkxraXNmMFpZY3ZUVkFOM3IrRE1ZWmRYOWRNSnB4a0NRPT0K",
-      "url": "https://github.com/AbdallahSaeed0/pitfilx/releases/download/v0.3.9/Pitflix_0.3.9_x64-setup.exe"
+      "signature": "",
+      "url": "https://github.com/AbdallahSaeed0/pitfilx/releases/download/v0.4.4/Pitflix_0.4.4_x64-setup.exe"
     }
   }
 }

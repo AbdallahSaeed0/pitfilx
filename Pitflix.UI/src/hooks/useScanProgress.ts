@@ -60,13 +60,32 @@ export function useScanStream() {
             });
           } else if (type === "complete") {
             setProgress({ isRunning: false });
+            const completedMatched = Number(msg.matched ?? msg.Matched ?? 0);
+            const completedUnmatched = Number(msg.unmatched ?? msg.Unmatched ?? 0);
             setLastComplete({
-              matched: Number(msg.matched ?? msg.Matched ?? 0),
-              unmatched: Number(msg.unmatched ?? msg.Unmatched ?? 0),
+              matched: completedMatched,
+              unmatched: completedUnmatched,
               skipped: Number(msg.skipped ?? 0),
               empty: Boolean(msg.empty ?? false),
               message: typeof msg.message === "string" ? msg.message : undefined,
             });
+            // Refresh the library so newly matched/unmatched files appear immediately
+            if (completedMatched > 0 || completedUnmatched > 0) {
+              void qc.invalidateQueries({ queryKey: ["movies"] });
+              void qc.invalidateQueries({ queryKey: ["series"] });
+              void qc.invalidateQueries({ queryKey: ["unmatched"] });
+              void qc.invalidateQueries({ queryKey: ["stats"] });
+              void qc.invalidateQueries({ queryKey: ["home-movies"] });
+              void qc.invalidateQueries({ queryKey: ["home-series"] });
+            }
+          } else if (type === "libraryUpdated") {
+            // Lightweight broadcast from auto-scan when new files are indexed (no toast shown)
+            void qc.invalidateQueries({ queryKey: ["movies"] });
+            void qc.invalidateQueries({ queryKey: ["series"] });
+            void qc.invalidateQueries({ queryKey: ["unmatched"] });
+            void qc.invalidateQueries({ queryKey: ["stats"] });
+            void qc.invalidateQueries({ queryKey: ["home-movies"] });
+            void qc.invalidateQueries({ queryKey: ["home-series"] });
           } else if (type === "cancelled") {
             setProgress({ isRunning: false });
           } else if (type === "libraryNotification") {

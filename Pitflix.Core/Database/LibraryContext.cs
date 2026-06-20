@@ -23,6 +23,9 @@ public class LibraryContext : DbContext
     public DbSet<ListItem> ListItems => Set<ListItem>();
     public DbSet<LibraryFolder> LibraryFolders => Set<LibraryFolder>();
     public DbSet<RatingsSnapshot> RatingsSnapshots => Set<RatingsSnapshot>();
+    public DbSet<PinnedComingSoon> PinnedComingSoon => Set<PinnedComingSoon>();
+    public DbSet<SeasonSkipSegment> SeasonSkipSegments => Set<SeasonSkipSegment>();
+    public DbSet<EpisodeSkipOverride> EpisodeSkipOverrides => Set<EpisodeSkipOverride>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -108,6 +111,30 @@ public class LibraryContext : DbContext
             e.HasIndex(x => new { x.TmdbId, x.MediaType }).IsUnique();
             e.HasIndex(x => x.NextRefreshAtUtc);
             e.HasIndex(x => x.RatingsLastUpdatedAtUtc);
+        });
+
+        modelBuilder.Entity<PinnedComingSoon>(e =>
+        {
+            e.HasIndex(x => new { x.TmdbId, x.MediaType }).IsUnique();
+            e.HasIndex(x => x.PinnedAt);
+        });
+
+        modelBuilder.Entity<SeasonSkipSegment>(e =>
+        {
+            e.HasIndex(x => new { x.ShowId, x.SeasonNumber }).IsUnique();
+            e.HasOne<Show>()
+                .WithMany()
+                .HasForeignKey(x => x.ShowId)
+                .OnDelete(DeleteBehavior.Cascade);
+        });
+
+        modelBuilder.Entity<EpisodeSkipOverride>(e =>
+        {
+            e.HasIndex(x => x.EpisodeId).IsUnique();
+            e.HasOne<Episode>()
+                .WithMany()
+                .HasForeignKey(x => x.EpisodeId)
+                .OnDelete(DeleteBehavior.Cascade);
         });
     }
 

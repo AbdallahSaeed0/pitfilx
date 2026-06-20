@@ -25,4 +25,10 @@ export type PlaybackLaunchState = {
   episodeNumber?: number;
   /** Set when opening the player so close / end-of-play can restore the prior screen (and scroll). */
   returnTo?: PlayerReturnTo;
+  /** Carries the suppressContinueWatching flag so sibling-file switches inside the player stay hidden from Continue Watching. */
+  suppressContinueWatching?: boolean;
+  /** True when the user selected the in-process libmpv engine — PlayerPage uses `player2_libmpv_*` commands. */
+  useLibMpv?: boolean;
+  /** Show / series display name (separate from `title`, which usually is the episode title). */
+  seriesName?: string;
 };

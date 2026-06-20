@@ -9,3 +9,4 @@ appsettings.local.json
 /_verify_build_out/
 
 third_party/libmpv/libmpv-2.dll
+.exe

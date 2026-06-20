@@ -778,11 +778,79 @@ public sealed class LibraryRepository
             LastExplicitPositionSeconds = 0,
             LastHeartbeatAtUtc = null,
             IsStopFinalized = false,
-            SuppressContinueWatching = suppressContinueWatching
+            SuppressContinueWatching = suppressContinueWatching,
+            Source = "local",
         };
         _db.WatchHistories.Add(h);
         await _db.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
+
+        // Enrich with TMDB id, season/episode numbers, and poster URL from the library.
+        // This runs inline but is a cheap DB-only lookup (no network calls).
+        await EnrichHistoryFromLibraryAsync(h, cancellationToken).ConfigureAwait(false);
+
         return h.Id;
+    }
+
+    /// <summary>
+    /// Populates analytics fields (TmdbId, SeasonNumber, EpisodeNumber, PosterUrl) on a WatchHistory row
+    /// by looking up the matching Movie or Episode in the library. Safe to call multiple times.
+    /// </summary>
+    private async Task EnrichHistoryFromLibraryAsync(WatchHistory h, CancellationToken ct)
+    {
+        if (string.IsNullOrWhiteSpace(h.FilePath)) return;
+        try
+        {
+            if (string.Equals(h.MediaType, "Movie", StringComparison.OrdinalIgnoreCase) || h.TmdbId == null)
+            {
+                var movie = await TryGetMovieByFilePathAsync(h.FilePath, ct).ConfigureAwait(false);
+                if (movie != null)
+                {
+                    h.TmdbId = movie.TmdbId > 0 ? movie.TmdbId : h.TmdbId;
+                    h.PosterUrl ??= movie.PosterRemoteUrl;
+                    await _db.SaveChangesAsync(ct).ConfigureAwait(false);
+                    return;
+                }
+            }
+
+            // Try episode (covers Series rows and also any Movie row whose path resolves as an episode).
+            var ep = await TryGetEpisodeByFilePathAsync(h.FilePath, ct).ConfigureAwait(false);
+            if (ep != null)
+            {
+                var show = await _db.Shows.AsNoTracking()
+                    .FirstOrDefaultAsync(s => s.Id == ep.ShowId, ct).ConfigureAwait(false);
+                h.TmdbId = (show?.TmdbId ?? 0) > 0 ? show!.TmdbId : h.TmdbId;
+                h.SeasonNumber = ep.Season;
+                h.EpisodeNumber = ep.EpisodeNumber;
+                h.PosterUrl ??= show?.PosterRemoteUrl;
+                await _db.SaveChangesAsync(ct).ConfigureAwait(false);
+            }
+        }
+        catch
+        {
+            // Enrichment is best-effort — never block playback start on a DB error.
+        }
+    }
+
+    /// <summary>
+    /// Back-fills TmdbId / SeasonNumber / EpisodeNumber on existing history rows that were created before
+    /// the enrichment logic was added. Safe to call multiple times (skips already-enriched rows).
+    /// Returns the number of rows updated.
+    /// </summary>
+    public async Task<int> ReEnrichHistoryRowsAsync(CancellationToken cancellationToken = default)
+    {
+        // Only process rows that are missing TmdbId (the primary analytics field).
+        var rows = await _db.WatchHistories
+            .Where(h => h.TmdbId == null || h.TmdbId == 0)
+            .ToListAsync(cancellationToken).ConfigureAwait(false);
+
+        var updated = 0;
+        foreach (var h in rows)
+        {
+            var before = h.TmdbId;
+            await EnrichHistoryFromLibraryAsync(h, cancellationToken).ConfigureAwait(false);
+            if (h.TmdbId != before) updated++;
+        }
+        return updated;
     }
 
     /// <summary>Recent plays, one entry per distinct file path (latest first).</summary>
@@ -833,11 +901,14 @@ public sealed class LibraryRepository
 
             if (h.OpenedAt > current.OpenedAt)
             {
+                // h is the newer row — carry forward max values except LastExplicit which belongs to the newer session.
                 h.EstimatedSeconds = Math.Max(h.EstimatedSeconds, current.EstimatedSeconds);
                 h.FileDurationSeconds = Math.Max(h.FileDurationSeconds, current.FileDurationSeconds);
                 h.MaxKnownPositionSeconds = Math.Max(h.MaxKnownPositionSeconds, current.MaxKnownPositionSeconds);
-                h.LastExplicitPositionSeconds =
-                    Math.Max(h.LastExplicitPositionSeconds, current.LastExplicitPositionSeconds);
+                // Do NOT max LastExplicit: the newer row's value IS the user's last intentional stop position.
+                // Maxing would restore a higher position from an older session and ignore intentional rewinds.
+                if (h.LastExplicitPositionSeconds <= 0)
+                    h.LastExplicitPositionSeconds = current.LastExplicitPositionSeconds;
                 h.LastHeartbeatAtUtc = MaxUtc(h.LastHeartbeatAtUtc, current.LastHeartbeatAtUtc);
                 h.IsStopFinalized = h.IsStopFinalized || current.IsStopFinalized;
                 if (!h.StartedAt.HasValue || (current.StartedAt.HasValue && current.StartedAt > h.StartedAt))
@@ -848,11 +919,12 @@ public sealed class LibraryRepository
             }
             else
             {
+                // current is the newer row — same rule: don't let the older row's LastExplicit override it.
                 current.EstimatedSeconds = Math.Max(current.EstimatedSeconds, h.EstimatedSeconds);
                 current.FileDurationSeconds = Math.Max(current.FileDurationSeconds, h.FileDurationSeconds);
                 current.MaxKnownPositionSeconds = Math.Max(current.MaxKnownPositionSeconds, h.MaxKnownPositionSeconds);
-                current.LastExplicitPositionSeconds =
-                    Math.Max(current.LastExplicitPositionSeconds, h.LastExplicitPositionSeconds);
+                if (current.LastExplicitPositionSeconds <= 0)
+                    current.LastExplicitPositionSeconds = h.LastExplicitPositionSeconds;
                 current.LastHeartbeatAtUtc = MaxUtc(current.LastHeartbeatAtUtc, h.LastHeartbeatAtUtc);
                 current.IsStopFinalized = current.IsStopFinalized || h.IsStopFinalized;
                 if (!current.StartedAt.HasValue || (h.StartedAt.HasValue && h.StartedAt > current.StartedAt))
@@ -1088,6 +1160,27 @@ public sealed class LibraryRepository
     }
 
     /// <summary>
+    /// Sets <see cref="WatchHistory.IsCompleted"/> = true on every history row whose FilePath matches
+    /// <paramref name="filePath"/> (using forward/back-slash variants). This removes the row from
+    /// Continue Watching without deleting it, preserving resume-point history for stats.
+    /// </summary>
+    private async Task MarkHistoryRowsCompletedByFilePathAsync(string filePath, CancellationToken ct)
+    {
+        var fp = (filePath ?? "").Trim();
+        if (fp.Length == 0) return;
+        var variants = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+        {
+            fp,
+            fp.Replace('\\', '/'),
+            fp.Replace('/', '\\'),
+        };
+        await _db.WatchHistories
+            .Where(h => variants.Contains(h.FilePath) && !h.IsCompleted)
+            .ExecuteUpdateAsync(s => s.SetProperty(h => h.IsCompleted, true), ct)
+            .ConfigureAwait(false);
+    }
+
+    /// <summary>
     /// Removes Continue watching entries for the file linked to this history row. Optionally marks the library movie or episode completed first.
     /// </summary>
     public async Task<bool> ContinueWatchingDismissAsync(int historyId, bool markLibraryCompleted,
@@ -1116,6 +1209,20 @@ public sealed class LibraryRepository
             }
         }
 
+        // Soft-delete: mark rows as completed instead of deleting them.
+        // This preserves the OpenedAt date in WatchHistories so the daily-streak
+        // calculation in GetWatchStatisticsBundleAsync still counts this day even
+        // for partial watches or episodes played to completion.
+        // CollapseRecentHistoryRows already skips IsCompleted==true rows, so
+        // Continue Watching UI behaviour is unchanged.
+        var filePath = h.FilePath;
+        if (!string.IsNullOrWhiteSpace(filePath))
+        {
+            await MarkHistoryRowsCompletedByFilePathAsync(filePath, cancellationToken).ConfigureAwait(false);
+            return true;
+        }
+
+        // Fallback to hard-delete only when file path is unknown.
         return await RemoveContinueWatchingByHistoryIdAsync(historyId, cancellationToken).ConfigureAwait(false);
     }
 
@@ -1139,7 +1246,7 @@ public sealed class LibraryRepository
         if (sessionSeconds > 60)
             h.EstimatedSeconds = Math.Max(h.EstimatedSeconds, sessionSeconds);
 
-        if (h.FileDurationSeconds > 0 && h.EstimatedSeconds >= h.FileDurationSeconds * 0.9)
+        if (h.FileDurationSeconds > 0 && h.EstimatedSeconds >= h.FileDurationSeconds * 0.90)
             h.IsCompleted = true;
 
         await _db.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
@@ -1149,6 +1256,27 @@ public sealed class LibraryRepository
     }
 
     /// <summary>Built-in player: authoritative position/duration; updates library watch state.</summary>
+    /// <summary>
+    /// Finds the most recent un-finalized <see cref="WatchHistory"/> row for
+    /// the given file.  Used by <see cref="Services.PlayerService"/> so it
+    /// can stream playback-position updates back into the history table
+    /// without the caller needing to thread the history id through the
+    /// existing /api/player/play body.  Returns null when no candidate row
+    /// exists (file never played, or every row already finalized).
+    /// </summary>
+    public async Task<int?> FindActiveHistoryIdByFileAsync(string filePath,
+        CancellationToken cancellationToken = default)
+    {
+        if (string.IsNullOrWhiteSpace(filePath)) return null;
+        var row = await _db.WatchHistories.AsNoTracking()
+            .Where(h => h.FilePath == filePath && !h.IsStopFinalized)
+            .OrderByDescending(h => h.OpenedAt)
+            .Select(h => new { h.Id })
+            .FirstOrDefaultAsync(cancellationToken)
+            .ConfigureAwait(false);
+        return row?.Id;
+    }
+
     public async Task UpdateWatchHistoryProgressAsync(int historyId, int positionSeconds, int? durationSeconds,
         bool markWatching, CancellationToken cancellationToken = default)
     {
@@ -1173,7 +1301,7 @@ public sealed class LibraryRepository
         h.EstimatedSeconds = Math.Max(h.EstimatedSeconds, positionSeconds);
 
         var dur = h.FileDurationSeconds;
-        var nearEnd = dur > 0 && h.EstimatedSeconds >= (int)(dur * 0.9);
+        var nearEnd = dur > 0 && h.EstimatedSeconds >= (int)(dur * 0.90);
         if (nearEnd)
             h.IsCompleted = true;
 
@@ -1230,11 +1358,11 @@ public sealed class LibraryRepository
 
         h.StoppedAt = stoppedAtUtc;
         h.LastHeartbeatAtUtc = MaxUtc(h.LastHeartbeatAtUtc, stoppedAtUtc);
-        h.LastExplicitPositionSeconds = Math.Max(h.LastExplicitPositionSeconds, positionSeconds);
+        h.LastExplicitPositionSeconds = positionSeconds; // authoritative: the exact position the user stopped at
         h.MaxKnownPositionSeconds = Math.Max(h.MaxKnownPositionSeconds, positionSeconds);
         h.EstimatedSeconds = Math.Max(h.EstimatedSeconds, positionSeconds);
         h.IsStopFinalized = true;
-        if (h.FileDurationSeconds > 0 && h.EstimatedSeconds >= h.FileDurationSeconds * 0.9)
+        if (h.FileDurationSeconds > 0 && h.EstimatedSeconds >= h.FileDurationSeconds * 0.90)
             h.IsCompleted = true;
 
         await _db.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
@@ -1341,6 +1469,165 @@ public sealed class LibraryRepository
             .ConfigureAwait(false);
     }
 
+    public async Task EnsureContentRatingColumnAsync(CancellationToken cancellationToken = default)
+    {
+        async Task AddIfMissingAsync(string table, string column, string sql)
+        {
+            if (await SqliteColumnExistsAsync(table, column, cancellationToken).ConfigureAwait(false))
+                return;
+            await _db.Database.ExecuteSqlRawAsync(sql, cancellationToken).ConfigureAwait(false);
+        }
+
+        await AddIfMissingAsync("Movies", "ContentRating",
+            "ALTER TABLE Movies ADD COLUMN ContentRating TEXT NULL").ConfigureAwait(false);
+        await AddIfMissingAsync("Shows", "ContentRating",
+            "ALTER TABLE Shows ADD COLUMN ContentRating TEXT NULL").ConfigureAwait(false);
+    }
+
+    public async Task EnsureKeywordsJsonColumnsAsync(CancellationToken cancellationToken = default)
+    {
+        async Task AddIfMissingAsync(string table, string column, string sql)
+        {
+            if (await SqliteColumnExistsAsync(table, column, cancellationToken).ConfigureAwait(false))
+                return;
+            await _db.Database.ExecuteSqlRawAsync(sql, cancellationToken).ConfigureAwait(false);
+        }
+
+        await AddIfMissingAsync("Movies", "KeywordsJson",
+            "ALTER TABLE Movies ADD COLUMN KeywordsJson TEXT NULL").ConfigureAwait(false);
+        await AddIfMissingAsync("Shows", "KeywordsJson",
+            "ALTER TABLE Shows ADD COLUMN KeywordsJson TEXT NULL").ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// Adds unified-tracking columns to WatchHistories so watches from streaming
+    /// and manual "mark watched" actions survive library file deletion.
+    /// Also creates the PinnedComingSoon table for the Coming Soon home section.
+    /// </summary>
+    public async Task EnsureUnifiedTrackingAsync(CancellationToken cancellationToken = default)
+    {
+        async Task AddIfMissingAsync(string table, string column, string sql)
+        {
+            if (await SqliteColumnExistsAsync(table, column, cancellationToken).ConfigureAwait(false))
+                return;
+            await _db.Database.ExecuteSqlRawAsync(sql, cancellationToken).ConfigureAwait(false);
+        }
+
+        // Extend WatchHistories
+        await AddIfMissingAsync("WatchHistories", "TmdbId",
+            "ALTER TABLE WatchHistories ADD COLUMN TmdbId INTEGER NULL").ConfigureAwait(false);
+        await AddIfMissingAsync("WatchHistories", "ImdbId",
+            "ALTER TABLE WatchHistories ADD COLUMN ImdbId TEXT NULL").ConfigureAwait(false);
+        await AddIfMissingAsync("WatchHistories", "Source",
+            "ALTER TABLE WatchHistories ADD COLUMN Source TEXT NOT NULL DEFAULT 'local'").ConfigureAwait(false);
+        await AddIfMissingAsync("WatchHistories", "SeasonNumber",
+            "ALTER TABLE WatchHistories ADD COLUMN SeasonNumber INTEGER NULL").ConfigureAwait(false);
+        await AddIfMissingAsync("WatchHistories", "EpisodeNumber",
+            "ALTER TABLE WatchHistories ADD COLUMN EpisodeNumber INTEGER NULL").ConfigureAwait(false);
+        await AddIfMissingAsync("WatchHistories", "PosterUrl",
+            "ALTER TABLE WatchHistories ADD COLUMN PosterUrl TEXT NULL").ConfigureAwait(false);
+
+        // Create PinnedComingSoon table (idempotent)
+        await _db.Database.ExecuteSqlRawAsync(
+            """
+            CREATE TABLE IF NOT EXISTS "PinnedComingSoon" (
+                "Id"          INTEGER NOT NULL CONSTRAINT "PK_PinnedComingSoon" PRIMARY KEY AUTOINCREMENT,
+                "TmdbId"      INTEGER NOT NULL,
+                "MediaType"   TEXT    NOT NULL DEFAULT 'Movie',
+                "Title"       TEXT    NOT NULL DEFAULT '',
+                "PosterUrl"   TEXT    NULL,
+                "ReleaseDate" TEXT    NULL,
+                "TrailerUrl"  TEXT    NULL,
+                "Overview"    TEXT    NULL,
+                "PinnedAt"    TEXT    NOT NULL DEFAULT (datetime('now'))
+            )
+            """,
+            cancellationToken).ConfigureAwait(false);
+
+        await _db.Database.ExecuteSqlRawAsync(
+            """
+            CREATE UNIQUE INDEX IF NOT EXISTS "IX_PinnedComingSoon_TmdbId_MediaType"
+            ON "PinnedComingSoon" ("TmdbId", "MediaType")
+            """,
+            cancellationToken).ConfigureAwait(false);
+
+        await _db.Database.ExecuteSqlRawAsync(
+            """
+            CREATE INDEX IF NOT EXISTS "IX_WatchHistories_TmdbId" ON "WatchHistories" ("TmdbId")
+            """,
+            cancellationToken).ConfigureAwait(false);
+    }
+
+    // ── Coming Soon repository helpers ──────────────────────────────────────────
+
+    public async Task<IReadOnlyList<PinnedComingSoon>> GetPinnedComingSoonAsync(CancellationToken ct = default) =>
+        await _db.PinnedComingSoon.AsNoTracking().OrderBy(x => x.ReleaseDate).ThenBy(x => x.PinnedAt)
+            .ToListAsync(ct).ConfigureAwait(false);
+
+    public async Task<PinnedComingSoon?> PinComingSoonAsync(PinnedComingSoon item, CancellationToken ct = default)
+    {
+        var existing = await _db.PinnedComingSoon
+            .FirstOrDefaultAsync(x => x.TmdbId == item.TmdbId && x.MediaType == item.MediaType, ct)
+            .ConfigureAwait(false);
+        if (existing != null) return existing; // already pinned — idempotent
+        item.PinnedAt = DateTime.UtcNow;
+        _db.PinnedComingSoon.Add(item);
+        await _db.SaveChangesAsync(ct).ConfigureAwait(false);
+        return item;
+    }
+
+    public async Task<bool> UnpinComingSoonAsync(int id, CancellationToken ct = default)
+    {
+        var row = await _db.PinnedComingSoon.FindAsync([id], ct).ConfigureAwait(false);
+        if (row == null) return false;
+        _db.PinnedComingSoon.Remove(row);
+        await _db.SaveChangesAsync(ct).ConfigureAwait(false);
+        return true;
+    }
+
+    // ── Unified watch-entry helpers ─────────────────────────────────────────────
+
+    /// <summary>
+    /// Records a completed streaming or manual watch.
+    /// Idempotent for the same (TmdbId, MediaType, SeasonNumber, EpisodeNumber, source) on the same UTC day.
+    /// </summary>
+    public async Task RecordUnifiedWatchAsync(
+        int? tmdbId, string? imdbId, string mediaType, string title,
+        string? posterUrl, string source,
+        int? seasonNumber, int? episodeNumber,
+        int estimatedSeconds,
+        CancellationToken ct = default)
+    {
+        // Idempotency: skip if same title+source already recorded today
+        var today = DateTime.UtcNow.Date;
+        var already = await _db.WatchHistories.AnyAsync(h =>
+            h.TmdbId == tmdbId &&
+            h.Source == source &&
+            h.SeasonNumber == seasonNumber &&
+            h.EpisodeNumber == episodeNumber &&
+            h.OpenedAt >= today, ct).ConfigureAwait(false);
+        if (already) return;
+
+        _db.WatchHistories.Add(new WatchHistory
+        {
+            FilePath = "",
+            Title = title,
+            MediaType = mediaType,
+            OpenedAt = DateTime.UtcNow,
+            IsCompleted = true,
+            IsStopFinalized = true,
+            EstimatedSeconds = Math.Max(0, estimatedSeconds),
+            TmdbId = tmdbId,
+            ImdbId = imdbId,
+            Source = source,
+            SeasonNumber = seasonNumber,
+            EpisodeNumber = episodeNumber,
+            PosterUrl = posterUrl,
+            SuppressContinueWatching = true, // streaming entries don't appear in "Continue watching"
+        });
+        await _db.SaveChangesAsync(ct).ConfigureAwait(false);
+    }
+
     public async Task EnsureEpisodeStillLocalPathColumnAsync(CancellationToken cancellationToken = default)
     {
         async Task AddIfMissingAsync(string table, string column, string sql)
@@ -1351,6 +1638,23 @@ public sealed class LibraryRepository
         }
 
         await AddIfMissingAsync("Episodes", "StillLocalPath", "ALTER TABLE Episodes ADD COLUMN StillLocalPath TEXT")
+            .ConfigureAwait(false);
+    }
+
+    public async Task EnsureListItemMetadataColumnsAsync(CancellationToken cancellationToken = default)
+    {
+        async Task AddIfMissingAsync(string table, string column, string sql)
+        {
+            if (await SqliteColumnExistsAsync(table, column, cancellationToken).ConfigureAwait(false))
+                return;
+            await _db.Database.ExecuteSqlRawAsync(sql, cancellationToken).ConfigureAwait(false);
+        }
+
+        await AddIfMissingAsync("ListItems", "Title", "ALTER TABLE ListItems ADD COLUMN Title TEXT")
+            .ConfigureAwait(false);
+        await AddIfMissingAsync("ListItems", "PosterRemoteUrl", "ALTER TABLE ListItems ADD COLUMN PosterRemoteUrl TEXT")
+            .ConfigureAwait(false);
+        await AddIfMissingAsync("ListItems", "ImdbId", "ALTER TABLE ListItems ADD COLUMN ImdbId TEXT")
             .ConfigureAwait(false);
     }
 
@@ -1461,6 +1765,10 @@ public sealed class LibraryRepository
         m.WatchStatus = watchStatus;
         m.CompletedAt = watchStatus == WatchStatuses.Completed ? DateTime.UtcNow : null;
         await _db.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
+
+        // When a movie is marked Completed, clear it from Continue Watching in history too.
+        if (watchStatus == WatchStatuses.Completed)
+            await MarkHistoryRowsCompletedByFilePathAsync(m.FilePath, cancellationToken).ConfigureAwait(false);
     }
 
     /// <summary>Sets library watch status for a show and applies the same status to every episode row.</summary>
@@ -1485,6 +1793,24 @@ public sealed class LibraryRepository
         }
 
         await _db.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
+
+        // When every episode is marked Completed, clear all their history rows from Continue Watching.
+        if (watchStatus == WatchStatuses.Completed)
+        {
+            var allVariants = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            foreach (var ep in eps.Where(e => !string.IsNullOrEmpty(e.FilePath)))
+            {
+                var fp = ep.FilePath.Trim();
+                allVariants.Add(fp);
+                allVariants.Add(fp.Replace('\\', '/'));
+                allVariants.Add(fp.Replace('/', '\\'));
+            }
+            if (allVariants.Count > 0)
+                await _db.WatchHistories
+                    .Where(h => allVariants.Contains(h.FilePath) && !h.IsCompleted)
+                    .ExecuteUpdateAsync(s => s.SetProperty(h => h.IsCompleted, true), cancellationToken)
+                    .ConfigureAwait(false);
+        }
     }
 
     public async Task UpdateEpisodeWatchStatusAsync(int episodeId, string watchStatus,
@@ -1501,6 +1827,10 @@ public sealed class LibraryRepository
         ep.WatchStatus = watchStatus;
         ep.CompletedAt = watchStatus == WatchStatuses.Completed ? DateTime.UtcNow : null;
         await _db.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
+
+        // When an episode is marked Completed, clear it from Continue Watching in history too.
+        if (watchStatus == WatchStatuses.Completed)
+            await MarkHistoryRowsCompletedByFilePathAsync(ep.FilePath, cancellationToken).ConfigureAwait(false);
 
         await SyncShowWatchStatusFromEpisodesAsync(ep.ShowId, cancellationToken).ConfigureAwait(false);
     }
@@ -1558,6 +1888,24 @@ public sealed class LibraryRepository
 
         await _db.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
     }
+
+    // ── Incremental scan timestamp ────────────────────────────────────────────
+
+    /// <summary>Returns the UTC timestamp of the last successful auto-scan, or null if never run.</summary>
+    public async Task<DateTime?> GetLastAutoScanAtAsync(CancellationToken cancellationToken = default)
+    {
+        var raw = await GetSettingAsync("LastAutoScanAt", cancellationToken).ConfigureAwait(false);
+        if (string.IsNullOrWhiteSpace(raw)) return null;
+        return DateTime.TryParse(raw, null, System.Globalization.DateTimeStyles.RoundtripKind, out var dt)
+            ? dt
+            : (DateTime?)null;
+    }
+
+    /// <summary>Stores the UTC timestamp of the most recently completed auto-scan.</summary>
+    public Task SetLastAutoScanAtAsync(DateTime utcNow, CancellationToken cancellationToken = default)
+        => SaveSettingAsync("LastAutoScanAt", utcNow.ToString("O"), cancellationToken);
+
+    // ─────────────────────────────────────────────────────────────────────────
 
     private const string NextEpisodesPinnedKey = "NextEpisodesPinnedV1";
 
@@ -2341,7 +2689,8 @@ public sealed class LibraryRepository
                 TmdbId = s.TmdbId,
                 Title = s.Title,
                 Year = s.Year,
-                PosterLocalPath = s.PosterLocalPath
+                PosterLocalPath = s.PosterLocalPath,
+                WatchStatus = s.WatchStatus,
             }));
         }
 
@@ -2361,7 +2710,8 @@ public sealed class LibraryRepository
                 TmdbId = m.TmdbId,
                 Title = m.Title,
                 Year = m.Year,
-                PosterLocalPath = m.PosterLocalPath
+                PosterLocalPath = m.PosterLocalPath,
+                WatchStatus = m.WatchStatus,
             }));
         }
 
@@ -2882,17 +3232,40 @@ public sealed class LibraryRepository
     }
 
     public async Task AddListItemAsync(int listId, int tmdbId, string mediaType,
+        string? title = null, string? posterRemoteUrl = null, string? imdbId = null,
         CancellationToken cancellationToken = default)
     {
         if (await IsInListAsync(listId, tmdbId, mediaType, cancellationToken).ConfigureAwait(false))
+        {
+            // Update stored metadata if we now have better data
+            if (!string.IsNullOrWhiteSpace(title) || !string.IsNullOrWhiteSpace(imdbId))
+            {
+                var existing = await _db.ListItems
+                    .FirstOrDefaultAsync(x => x.ListId == listId && x.TmdbId == tmdbId && x.MediaType == mediaType,
+                        cancellationToken).ConfigureAwait(false);
+                if (existing != null)
+                {
+                    if (!string.IsNullOrWhiteSpace(title) && string.IsNullOrWhiteSpace(existing.Title))
+                        existing.Title = title;
+                    if (!string.IsNullOrWhiteSpace(posterRemoteUrl) && string.IsNullOrWhiteSpace(existing.PosterRemoteUrl))
+                        existing.PosterRemoteUrl = posterRemoteUrl;
+                    if (!string.IsNullOrWhiteSpace(imdbId) && string.IsNullOrWhiteSpace(existing.ImdbId))
+                        existing.ImdbId = imdbId;
+                    await _db.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
+                }
+            }
             return;
+        }
 
         _db.ListItems.Add(new ListItem
         {
             ListId = listId,
             TmdbId = tmdbId,
             MediaType = mediaType,
-            AddedAt = DateTime.UtcNow
+            AddedAt = DateTime.UtcNow,
+            Title = string.IsNullOrWhiteSpace(title) ? null : title,
+            PosterRemoteUrl = string.IsNullOrWhiteSpace(posterRemoteUrl) ? null : posterRemoteUrl,
+            ImdbId = string.IsNullOrWhiteSpace(imdbId) ? null : imdbId,
         });
         await _db.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
     }
@@ -2983,14 +3356,16 @@ public sealed class LibraryRepository
             if (string.Equals(li.MediaType, "Series", StringComparison.OrdinalIgnoreCase))
             {
                 var s = shows.FirstOrDefault(x => x.TmdbId == li.TmdbId);
-                rows.Add(new ListItemDisplayRow(li.TmdbId, "Series", s?.Title ?? $"TV {li.TmdbId}", s?.Year,
-                    s?.PosterLocalPath, s?.Id));
+                var title = s?.Title ?? li.Title ?? $"TV {li.TmdbId}";
+                rows.Add(new ListItemDisplayRow(li.TmdbId, "Series", title, s?.Year,
+                    s?.PosterLocalPath, s?.Id, li.PosterRemoteUrl, li.ImdbId));
             }
             else
             {
                 var m = movies.FirstOrDefault(x => x.TmdbId == li.TmdbId);
-                rows.Add(new ListItemDisplayRow(li.TmdbId, "Movie", m?.Title ?? $"Movie {li.TmdbId}", m?.Year,
-                    m?.PosterLocalPath, m?.Id));
+                var title = m?.Title ?? li.Title ?? $"Movie {li.TmdbId}";
+                rows.Add(new ListItemDisplayRow(li.TmdbId, "Movie", title, m?.Year,
+                    m?.PosterLocalPath, m?.Id, li.PosterRemoteUrl, li.ImdbId));
             }
         }
 
@@ -3385,7 +3760,7 @@ public sealed class LibraryRepository
         {
             cancellationToken.ThrowIfCancellationRequested();
             var seasonNum = seasonGroup.Key;
-            IReadOnlyDictionary<int, (string? Name, string? StillPath, double? VoteAverage)>? seasonMap;
+            IReadOnlyDictionary<int, (string? Name, string? StillPath, double? VoteAverage, string? Overview)>? seasonMap;
             try
             {
                 seasonMap = await tmdb.TryGetTvSeasonEpisodesAsync(showTmdbId, seasonNum, cancellationToken)
@@ -3446,14 +3821,36 @@ public sealed class LibraryRepository
         var weekSeconds = histories.Where(h => h.OpenedAt >= weekStart).Sum(h => Math.Max(0, h.EstimatedSeconds));
         var monthSeconds = histories.Where(h => h.OpenedAt >= monthStart).Sum(h => Math.Max(0, h.EstimatedSeconds));
 
-        var moviesCompleted = await _db.Movies.AsNoTracking()
+        var moviesCompletedLibrary = await _db.Movies.AsNoTracking()
             .CountAsync(m => m.IsMatched && m.WatchStatus == WatchStatuses.Completed, cancellationToken)
             .ConfigureAwait(false);
-        var episodesWatched = await _db.Episodes.AsNoTracking()
+        var episodesWatchedLibrary = await _db.Episodes.AsNoTracking()
             .CountAsync(e => e.WatchStatus == WatchStatuses.Completed, cancellationToken).ConfigureAwait(false);
         var seriesCompleted = await _db.Shows.AsNoTracking()
             .CountAsync(s => s.IsMatched && s.WatchStatus == WatchStatuses.Completed, cancellationToken)
             .ConfigureAwait(false);
+
+        // Add streaming/manual entries not already covered by library WatchStatus
+        var libraryMovieTmdbIds = await _db.Movies.AsNoTracking()
+            .Where(m => m.IsMatched && m.WatchStatus == WatchStatuses.Completed && m.TmdbId > 0)
+            .Select(m => m.TmdbId).ToListAsync(cancellationToken).ConfigureAwait(false);
+        var libraryMovieTmdbSet = libraryMovieTmdbIds.ToHashSet();
+
+        var streamingMovieWatches = await _db.WatchHistories.AsNoTracking()
+            .Where(h => h.Source != "local" && h.IsCompleted && h.TmdbId != null &&
+                        (h.MediaType == "Movie" || h.MediaType == "movie") &&
+                        h.SeasonNumber == null && h.EpisodeNumber == null)
+            .Select(h => h.TmdbId!.Value)
+            .Distinct()
+            .ToListAsync(cancellationToken).ConfigureAwait(false);
+        var extraMovies = streamingMovieWatches.Count(id => !libraryMovieTmdbSet.Contains(id));
+
+        var streamingEpWatches = await _db.WatchHistories.AsNoTracking()
+            .Where(h => h.Source != "local" && h.IsCompleted && h.SeasonNumber != null && h.EpisodeNumber != null)
+            .CountAsync(cancellationToken).ConfigureAwait(false);
+
+        var moviesCompleted = moviesCompletedLibrary + extraMovies;
+        var episodesWatched = episodesWatchedLibrary + streamingEpWatches;
 
         var genreCounts = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
         foreach (var csv in await _db.Movies.AsNoTracking()
@@ -3506,10 +3903,25 @@ public sealed class LibraryRepository
             if (h.StoppedAt.HasValue) daySet.Add(h.StoppedAt.Value.Date);
         }
 
-        foreach (var m in recentMovies)
-            if (m.CompletedAt.HasValue) daySet.Add(m.CompletedAt.Value.Date);
-        foreach (var s in recentShows)
-            if (s.CompletedAt.HasValue) daySet.Add(s.CompletedAt.Value.Date);
+        // All movies/shows CompletedAt (not just top 5) so every completion day counts
+        var allMovieCompletedDates = await _db.Movies.AsNoTracking()
+            .Where(m => m.IsMatched && m.CompletedAt != null)
+            .Select(m => m.CompletedAt!.Value)
+            .ToListAsync(cancellationToken).ConfigureAwait(false);
+        foreach (var d in allMovieCompletedDates) daySet.Add(d.Date);
+
+        var allShowCompletedDates = await _db.Shows.AsNoTracking()
+            .Where(s => s.IsMatched && s.CompletedAt != null)
+            .Select(s => s.CompletedAt!.Value)
+            .ToListAsync(cancellationToken).ConfigureAwait(false);
+        foreach (var d in allShowCompletedDates) daySet.Add(d.Date);
+
+        // Episode completions (manual "mark watched" creates no WatchHistory)
+        var allEpCompletedDates = await _db.Episodes.AsNoTracking()
+            .Where(e => e.CompletedAt != null)
+            .Select(e => e.CompletedAt!.Value)
+            .ToListAsync(cancellationToken).ConfigureAwait(false);
+        foreach (var d in allEpCompletedDates) daySet.Add(d.Date);
 
         var streak = ComputeWatchStreak(daySet, now.Date);
 
@@ -4502,7 +4914,7 @@ public sealed record WatchStatisticsBundle(
     int RewatchSessionsApprox);
 
 public sealed record ListItemDisplayRow(int TmdbId, string MediaType, string Title, int? Year, string? PosterLocalPath,
-    int? LibraryDatabaseId);
+    int? LibraryDatabaseId, string? PosterRemoteUrl = null, string? ImdbId = null);
 
 public sealed record UserListSummaryRow(int Id, string Name, DateTime CreatedAt, bool IsDefault, int ItemCount);
 

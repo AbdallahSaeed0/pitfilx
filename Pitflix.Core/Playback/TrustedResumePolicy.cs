@@ -10,7 +10,13 @@ public static class TrustedResumePolicy
 {
     public static int ComputeSeconds(int maxKnown, int lastExplicit, int estimated, int fileDurationSeconds)
     {
-        var raw = Math.Max(0, Math.Max(maxKnown, Math.Max(lastExplicit, estimated)));
+        // Prefer the last explicit stop position — this is where the user intentionally left off,
+        // including after a rewind. Only fall back to maxKnown/estimated when no explicit position exists.
+        int raw;
+        if (lastExplicit > 0)
+            raw = lastExplicit;
+        else
+            raw = Math.Max(0, Math.Max(maxKnown, estimated));
         if (fileDurationSeconds > 0)
             raw = Math.Min(raw, fileDurationSeconds);
         return raw;

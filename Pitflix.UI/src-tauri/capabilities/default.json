@@ -3,14 +3,17 @@
   "identifier": "default",
   "description": "Capability for the main window",
   "windows": [
-    "main"
+    "main",
+    "pitflix-playlist"
   ],
   "permissions": [
     "core:default",
     "core:window:allow-minimize",
     "core:window:allow-toggle-maximize",
-    "core:window:allow-set-fullscreen",
     "core:window:allow-unmaximize",
+    "core:window:allow-set-fullscreen",
+    "core:window:allow-is-fullscreen",
+    "core:window:allow-is-maximized",
     "core:window:allow-set-focus",
     "core:window:allow-start-dragging",
     "core:window:allow-close",
@@ -28,6 +31,7 @@
     "process:allow-restart",
     "allow-prepare-update-exit",
     "allow-launch-installer",
+    "allow-download-installer",
     "fs:default",
     {
       "identifier": "fs:allow-mkdir",
@@ -42,6 +46,10 @@
       "allow": [{ "path": "$TEMP/PitflixUpdates/**/*" }]
     },
     "allow-player",
-    "allow-my-device"
+    "allow-remote-player",
+    "allow-my-device",
+    "core:window:allow-set-progress-bar",
+    "global-shortcut:default",
+    "notification:default"
   ]
 }

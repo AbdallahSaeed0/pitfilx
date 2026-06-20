@@ -267,7 +267,7 @@ export function SetupWizard() {
                   return "No library folders are configured yet. Add at least one folder, then scan.";
               }
               return scanError instanceof Error && scanError.message.toLowerCase().includes("network")
-                ? "Cannot reach Pitflix API. Make sure the API is running on port 5001."
+                ? "Cannot reach Pitflix API. Make sure the API is running on port 5280."
                 : `Scan failed to start: ${scanError instanceof Error ? scanError.message : "Unknown error"}`;
             })()
           );

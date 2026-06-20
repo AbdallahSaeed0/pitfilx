@@ -14,6 +14,7 @@ public sealed class AwardsCachePreloadCoordinator
     private Task? _running;
     private CancellationTokenSource? _runCts;
     private AwardsPreloadStatusDto _status = new();
+    private string? _lastCompletedAt;
 
     public AwardsCachePreloadCoordinator(IServiceScopeFactory scopes, IAwardsDataProvider provider, AwardsService awards)
     {
@@ -37,8 +38,10 @@ public sealed class AwardsCachePreloadCoordinator
                 TotalNominees = _status.TotalNominees,
                 SuccessCount = _status.SuccessCount,
                 FailedCount = _status.FailedCount,
+                SkippedNominees = _status.SkippedNominees,
                 CachedRowCount = _status.CachedRowCount,
-                LastError = _status.LastError
+                LastError = _status.LastError,
+                LastCompletedAt = _lastCompletedAt
             };
         }
     }
@@ -129,6 +132,7 @@ public sealed class AwardsCachePreloadCoordinator
             var processed = 0;
             var successRows = 0;
             var failedNominees = 0;
+            var skippedNominees = 0;
             string? lastErr = null;
 
             foreach (var a in catalog)
@@ -149,6 +153,24 @@ public sealed class AwardsCachePreloadCoordinator
                     var editionNomineeCount = 0;
                     foreach (var c in edition.Categories)
                         editionNomineeCount += c.Nominees.Count;
+
+                    // Incremental mode: skip editions that are already cached.
+                    // This way "Update cache" only fetches editions that have never been downloaded.
+                    if (!clearFirst)
+                    {
+                        var existingCount = await cacheRepo.CountEditionRowsAsync(a.Id, y, ct).ConfigureAwait(false);
+                        if (existingCount > 0)
+                        {
+                            processed += editionNomineeCount;
+                            skippedNominees += editionNomineeCount;
+                            lock (_gate)
+                            {
+                                _status.ProcessedNominees = processed;
+                                _status.SkippedNominees = skippedNominees;
+                            }
+                            continue;
+                        }
+                    }
 
                     lock (_gate)
                     {
@@ -203,6 +225,7 @@ public sealed class AwardsCachePreloadCoordinator
                 _status.SuccessCount = successRows;
                 _status.FailedCount = failedNominees;
                 _status.LastError = lastErr;
+                _lastCompletedAt = DateTime.UtcNow.ToString("o", System.Globalization.CultureInfo.InvariantCulture);
             }
         }
         catch (OperationCanceledException)
@@ -212,6 +235,7 @@ public sealed class AwardsCachePreloadCoordinator
                 _status.Running = false;
                 _status.Phase = "cancelled";
                 _status.LastError = null;
+                _lastCompletedAt = DateTime.UtcNow.ToString("o", System.Globalization.CultureInfo.InvariantCulture);
             }
         }
         catch (Exception ex)
@@ -221,6 +245,7 @@ public sealed class AwardsCachePreloadCoordinator
                 _status.Running = false;
                 _status.Phase = "error";
                 _status.LastError = ex.Message;
+                _lastCompletedAt = DateTime.UtcNow.ToString("o", System.Globalization.CultureInfo.InvariantCulture);
             }
         }
         finally

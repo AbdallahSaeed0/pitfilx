@@ -42,6 +42,8 @@ pub enum PlayerCommand {
   SetSubFont(String),
   /// Load external subtitle file and select it (`sub-add … select`).
   SubAddSelect(String),
+  /// mpv `set_property speed` (0.25 – 4.0).
+  SetSpeed(f64),
   Stop,
 }
 

@@ -3,4 +3,6 @@
   <Project Path="Pitflix.ConsoleTest/Pitflix.ConsoleTest.csproj" />
   <Project Path="Pitflix.Core/Pitflix.Core.csproj" />
   <Project Path="Pitflix.WPF/Pitflix.WPF.csproj" />
+  <Project Path="PitflixPlayer/PitflixPlayer.csproj" />
+  <Project Path="PitflixPlayer2/PitflixPlayer2.csproj" />
 </Solution>

@@ -238,7 +238,7 @@ public sealed class OmdbRatingClient
         if (root.TryGetProperty("tomatoUserMeter", out var tum))
         {
             var aus = tum.GetString()?.Trim();
-            if (!string.IsNullOrEmpty(aus))
+            if (!string.IsNullOrEmpty(aus) && !aus.Equals("N/A", StringComparison.OrdinalIgnoreCase))
                 audience = aus.Contains('%', StringComparison.Ordinal) ? aus : aus + "%";
         }
 

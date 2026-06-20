@@ -1,13 +1,16 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useCallback, useMemo, useState } from "react";
+import { Eye, EyeOff, LayoutGrid, List, Subtitles } from "lucide-react";
 import { Link, useNavigate, useParams } from "react-router-dom";
+import { useAppPrefsStore } from "../store/appPrefsStore";
 import { setEpisodeWatchStatus } from "../api/episodes";
 import { rematchEpisodeFromFile } from "../api/library";
-import { getShowSeason } from "../api/series";
+import { getShowSeason, getShow } from "../api/series";
 import { PickTmdbTitleModal } from "../components/PickTmdbTitleModal";
 import { SubtitleDrawer } from "../components/SubtitleDrawer";
-import { usePlayback } from "../hooks/usePlayback";
+import { useResumeBeforePlay } from "../hooks/useResumeBeforePlay";
 import { MediaImage } from "../components/ui/MediaImage";
+import { cn } from "../utils/cn";
 import { Spinner } from "../components/ui/Spinner";
 import { toPosterSrc } from "../utils/posterSrc";
 import { pitflixConfirm } from "../utils/pitflixDialog";
@@ -17,6 +20,7 @@ type EpisodeRow = {
   season: number;
   episodeNumber: number;
   title?: string | null;
+  overview?: string | null;
   filePath: string;
   subtitlePath?: string | null;
   watchStatus?: string;
@@ -25,11 +29,13 @@ type EpisodeRow = {
   imdbVoteAverage?: number | null;
 };
 
+const VIEW_KEY = "pitflix.season.viewMode";
+
 export function SeasonDetailPage() {
   const { id, seasonNumber: seasonStr } = useParams();
   const navigate = useNavigate();
   const qc = useQueryClient();
-  const { play } = usePlayback();
+  const { requestPlay, ResumePromptModal } = useResumeBeforePlay();
   const libraryId = Number(id);
   const season = Number(seasonStr);
   const [subtitleEpisode, setSubtitleEpisode] = useState<{
@@ -44,6 +50,18 @@ export function SeasonDetailPage() {
   const [episodeActionMsg, setEpisodeActionMsg] = useState<string | null>(null);
   const [selectedIds, setSelectedIds] = useState<Set<number>>(() => new Set());
   const [bulkBusy, setBulkBusy] = useState(false);
+  const [viewMode, setViewMode] = useState<"list" | "grid">(() => {
+    try { return (localStorage.getItem(VIEW_KEY) as "list" | "grid") || "list"; } catch { return "list"; }
+  });
+  const setView = (v: "list" | "grid") => {
+    setViewMode(v);
+    try { localStorage.setItem(VIEW_KEY, v); } catch {}
+  };
+
+  const defaultSpoilerProtection = useAppPrefsStore((s) => s.defaultSpoilerProtection);
+  // Session-only toggle — overrides the global default for this page visit only.
+  const [spoilerProtection, setSpoilerProtection] = useState<boolean>(defaultSpoilerProtection);
+  const toggleSpoilerProtection = () => setSpoilerProtection((prev) => !prev);
 
   const toggleSelect = useCallback((id: number) => {
     setSelectedIds((prev) => {
@@ -63,6 +81,21 @@ export function SeasonDetailPage() {
     staleTime: 10 * 60_000,
     gcTime: 60 * 60_000,
   });
+
+  const showDataQ = useQuery({
+    queryKey: ["show", libraryId],
+    queryFn: () => getShow(libraryId),
+    enabled: Number.isFinite(libraryId) && libraryId > 0,
+    staleTime: 10 * 60_000,
+  });
+  const seasonsSummary = (showDataQ.data?.seasonsSummary ?? []) as { seasonNumber: number; inLibrary?: boolean }[];
+  const availableSeasons = seasonsSummary
+    .filter((s) => s.inLibrary !== false)
+    .map((s) => s.seasonNumber)
+    .sort((a, b) => a - b);
+  const currentIdx = availableSeasons.indexOf(season);
+  const prevSeason = currentIdx > 0 ? availableSeasons[currentIdx - 1] : null;
+  const nextSeason = currentIdx < availableSeasons.length - 1 ? availableSeasons[currentIdx + 1] : null;
 
   const selectAllInSeason = useCallback(() => {
     const eps = (data?.episodes ?? []) as EpisodeRow[];
@@ -175,6 +208,7 @@ export function SeasonDetailPage() {
 
   return (
     <div>
+      {ResumePromptModal}
       <div className="mb-4 flex flex-wrap items-center gap-3">
         <button
           type="button"
@@ -200,12 +234,54 @@ export function SeasonDetailPage() {
         />
         <div>
           <h1 className="text-2xl font-bold text-white md:text-3xl">
-            {show.title} · {seasonName}
+            {show.title}
           </h1>
+          <p className="mt-1 text-base font-semibold text-pitflix-muted">{seasonName}</p>
+
+          {/* Season navigation */}
+          {availableSeasons.length > 1 && (
+            <div className="mt-3 flex items-center gap-2">
+              <button
+                type="button"
+                disabled={prevSeason == null}
+                onClick={() => prevSeason != null && navigate(`/series/${libraryId}/season/${prevSeason}`)}
+                className="flex h-8 w-8 items-center justify-center rounded-full border border-white/15 bg-pitflix-card text-sm text-pitflix-muted transition hover:border-pitflix-primary/50 hover:text-white disabled:opacity-30 disabled:pointer-events-none"
+              >
+                ‹
+              </button>
+
+              <div className="flex gap-1">
+                {availableSeasons.map((s) => (
+                  <button
+                    key={s}
+                    type="button"
+                    onClick={() => s !== season && navigate(`/series/${libraryId}/season/${s}`)}
+                    className={`rounded-lg px-2.5 py-1 text-xs font-semibold transition-all ${
+                      s === season
+                        ? "bg-pitflix-primary text-white"
+                        : "border border-white/10 bg-pitflix-card/70 text-pitflix-muted hover:border-pitflix-primary/40 hover:text-white"
+                    }`}
+                  >
+                    {s === 0 ? "Specials" : `S${s}`}
+                  </button>
+                ))}
+              </div>
+
+              <button
+                type="button"
+                disabled={nextSeason == null}
+                onClick={() => nextSeason != null && navigate(`/series/${libraryId}/season/${nextSeason}`)}
+                className="flex h-8 w-8 items-center justify-center rounded-full border border-white/15 bg-pitflix-card text-sm text-pitflix-muted transition hover:border-pitflix-primary/50 hover:text-white disabled:opacity-30 disabled:pointer-events-none"
+              >
+                ›
+              </button>
+            </div>
+          )}
+
           {data.airDate ? (
-            <p className="mt-1 text-sm text-pitflix-muted">Air date: {String(data.airDate)}</p>
+            <p className="mt-2 text-sm text-pitflix-muted">Air date: {String(data.airDate)}</p>
           ) : null}
-          <p className="mt-2 text-sm text-pitflix-subtle">
+          <p className="mt-1 text-sm text-pitflix-subtle">
             {episodes.length} episode{episodes.length === 1 ? "" : "s"} in your library
             {typeof data.tmdbEpisodeCount === "number" && data.tmdbEpisodeCount > 0
               ? ` · ${data.tmdbEpisodeCount} listed on TMDB`
@@ -237,9 +313,199 @@ export function SeasonDetailPage() {
               >
                 Clear
               </button>
+              {/* Spoiler protection toggle */}
+              <button
+                type="button"
+                aria-label={spoilerProtection ? "Disable spoiler protection" : "Enable spoiler protection"}
+                title={spoilerProtection ? "Spoiler protection ON — click to disable" : "Spoiler protection OFF — click to hide titles & overviews"}
+                onClick={toggleSpoilerProtection}
+                className={`flex items-center gap-1.5 rounded-lg border px-2.5 py-1.5 font-medium transition-colors ${
+                  spoilerProtection
+                    ? "border-amber-500/60 bg-amber-500/15 text-amber-300 hover:bg-amber-500/25"
+                    : "border-white/10 bg-pitflix-card/80 text-pitflix-muted hover:text-white"
+                }`}
+              >
+                {spoilerProtection ? <EyeOff className="h-3.5 w-3.5" /> : <Eye className="h-3.5 w-3.5" />}
+                <span>Spoilers</span>
+              </button>
+              <div className="flex rounded-lg border border-white/10 overflow-hidden">
+                <button
+                  type="button"
+                  aria-label="List view"
+                  onClick={() => setView("list")}
+                  className={`flex items-center justify-center px-2.5 py-1.5 transition-colors ${viewMode === "list" ? "bg-pitflix-primary text-white" : "bg-pitflix-card/80 text-pitflix-muted hover:text-white"}`}
+                >
+                  <List className="h-3.5 w-3.5" />
+                </button>
+                <button
+                  type="button"
+                  aria-label="Grid view"
+                  onClick={() => setView("grid")}
+                  className={`flex items-center justify-center px-2.5 py-1.5 transition-colors ${viewMode === "grid" ? "bg-pitflix-primary text-white" : "bg-pitflix-card/80 text-pitflix-muted hover:text-white"}`}
+                >
+                  <LayoutGrid className="h-3.5 w-3.5" />
+                </button>
+              </div>
             </div>
           ) : null}
         </div>
+
+        {/* Grid view */}
+        {viewMode === "grid" && (
+          <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5">
+            {episodes.map((ep) => {
+              const isWatched = ep.watchStatus === "Completed";
+              const isNextUp = nextEpisode != null && ep.id === nextEpisode.id;
+              const epThumb = toPosterSrc(ep.stillLocalPath ?? undefined) ?? poster;
+              return (
+                <div
+                  key={ep.id}
+                  className={`group relative flex flex-col overflow-hidden rounded-2xl border bg-pitflix-surface transition-all hover:border-pitflix-primary/40 ${isNextUp ? "border-pitflix-primary/60" : "border-pitflix-card/60"}`}
+                >
+                  {/* Thumbnail */}
+                  <div className="relative aspect-video w-full overflow-hidden bg-pitflix-card">
+                    <MediaImage
+                      src={epThumb}
+                      alt=""
+                      className={`h-full w-full object-cover transition-transform duration-300 group-hover:scale-105 ${spoilerProtection && !isWatched ? "blur-md" : ""}`}
+                      fallbackText={`E${ep.episodeNumber}`}
+                    />
+                    {isWatched && (
+                      <div className="absolute inset-0 flex items-center justify-center bg-black/40">
+                        <span className="rounded-full bg-green-600/90 px-2 py-0.5 text-[10px] font-semibold text-white">Watched</span>
+                      </div>
+                    )}
+                    {isNextUp && (
+                      <div className="absolute left-2 top-2 rounded-full bg-pitflix-primary/90 px-2 py-0.5 text-[10px] font-bold text-white">Next up</div>
+                    )}
+                    <div className="absolute bottom-2 left-2 rounded bg-black/70 px-1.5 py-0.5 text-[10px] font-mono text-white">
+                      E{String(ep.episodeNumber).padStart(2, "0")}
+                    </div>
+                    {ep.filePath && (
+                      <button
+                        type="button"
+                        onClick={() =>
+                          void requestPlay({
+                            filePath: ep.filePath!,
+                            title: `${show.title} · S${season}E${ep.episodeNumber}`,
+                            posterPath: show.selectedPosterPath || show.posterLocalPath || null,
+                            mediaType: "Series",
+                            durationSeconds: 0,
+                            context: {
+                              libraryShowId: libraryId,
+                              libraryEpisodeId: ep.id,
+                              season,
+                              episodeNumber: ep.episodeNumber,
+                            },
+                          })
+                        }
+                        className="absolute inset-0 flex items-center justify-center bg-black/0 opacity-0 transition-all group-hover:bg-black/30 group-hover:opacity-100"
+                      >
+                        <span className="flex h-10 w-10 items-center justify-center rounded-full bg-pitflix-primary shadow-lg">
+                          <span className="ml-0.5 text-lg text-white">▶</span>
+                        </span>
+                      </button>
+                    )}
+                  </div>
+                  {/* Info */}
+                  <div className="flex flex-1 flex-col p-3">
+                    <p
+                      className={cn(
+                        "line-clamp-2 text-sm font-semibold text-white transition",
+                        spoilerProtection && !isWatched && ep.title?.trim() ? "blur-sm select-none" : "",
+                      )}
+                    >
+                      {ep.title?.trim() ? ep.title : `Episode ${ep.episodeNumber}`}
+                    </p>
+                    <div className="mt-2 flex flex-wrap gap-1.5">
+                      {ep.tmdbVoteAverage != null && ep.tmdbVoteAverage > 0 && (
+                        <span className="rounded bg-white/10 px-1.5 py-0.5 text-[10px] text-pitflix-muted">★ {ep.tmdbVoteAverage.toFixed(1)}</span>
+                      )}
+                      {ep.subtitlePath && (
+                        <span className="inline-flex items-center gap-1 rounded bg-sky-500/15 px-1.5 py-0.5 text-[10px] text-sky-300">
+                          <span className="inline-block h-2.5 w-2.5 rounded-sm bg-sky-500/40 text-center text-[7px] font-bold leading-[10px] text-sky-200">CC</span>
+                          Subs
+                        </span>
+                      )}
+                    </div>
+                    {/* Synopsis — always shown when the API provides it; fixed height so grid rows stay aligned */}
+                    <div className="mt-1.5 min-h-[3rem]">
+                      {ep.overview && (
+                        <p
+                          className={cn(
+                            "line-clamp-3 text-[11px] leading-[1rem] text-pitflix-muted/80 transition",
+                            spoilerProtection && !isWatched ? "blur-sm select-none" : "",
+                          )}
+                        >
+                          {ep.overview}
+                        </p>
+                      )}
+                    </div>
+                    {/* Action row */}
+                    <div className="mt-auto flex flex-wrap items-center gap-1.5 pt-2">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          const next = isWatched ? "Unwatched" : "Completed";
+                          void setEpisodeWatchStatus(ep.id, next).then(() => {
+                            void qc.invalidateQueries({ queryKey: ["show-season", libraryId, season] });
+                            void qc.invalidateQueries({ queryKey: ["show", libraryId] });
+                          });
+                        }}
+                        className={`rounded-full border px-2.5 py-1 text-[10px] font-semibold transition-all ${isWatched ? "border-green-500/90 bg-green-600/85 text-white" : "border-pitflix-subtle/50 text-pitflix-muted hover:border-pitflix-primary/60 hover:text-white"}`}
+                      >
+                        {isWatched ? "✓ Watched" : "Mark watched"}
+                      </button>
+                      {ep.filePath && (
+                        <>
+                          <button
+                            type="button"
+                            onClick={() => setSubtitleEpisode({ id: ep.id, filePath: ep.filePath, label: `S${season}E${ep.episodeNumber}`, season, episodeNumber: ep.episodeNumber })}
+                            className="flex items-center justify-center rounded-full border border-pitflix-card/60 p-1.5 text-pitflix-muted hover:border-sky-500/50 hover:text-sky-300"
+                            title="Subtitles"
+                          >
+                            <Subtitles className="h-3.5 w-3.5" />
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => setEpisodePickIds([ep.id])}
+                            className="rounded-full border border-pitflix-card/60 px-2.5 py-1 text-[10px] text-pitflix-muted hover:border-pitflix-primary/40 hover:text-white"
+                          >
+                            Re-link
+                          </button>
+                          <button
+                            type="button"
+                            disabled={episodeRematchBusyId !== null}
+                            onClick={() =>
+                              void (async () => {
+                                const ok = await pitflixConfirm("Remove and re-match this episode from file?");
+                                if (!ok) return;
+                                setEpisodeRematchBusyId(ep.id);
+                                try {
+                                  const r = await rematchEpisodeFromFile(ep.id);
+                                  if (!r.success) { setEpisodeActionMsg(r.error ?? "Re-match failed."); return; }
+                                  void qc.invalidateQueries({ queryKey: ["show-season", libraryId, season] });
+                                  void qc.invalidateQueries({ queryKey: ["show", libraryId] });
+                                } catch { setEpisodeActionMsg("Could not reach the API."); }
+                                finally { setEpisodeRematchBusyId(null); }
+                              })()
+                            }
+                            className="rounded-full border border-pitflix-card/60 px-2.5 py-1 text-[10px] text-pitflix-muted hover:border-pitflix-primary/40 hover:text-white disabled:opacity-40"
+                          >
+                            {episodeRematchBusyId === ep.id ? "…" : "Re-match"}
+                          </button>
+                        </>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        )}
+
+        {/* List view */}
+        {viewMode === "list" && (
         <div className="space-y-2">
           {episodes.map((ep) => {
             const isWatched = ep.watchStatus === "Completed";
@@ -265,7 +531,7 @@ export function SeasonDetailPage() {
                 <MediaImage
                   src={epThumb}
                   alt=""
-                  className="h-14 w-[88px] shrink-0 overflow-hidden rounded-lg bg-pitflix-card object-cover ring-1 ring-white/5"
+                  className={`h-14 w-[88px] shrink-0 overflow-hidden rounded-lg bg-pitflix-card object-cover ring-1 ring-white/5 ${spoilerProtection && !isWatched ? "blur-md" : ""}`}
                   fallbackText={`${ep.episodeNumber}`}
                 />
                 <span className="w-10 shrink-0 text-center font-mono text-sm font-medium tabular-nums text-pitflix-muted">
@@ -274,26 +540,38 @@ export function SeasonDetailPage() {
                 <div className="min-w-0 flex-1 pr-2">
                   <p className="flex flex-wrap items-center gap-2 truncate text-sm font-medium text-white">
                     <span className="truncate">
-                      {ep.title?.trim() ? ep.title : `Episode ${ep.episodeNumber}`}
+                      {spoilerProtection && !isWatched ? `Episode ${ep.episodeNumber}` : (ep.title?.trim() ? ep.title : `Episode ${ep.episodeNumber}`)}
                     </span>
                     {isNextUp ? (
                       <span className="shrink-0 rounded-full bg-pitflix-primary/25 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-pitflix-primary">
                         Next up
                       </span>
                     ) : null}
-                    {ep.tmdbVoteAverage != null && ep.tmdbVoteAverage > 0 ? (
+                    {(!spoilerProtection || isWatched) && ep.tmdbVoteAverage != null && ep.tmdbVoteAverage > 0 ? (
                       <span className="shrink-0 rounded bg-white/10 px-1.5 py-0.5 text-[10px] text-pitflix-muted">
                         TMDB ★ {ep.tmdbVoteAverage.toFixed(1)}
                       </span>
                     ) : null}
-                    {ep.imdbVoteAverage != null && ep.imdbVoteAverage > 0 ? (
+                    {(!spoilerProtection || isWatched) && ep.imdbVoteAverage != null && ep.imdbVoteAverage > 0 ? (
                       <span className="shrink-0 rounded bg-amber-950/80 px-1.5 py-0.5 text-[10px] text-amber-100/95 ring-1 ring-amber-500/35">
                         IMDb ★ {ep.imdbVoteAverage.toFixed(1)}
                       </span>
                     ) : null}
                   </p>
+                  {(!spoilerProtection || isWatched) && ep.overview ? (
+                    <p className="mt-0.5 line-clamp-2 text-[11px] leading-relaxed text-pitflix-muted">{ep.overview}</p>
+                  ) : null}
+                  {spoilerProtection && !isWatched ? (
+                    <p className="mt-0.5 flex items-center gap-1 text-[11px] text-amber-400/70">
+                      <EyeOff className="inline h-3 w-3" />
+                      <span>Spoiler protection on</span>
+                    </p>
+                  ) : null}
                   {ep.subtitlePath ? (
-                    <span className="text-xs text-pitflix-subtle">🔤 Subtitles available</span>
+                    <span className="mt-0.5 inline-flex items-center gap-1 text-xs text-pitflix-subtle">
+                      <span className="inline-block h-3 w-3 rounded-sm bg-white/20 text-center text-[8px] font-bold leading-3 text-white">CC</span>
+                      Subtitles
+                    </span>
                   ) : null}
                 </div>
                 <button
@@ -378,19 +656,19 @@ export function SeasonDetailPage() {
                     <button
                       type="button"
                       onClick={() =>
-                        void play(
-                          ep.filePath,
-                          `${show.title} · S${season}E${ep.episodeNumber}`,
-                          show.selectedPosterPath || show.posterLocalPath || null,
-                          "Series",
-                          0,
-                          {
+                        void requestPlay({
+                          filePath: ep.filePath!,
+                          title: `${show.title} · S${season}E${ep.episodeNumber}`,
+                          posterPath: show.selectedPosterPath || show.posterLocalPath || null,
+                          mediaType: "Series",
+                          durationSeconds: 0,
+                          context: {
                             libraryShowId: libraryId,
                             libraryEpisodeId: ep.id,
                             season,
                             episodeNumber: ep.episodeNumber,
                           },
-                        )
+                        })
                       }
                       className="rounded-xl bg-pitflix-primary px-4 py-2 text-xs font-semibold text-white shadow-md transition-all hover:bg-pitflix-light"
                     >
@@ -402,6 +680,7 @@ export function SeasonDetailPage() {
             );
           })}
         </div>
+        )}
       </section>
 
       <SubtitleDrawer

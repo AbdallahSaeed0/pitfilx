@@ -87,8 +87,40 @@ function main() {
   const dest = path.join(binDir, destName);
   fs.mkdirSync(binDir, { recursive: true });
   fs.copyFileSync(published, dest);
+
+  // Copy Data folder (awards JSON, etc.) so it lands next to the sidecar binary.
+  // Tauri bundles it via resources["binaries/Data/**"] → same binaries/ dir at runtime.
+  // Prefer the publish-stage output; fall back to the source project Data folder so
+  // the copy works even when CopyToOutputDirectory is disabled or skipped.
+  const destData = path.join(binDir, "Data");
+  const stageData = path.join(stage, "Data");
+  const sourceData = path.join(repoRoot, "Pitflix.API", "Data");
+  const dataSrc = fs.existsSync(stageData) ? stageData
+               : fs.existsSync(sourceData) ? sourceData
+               : null;
+  if (dataSrc) {
+    copyDirSync(dataSrc, destData);
+    console.log(`prepare-api-sidecar: copied Data/ from ${dataSrc} -> ${destData}`);
+  } else {
+    console.warn("prepare-api-sidecar: no Data/ folder found — awards data will be unavailable in the bundle.");
+  }
+
   fs.rmSync(stage, { recursive: true, force: true });
   console.log("prepare-api-sidecar: OK ->", dest);
+}
+
+/** Recursively copy a directory tree (like cp -r). */
+function copyDirSync(src, dest) {
+  fs.mkdirSync(dest, { recursive: true });
+  for (const entry of fs.readdirSync(src, { withFileTypes: true })) {
+    const s = path.join(src, entry.name);
+    const d = path.join(dest, entry.name);
+    if (entry.isDirectory()) {
+      copyDirSync(s, d);
+    } else {
+      fs.copyFileSync(s, d);
+    }
+  }
 }
 
 main();

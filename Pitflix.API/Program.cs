@@ -1,4 +1,4 @@
-using System.Collections.Concurrent;
+﻿using System.Collections.Concurrent;
 using System.Diagnostics;
 using System.Net;
 using System.Net.Http;
@@ -24,17 +24,17 @@ using Pitflix.Core.Services;
 
 var builder = WebApplication.CreateBuilder(args);
 builder.Configuration.AddJsonFile("appsettings.local.json", optional: true, reloadOnChange: true);
+builder.Logging.AddProvider(new SkipDebugFileLoggerProvider());
 
-// Single loopback URL avoids duplicate binds; override if 5001 is busy:
-//   $env:PITFLIX_LISTEN_URLS='http://127.0.0.1:5002'; dotnet run
-//   dotnet run --launch-profile http-alt
+// Default 5280 avoids Windows Hyper-V reserved ranges (often 4931–5030, which block 5001).
+// Override: $env:PITFLIX_LISTEN_URLS='http://127.0.0.1:5280'; dotnet run
 var listenRaw = Environment.GetEnvironmentVariable("PITFLIX_LISTEN_URLS")?.Trim()
     ?? Environment.GetEnvironmentVariable("ASPNETCORE_URLS")?.Trim()
     ?? builder.Configuration["Pitflix:ListenUrls"]?.Trim()
-    ?? "http://127.0.0.1:5001";
+    ?? "http://127.0.0.1:5280";
 var listenAddresses = listenRaw.Split(';', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
 if (listenAddresses.Length == 0)
-    listenAddresses = new[] { "http://127.0.0.1:5001" };
+    listenAddresses = new[] { "http://127.0.0.1:5280" };
 builder.WebHost.UseUrls(listenAddresses);
 
 var publicBaseConfigured = builder.Configuration["Pitflix:PublicBaseUrl"]?.Trim();
@@ -72,6 +72,11 @@ builder.Services.AddDbContext<LibraryContext>(options =>
 builder.Services.AddScoped<LibraryRepository>();
 builder.Services.AddScoped<TrailersRepository>();
 builder.Services.AddScoped<RatingsSnapshotRepository>();
+builder.Services.AddScoped<SkipSegmentsRepository>();
+builder.Services.AddScoped<SkipSegmentDetectionService>();
+builder.Services.AddScoped<AudioFingerprintService>();
+builder.Services.AddSingleton<SkipFingerprintQueue>();
+builder.Services.AddHostedService<SkipFingerprintHostedService>();
 builder.Services.AddSingleton<ScanRuntime>();
 builder.Services.AddSingleton<SmartMatchRuntime>();
 builder.Services.AddHostedService<LibraryAutoScanService>();
@@ -80,6 +85,14 @@ builder.Services.AddHostedService<TrailerIngestionHostedService>();
 builder.Services.AddMemoryCache();
 builder.Services.AddHttpClient();
 builder.Services.AddHttpClient(nameof(OmdbRatingClient));
+builder.Services.AddHttpClient("Wikidata", c =>
+{
+    c.BaseAddress = new Uri("https://query.wikidata.org/");
+    c.Timeout = TimeSpan.FromSeconds(30);
+    c.DefaultRequestHeaders.Add("User-Agent", "PitFlix/1.0 (awards lookup; contact via github)");
+    c.DefaultRequestHeaders.Add("Accept", "application/sparql-results+json");
+});
+builder.Services.AddSingleton<WikidataAwardsService>();
 builder.Services.AddTransient<OmdbRatingClient>();
 builder.Services.AddSingleton<PhpImdbGrabberClient>();
 builder.Services.AddSingleton<RatingsAggregationService>();
@@ -95,6 +108,9 @@ builder.Services.AddSingleton<TrailersCuratedPriorityProvider>();
 builder.Services.AddSingleton<OfficialTrailersChannelProvider>();
 builder.Services.AddSingleton<TrailerMonitorRuntime>();
 builder.Services.AddScoped<TrailerIngestionService>();
+builder.Services.AddSingleton<PlayerService>();
+builder.Services.AddSingleton<MdbListService>();
+builder.Services.AddSingleton<TvdbService>();
 
 var app = builder.Build();
 
@@ -106,6 +122,7 @@ await using (var scope = app.Services.CreateAsyncScope())
     await repo.EnsureLibraryFoldersTableAsync();
     await repo.EnsureSelectedImageColumnsAsync();
     await repo.EnsureEpisodeStillLocalPathColumnAsync();
+    await repo.EnsureListItemMetadataColumnsAsync();
     await repo.EnsureWatchHistoryResumeColumnsAsync();
     await repo.EnsureWatchStatusColumnsAsync();
     await repo.EnsureUserListTablesAndSeedAsync();
@@ -113,11 +130,32 @@ await using (var scope = app.Services.CreateAsyncScope())
     await repo.EnsureCastMemberProfilePathAndBillingOrderColumnsAsync();
     await repo.EnsureCrewCacheJsonColumnsAsync();
     await AddMetadataRefreshedAtMigration.RunIfNeededAsync(repo);
+    await repo.EnsureKeywordsJsonColumnsAsync();
+    await repo.EnsureContentRatingColumnAsync();
+    await repo.EnsureUnifiedTrackingAsync();
+    // Back-fill TmdbId / SeasonNumber / EpisodeNumber on history rows created before enrichment was added.
+    // Runs in the background so it never delays startup.
+    // IMPORTANT: capture the IServiceProvider, not the scoped `repo` — each background operation
+    // must own its own scope/DbContext to avoid EF Core concurrency violations.
+    var serviceProvider = app.Services;
+    _ = Task.Run(async () =>
+    {
+        try
+        {
+            await using var bgScope = serviceProvider.CreateAsyncScope();
+            var bgRepo = bgScope.ServiceProvider.GetRequiredService<LibraryRepository>();
+            await bgRepo.ReEnrichHistoryRowsAsync(CancellationToken.None).ConfigureAwait(false);
+        }
+        catch { /* best-effort */ }
+    });
     var trailersRepo = scope.ServiceProvider.GetRequiredService<TrailersRepository>();
     await trailersRepo.EnsureTrailersTableAsync();
     await trailersRepo.EnsureTrailerChannelSyncStatesTableAsync();
     var ratingsSnapshotRepo = scope.ServiceProvider.GetRequiredService<RatingsSnapshotRepository>();
     await ratingsSnapshotRepo.EnsureRatingsSnapshotsTableAsync();
+    await AddMdbListTvdbTablesMigration.RunIfNeededAsync(repo);
+    await AddSkipSegmentsMigration.RunIfNeededAsync(repo);
+    await AddOutroSecondsBeforeEndMigration.RunIfNeededAsync(repo);
     var awardNomineeCacheRepo = scope.ServiceProvider.GetRequiredService<AwardNomineeCacheRepository>();
     await awardNomineeCacheRepo.EnsureTableAsync(CancellationToken.None).ConfigureAwait(false);
     AppSettings.ResolveTmdbApiKeyFromSources(repo);
@@ -145,6 +183,7 @@ Directory.CreateDirectory(imagesPath);
 
 // 1) CORS first
 app.UseCors("TauriPolicy");
+app.UseWebSockets();
 
 // 2) Manual /images GET — serves files directly (bypasses static-file quirks).
 app.Use(async (context, next) =>
@@ -273,13 +312,94 @@ app.MapGet("/api/movies/{id:int}", async (int id, LibraryRepository repo, Librar
             movieOut.PosterRemoteUrl = $"https://image.tmdb.org/t/p/w500{art.Value.PosterPath}";
     }
 
+    // Keywords: lazy-populate from TMDB on first visit
+    var keywords = new List<object>();
+    if (movie.TmdbId > 0 && tmdb != null)
+    {
+        if (string.IsNullOrEmpty(movie.KeywordsJson))
+        {
+            var kws = await tmdb.TryGetKeywordsWithNamesAsync(movie.TmdbId, "Movie", ct).ConfigureAwait(false);
+            if (kws.Count > 0)
+            {
+                var kwJson = System.Text.Json.JsonSerializer.Serialize(kws.Select(k => new { id = k.Id, name = k.Name }));
+                await db.Database.ExecuteSqlRawAsync(
+                    $"UPDATE Movies SET KeywordsJson = {{0}} WHERE Id = {{1}}", kwJson, movie.Id)
+                    .ConfigureAwait(false);
+                keywords = kws.Select(k => (object)new { id = k.Id, name = k.Name }).ToList();
+            }
+        }
+        else
+        {
+            try
+            {
+                var parsed = System.Text.Json.JsonSerializer.Deserialize<List<System.Text.Json.JsonElement>>(movie.KeywordsJson);
+                if (parsed != null)
+                    keywords = parsed.Select(e => (object)new { id = e.GetProperty("id").GetInt32(), name = e.GetProperty("name").GetString() }).ToList();
+            }
+            catch { /* ignore malformed cache */ }
+        }
+    }
+
+    // TMDB similar (cross-referenced with local library)
+    var tmdbSimilar = new List<object>();
+    if (movie.TmdbId > 0 && tmdb != null)
+    {
+        var tmdbSimilarRaw = await tmdb.GetMovieSimilarAsync(movie.TmdbId, 1, ct).ConfigureAwait(false);
+        var localMovies = await db.Movies.AsNoTracking()
+            .Where(m => m.IsMatched)
+            .Select(m => new { m.Id, m.TmdbId, m.WatchStatus })
+            .ToListAsync(ct).ConfigureAwait(false);
+        var localMovieLookup = localMovies.ToDictionary(m => m.TmdbId);
+        foreach (var s in tmdbSimilarRaw.Take(20))
+        {
+            localMovieLookup.TryGetValue(s.Id, out var libMovie);
+            var inLibrary = libMovie != null;
+            tmdbSimilar.Add(new
+            {
+                tmdbId = s.Id,
+                title = s.Title,
+                posterUrl = string.IsNullOrEmpty(s.PosterPath) ? null : $"https://image.tmdb.org/t/p/w342{s.PosterPath}",
+                year = s.ReleaseDate?.Length >= 4 ? s.ReleaseDate[..4] : null,
+                voteAverage = s.VoteAverage,
+                mediaType = "Movie",
+                isInLibrary = inLibrary,
+                libraryId = libMovie?.Id,
+                watchStatus = libMovie?.WatchStatus,
+            });
+        }
+    }
+
+    // Collection membership
+    object? collection = null;
+    if (movie.TmdbId > 0 && tmdb != null)
+    {
+        var colInfo = await tmdb.TryGetMovieCollectionInfoAsync(movie.TmdbId, ct).ConfigureAwait(false);
+        if (colInfo.HasValue)
+            collection = new { id = colInfo.Value.CollectionId, name = colInfo.Value.CollectionName };
+    }
+
+    // Content rating: lazy-populate from TMDB (US theatrical certification)
+    var contentRating = movie.ContentRating;
+    if (contentRating == null && movie.TmdbId > 0 && tmdb != null)
+    {
+        contentRating = await tmdb.TryGetMovieCertificationAsync(movie.TmdbId, "US", ct).ConfigureAwait(false);
+        if (contentRating != null)
+            await db.Database.ExecuteSqlRawAsync(
+                "UPDATE Movies SET ContentRating = {0} WHERE Id = {1}", contentRating, movie.Id)
+                .ConfigureAwait(false);
+    }
+
     return Results.Json(new
     {
         movie = movieOut,
         cast = cast.Select(ImageUrls.MapCastMember).ToList(),
         crew = crew.Select(ImageUrls.MapCrewMember).ToList(),
         episodes = (object?)null,
-        similar
+        similar,
+        tmdbSimilar,
+        keywords,
+        collection,
+        contentRating,
     }, jsonSerializerOptions);
 });
 
@@ -303,7 +423,7 @@ app.MapGet("/api/series", async (
     return Results.Json(await MakePageAsync(items, total, page, pageSize, tmdb, ct).ConfigureAwait(false), jsonSerializerOptions);
 });
 
-app.MapGet("/api/series/{id:int}", async (int id, LibraryRepository repo, CancellationToken ct) =>
+app.MapGet("/api/series/{id:int}", async (int id, LibraryRepository repo, LibraryContext db, CancellationToken ct) =>
 {
     var show = await repo.GetShowByIdAsync(id, ct).ConfigureAwait(false);
     if (show == null)
@@ -407,6 +527,7 @@ app.MapGet("/api/series/{id:int}", async (int id, LibraryRepository repo, Cancel
                     airDate = header?.AirDate,
                     episodeCount = g.episodes.Count,
                     tmdbEpisodeCount = header?.EpisodeCount ?? 0,
+                    voteAverage = header?.VoteAverage,
                     inLibrary = true,
                 }));
         }
@@ -438,6 +559,7 @@ app.MapGet("/api/series/{id:int}", async (int id, LibraryRepository repo, Cancel
                         airDate = header?.AirDate,
                         episodeCount = 0,
                         tmdbEpisodeCount = header?.EpisodeCount ?? 0,
+                        voteAverage = header?.VoteAverage,
                         inLibrary = false,
                     }));
             }
@@ -461,6 +583,74 @@ app.MapGet("/api/series/{id:int}", async (int id, LibraryRepository repo, Cancel
             showOut.PosterRemoteUrl = $"https://image.tmdb.org/t/p/w500{art.Value.PosterPath}";
     }
 
+    // Keywords: lazy-populate from TMDB on first visit
+    var keywords = new List<object>();
+    if (show.TmdbId > 0 && tmdb != null)
+    {
+        if (string.IsNullOrEmpty(show.KeywordsJson))
+        {
+            var kws = await tmdb.TryGetKeywordsWithNamesAsync(show.TmdbId, "Series", ct).ConfigureAwait(false);
+            if (kws.Count > 0)
+            {
+                var kwJson = System.Text.Json.JsonSerializer.Serialize(kws.Select(k => new { id = k.Id, name = k.Name }));
+                await db.Database.ExecuteSqlRawAsync(
+                    $"UPDATE Shows SET KeywordsJson = {{0}} WHERE Id = {{1}}", kwJson, show.Id)
+                    .ConfigureAwait(false);
+                keywords = kws.Select(k => (object)new { id = k.Id, name = k.Name }).ToList();
+            }
+        }
+        else
+        {
+            try
+            {
+                var parsed = System.Text.Json.JsonSerializer.Deserialize<List<System.Text.Json.JsonElement>>(show.KeywordsJson);
+                if (parsed != null)
+                    keywords = parsed.Select(e => (object)new { id = e.GetProperty("id").GetInt32(), name = e.GetProperty("name").GetString() }).ToList();
+            }
+            catch { /* ignore malformed cache */ }
+        }
+    }
+
+    // TMDB similar (cross-referenced with local library)
+    var tmdbSimilar = new List<object>();
+    if (show.TmdbId > 0 && tmdb != null)
+    {
+        var tmdbSimilarRaw = await tmdb.GetTvSimilarAsync(show.TmdbId, 1, ct).ConfigureAwait(false);
+        var localShows = await db.Shows.AsNoTracking()
+            .Where(s => s.IsMatched)
+            .Select(s => new { s.Id, s.TmdbId, s.WatchStatus })
+            .ToListAsync(ct).ConfigureAwait(false);
+        var localShowLookup = localShows.ToDictionary(s => s.TmdbId);
+        foreach (var s in tmdbSimilarRaw.Take(20))
+        {
+            localShowLookup.TryGetValue(s.Id, out var libShow);
+            var inLibrary = libShow != null;
+            tmdbSimilar.Add(new
+            {
+                tmdbId = s.Id,
+                title = s.Title,
+                posterUrl = string.IsNullOrEmpty(s.PosterPath) ? null : $"https://image.tmdb.org/t/p/w342{s.PosterPath}",
+                year = s.ReleaseDate?.Length >= 4 ? s.ReleaseDate[..4] : null,
+                voteAverage = s.VoteAverage,
+                mediaType = "Series",
+                isInLibrary = inLibrary,
+                libraryId = libShow?.Id,
+                watchStatus = libShow?.WatchStatus,
+            });
+        }
+    }
+
+    // Content rating: lazy-populate from TMDB (US TV rating)
+    var contentRating = show.ContentRating;
+    if (contentRating == null && show.TmdbId > 0 && tmdb != null)
+    {
+        contentRating = await tmdb.TryGetTvCertificationAsync(show.TmdbId, "US", ct).ConfigureAwait(false);
+        if (contentRating != null)
+            await db.Database.ExecuteSqlRawAsync(
+                "UPDATE Shows SET ContentRating = {0} WHERE Id = {1}", contentRating, show.Id)
+                .ConfigureAwait(false);
+    }
+
     return Results.Json(new
     {
         show = showOut,
@@ -469,8 +659,57 @@ app.MapGet("/api/series/{id:int}", async (int id, LibraryRepository repo, Cancel
         episodes = episodesGrouped,
         seasonsSummary,
         nextEpisode,
-        similar
+        similar,
+        tmdbSimilar,
+        keywords,
+        contentRating,
     }, jsonSerializerOptions);
+});
+
+// —— Video extras (featurettes, behind-the-scenes, clips) ——
+
+app.MapGet("/api/movies/{id:int}/videos", async (int id, LibraryRepository repo, CancellationToken ct) =>
+{
+    var movie = await repo.GetMovieByIdAsync(id, ct).ConfigureAwait(false);
+    if (movie == null || movie.TmdbId <= 0) return Results.NotFound();
+    var tmdb = TmdbClientFactory.Create();
+    if (tmdb == null) return Results.Json(new { videos = Array.Empty<object>(), offline = true }, jsonSerializerOptions);
+    try
+    {
+        var videos = await tmdb.GetMediaExtrasAsync(movie.TmdbId, "Movie", ct).ConfigureAwait(false);
+        return Results.Json(new
+        {
+            videos = videos.Select(v => new { v.Key, v.Name, v.Type, v.Site, v.ThumbnailUrl }).ToList(),
+            offline = false,
+        }, jsonSerializerOptions);
+    }
+    catch
+    {
+        // TMDB unreachable — return empty list so the UI degrades gracefully.
+        return Results.Json(new { videos = Array.Empty<object>(), offline = true }, jsonSerializerOptions);
+    }
+});
+
+app.MapGet("/api/series/{id:int}/videos", async (int id, LibraryRepository repo, CancellationToken ct) =>
+{
+    var show = await repo.GetShowByIdAsync(id, ct).ConfigureAwait(false);
+    if (show == null || show.TmdbId <= 0) return Results.NotFound();
+    var tmdb = TmdbClientFactory.Create();
+    if (tmdb == null) return Results.Json(new { videos = Array.Empty<object>(), offline = true }, jsonSerializerOptions);
+    try
+    {
+        var videos = await tmdb.GetMediaExtrasAsync(show.TmdbId, "Series", ct).ConfigureAwait(false);
+        return Results.Json(new
+        {
+            videos = videos.Select(v => new { v.Key, v.Name, v.Type, v.Site, v.ThumbnailUrl }).ToList(),
+            offline = false,
+        }, jsonSerializerOptions);
+    }
+    catch
+    {
+        // TMDB unreachable — return empty list so the UI degrades gracefully.
+        return Results.Json(new { videos = Array.Empty<object>(), offline = true }, jsonSerializerOptions);
+    }
 });
 
 app.MapGet("/api/series/{id:int}/season/{season:int}", async (
@@ -489,7 +728,7 @@ app.MapGet("/api/series/{id:int}/season/{season:int}", async (
     var inSeason = eps.Where(e => e.Season == season).OrderBy(e => e.EpisodeNumber).ToList();
     var tmdb = TmdbClientFactory.Create();
 
-    IReadOnlyDictionary<int, (string? Name, string? StillPath, double? VoteAverage)>? tmdbMap = null;
+    IReadOnlyDictionary<int, (string? Name, string? StillPath, double? VoteAverage, string? Overview)>? tmdbMap = null;
     if (tmdb != null)
     {
         try
@@ -506,10 +745,12 @@ app.MapGet("/api/series/{id:int}/season/{season:int}", async (
     var episodeRows = await Task.WhenAll(inSeason.Select(async e =>
     {
         double? tvVote = null;
-        if (tmdbMap != null &&
-            tmdbMap.TryGetValue(e.EpisodeNumber, out var meta) &&
-            meta.VoteAverage is > 0)
-            tvVote = meta.VoteAverage;
+        string? overview = null;
+        if (tmdbMap != null && tmdbMap.TryGetValue(e.EpisodeNumber, out var meta))
+        {
+            if (meta.VoteAverage is > 0) tvVote = meta.VoteAverage;
+            overview = meta.Overview;
+        }
         double? imdbVote = await ratings.TryGetEpisodeImdbRatingAsync(show.TmdbId, season, e.EpisodeNumber, ct)
             .ConfigureAwait(false);
         return (object)new
@@ -518,6 +759,7 @@ app.MapGet("/api/series/{id:int}/season/{season:int}", async (
             e.Season,
             episodeNumber = e.EpisodeNumber,
             e.Title,
+            overview,
             e.FilePath,
             e.SubtitlePath,
             e.WatchStatus,
@@ -527,7 +769,7 @@ app.MapGet("/api/series/{id:int}/season/{season:int}", async (
         };
     })).ConfigureAwait(false);
 
-    (string Name, string? PosterPath, string? AirDate, int EpisodeCount)? header = null;
+    (string Name, string? PosterPath, string? AirDate, int EpisodeCount, double? VoteAverage)? header = null;
     if (tmdb != null)
     {
         try
@@ -1156,16 +1398,18 @@ app.MapPost("/api/unmatched/search", async (UnmatchedSearchBody body, Cancellati
     if (qFallback.Length >= 4)
         qFallback = Regex.Replace(qFallback, @"\b(19\d{2}|20\d{2})\b", "").Trim();
     var mtRaw = string.IsNullOrWhiteSpace(body.MediaType) ? "Movie" : body.MediaType!;
+    // Detect Arabic characters to enable bilingual TMDB search (en-US + ar)
+    var hasArabic = q.Any(c => c >= '؀' && c <= 'ۿ');
     List<(TmdbSearchResult Result, string Media)> combined;
 
     if (mtRaw.Equals("Both", StringComparison.OrdinalIgnoreCase))
     {
-        var movies = await tmdb.SearchAsync(q, "Movie", false, ct, 12).ConfigureAwait(false);
-        var series = await tmdb.SearchAsync(q, "Series", false, ct, 12).ConfigureAwait(false);
+        var movies = await tmdb.SearchAsync(q, "Movie", hasArabic, ct, 12).ConfigureAwait(false);
+        var series = await tmdb.SearchAsync(q, "Series", hasArabic, ct, 12).ConfigureAwait(false);
         if ((movies.Count + series.Count) < 6 && !string.Equals(qFallback, q, StringComparison.Ordinal))
         {
-            var movies2 = await tmdb.SearchAsync(qFallback, "Movie", false, ct, 12).ConfigureAwait(false);
-            var series2 = await tmdb.SearchAsync(qFallback, "Series", false, ct, 12).ConfigureAwait(false);
+            var movies2 = await tmdb.SearchAsync(qFallback, "Movie", hasArabic, ct, 12).ConfigureAwait(false);
+            var series2 = await tmdb.SearchAsync(qFallback, "Series", hasArabic, ct, 12).ConfigureAwait(false);
             movies = movies.Concat(movies2).ToList();
             series = series.Concat(series2).ToList();
         }
@@ -1178,10 +1422,10 @@ app.MapPost("/api/unmatched/search", async (UnmatchedSearchBody body, Cancellati
     }
     else
     {
-        var list = await tmdb.SearchAsync(q, mtRaw, false, ct, 14).ConfigureAwait(false);
+        var list = await tmdb.SearchAsync(q, mtRaw, hasArabic, ct, 14).ConfigureAwait(false);
         if (list.Count < 7 && !string.Equals(qFallback, q, StringComparison.Ordinal))
         {
-            var fallback = await tmdb.SearchAsync(qFallback, mtRaw, false, ct, 14).ConfigureAwait(false);
+            var fallback = await tmdb.SearchAsync(qFallback, mtRaw, hasArabic, ct, 14).ConfigureAwait(false);
             list = list.Concat(fallback).ToList();
         }
         combined = list.Select(r => (Result: r, Media: mtRaw)).ToList();
@@ -1256,6 +1500,70 @@ app.MapGet("/api/stream/tv/{tmdbId:int}/seasons", async (int tmdbId, Cancellatio
     return Results.Json(rows, jsonSerializerOptions);
 });
 
+app.MapGet("/api/stream/tv/{tmdbId:int}/season/{seasonNumber:int}/episodes", async (int tmdbId, int seasonNumber, CancellationToken ct) =>
+{
+    var apiKey = AppSettings.ResolvedTmdbApiKey;
+    if (!AppSettings.IsValidTmdbKey(apiKey) || tmdbId <= 0 || seasonNumber <= 0)
+        return Results.Json(new { episodes = Array.Empty<object>(), error = "Invalid request." }, jsonSerializerOptions);
+
+    try
+    {
+        using var http = new HttpClient();
+        http.DefaultRequestHeaders.UserAgent.ParseAdd("Pitflix/1.0");
+        var url = $"https://api.themoviedb.org/3/tv/{tmdbId}/season/{seasonNumber}?api_key={Uri.EscapeDataString(apiKey!)}&language=en-US";
+        var json = await http.GetStringAsync(new Uri(url), ct).ConfigureAwait(false);
+        using var doc = System.Text.Json.JsonDocument.Parse(json);
+        var root = doc.RootElement;
+
+        static string? Str(System.Text.Json.JsonElement el, string key) =>
+            el.TryGetProperty(key, out var v) && v.ValueKind == System.Text.Json.JsonValueKind.String ? v.GetString() : null;
+        static int Int32(System.Text.Json.JsonElement el, string key) =>
+            el.TryGetProperty(key, out var v) && v.ValueKind == System.Text.Json.JsonValueKind.Number ? v.GetInt32() : 0;
+        static double Dbl(System.Text.Json.JsonElement el, string key) =>
+            el.TryGetProperty(key, out var v) && v.ValueKind == System.Text.Json.JsonValueKind.Number ? v.GetDouble() : 0;
+
+        var seasonName = Str(root, "name") ?? $"Season {seasonNumber}";
+        var seasonOverview = Str(root, "overview");
+        var seasonPosterPath = Str(root, "poster_path");
+        var seasonPosterUrl = string.IsNullOrWhiteSpace(seasonPosterPath)
+            ? null : $"https://image.tmdb.org/t/p/w342{seasonPosterPath}";
+
+        var episodes = new List<object>();
+        if (root.TryGetProperty("episodes", out var epsArr) && epsArr.ValueKind == System.Text.Json.JsonValueKind.Array)
+        {
+            foreach (var ep in epsArr.EnumerateArray())
+            {
+                var epNum = Int32(ep, "episode_number");
+                var epTitle = Str(ep, "name") ?? $"Episode {epNum}";
+                var epOverview = Str(ep, "overview");
+                var airDate = Str(ep, "air_date");
+                var runtime = Int32(ep, "runtime");
+                var vote = Dbl(ep, "vote_average");
+                var stillPath = Str(ep, "still_path");
+                var stillUrl = string.IsNullOrWhiteSpace(stillPath)
+                    ? null : $"https://image.tmdb.org/t/p/w300{stillPath}";
+
+                episodes.Add(new
+                {
+                    episodeNumber = epNum,
+                    title = epTitle,
+                    overview = epOverview,
+                    airDate,
+                    runtime,
+                    voteAverage = vote,
+                    stillUrl,
+                });
+            }
+        }
+
+        return Results.Json(new { seasonName, seasonOverview, seasonPosterUrl, episodes, error = (string?)null }, jsonSerializerOptions);
+    }
+    catch (Exception ex)
+    {
+        return Results.Json(new { episodes = Array.Empty<object>(), error = ex.Message }, jsonSerializerOptions);
+    }
+});
+
 // —— Stream TMDB details (for StreamingDetailsPage) ——
 app.MapGet("/api/stream/details/{tmdbId:int}", async (int tmdbId, string? mediaType, CancellationToken ct) =>
 {
@@ -1265,7 +1573,7 @@ app.MapGet("/api/stream/details/{tmdbId:int}", async (int tmdbId, string? mediaT
 
     var isMovie = !string.Equals(mediaType, "Series", StringComparison.OrdinalIgnoreCase);
     var endpoint = isMovie ? $"movie/{tmdbId}" : $"tv/{tmdbId}";
-    var appendTo = "videos,recommendations,external_ids";
+    var appendTo = "videos,recommendations,external_ids,credits";
     var url = $"https://api.themoviedb.org/3/{endpoint}?api_key={Uri.EscapeDataString(apiKey!)}&language=en-US&append_to_response={appendTo}";
 
     try
@@ -1282,6 +1590,7 @@ app.MapGet("/api/stream/details/{tmdbId:int}", async (int tmdbId, string? mediaT
         var posterPath = root.TryGetProperty("poster_path", out var pp) ? pp.GetString() : null;
         var backdropPath = root.TryGetProperty("backdrop_path", out var bp) ? bp.GetString() : null;
         var voteAverage = root.TryGetProperty("vote_average", out var va) && va.TryGetDouble(out var vd) ? vd : 0;
+        var voteCount = root.TryGetProperty("vote_count", out var vc) && vc.TryGetInt32(out var vci) ? vci : 0;
         var releaseDate = root.TryGetProperty("release_date", out var rd) ? rd.GetString()
             : root.TryGetProperty("first_air_date", out var fa) ? fa.GetString() : null;
         var imdbId = root.TryGetProperty("external_ids", out var ext) && ext.TryGetProperty("imdb_id", out var im)
@@ -1292,6 +1601,51 @@ app.MapGet("/api/stream/details/{tmdbId:int}", async (int tmdbId, string? mediaT
         if (root.TryGetProperty("genres", out var genresEl) && genresEl.ValueKind == System.Text.Json.JsonValueKind.Array)
             foreach (var g in genresEl.EnumerateArray())
                 if (g.TryGetProperty("name", out var gn)) genres.Add(gn.GetString() ?? "");
+
+        // Seasons (TV only)
+        var seasons = new List<object>();
+        if (!isMovie && root.TryGetProperty("seasons", out var seasonsEl) && seasonsEl.ValueKind == System.Text.Json.JsonValueKind.Array)
+        {
+            foreach (var s in seasonsEl.EnumerateArray())
+            {
+                var sNum = s.TryGetProperty("season_number", out var sn) && sn.TryGetInt32(out var sni) ? sni : -1;
+                if (sNum < 1) continue; // skip specials (season 0)
+                var sName = s.TryGetProperty("name", out var snm) ? snm.GetString() : null;
+                var sEps = s.TryGetProperty("episode_count", out var se) && se.TryGetInt32(out var sei) ? sei : 0;
+                var sAir = s.TryGetProperty("air_date", out var sa) ? sa.GetString() : null;
+                var sPoster = s.TryGetProperty("poster_path", out var sp) ? sp.GetString() : null;
+                seasons.Add(new
+                {
+                    seasonNumber = sNum,
+                    name = sName ?? $"Season {sNum}",
+                    episodeCount = sEps,
+                    airDate = sAir,
+                    posterUrl = string.IsNullOrEmpty(sPoster) ? null : $"https://image.tmdb.org/t/p/w185{sPoster}",
+                });
+            }
+        }
+
+        // Cast (top 12)
+        var cast = new List<object>();
+        if (root.TryGetProperty("credits", out var creditsEl) && creditsEl.TryGetProperty("cast", out var castArr)
+            && castArr.ValueKind == System.Text.Json.JsonValueKind.Array)
+        {
+            foreach (var p in castArr.EnumerateArray().Take(12))
+            {
+                var pName = p.TryGetProperty("name", out var pn) ? pn.GetString() : null;
+                var pChar = p.TryGetProperty("character", out var pc) ? pc.GetString() : null;
+                var pProfile = p.TryGetProperty("profile_path", out var pp2) ? pp2.GetString() : null;
+                var pId = p.TryGetProperty("id", out var pi) && pi.TryGetInt32(out var pii) ? pii : 0;
+                if (!string.IsNullOrEmpty(pName))
+                    cast.Add(new
+                    {
+                        id = pId,
+                        name = pName,
+                        character = pChar,
+                        profileUrl = string.IsNullOrEmpty(pProfile) ? null : $"https://image.tmdb.org/t/p/w185{pProfile}",
+                    });
+            }
+        }
 
         // Trailers: pick YouTube trailers, Official Trailer first
         var trailers = new List<StreamTrailerEntry>();
@@ -1341,15 +1695,132 @@ app.MapGet("/api/stream/details/{tmdbId:int}", async (int tmdbId, string? mediaT
             }
         }
 
+        // Collection (movies only)
+        object? belongsToCollection = null;
+        if (isMovie && root.TryGetProperty("belongs_to_collection", out var colEl)
+            && colEl.ValueKind == System.Text.Json.JsonValueKind.Object)
+        {
+            var colId = colEl.TryGetProperty("id", out var ci) && ci.TryGetInt32(out var civ) ? civ : 0;
+            var colName = colEl.TryGetProperty("name", out var cn) ? cn.GetString() : null;
+            var colPoster = colEl.TryGetProperty("poster_path", out var cp) ? cp.GetString() : null;
+            if (colId > 0)
+                belongsToCollection = new
+                {
+                    id = colId,
+                    name = colName,
+                    posterUrl = string.IsNullOrEmpty(colPoster) ? null : $"https://image.tmdb.org/t/p/w342{colPoster}",
+                };
+        }
+
         return Results.Json(new
         {
             tmdbId, title, overview,
             posterUrl = string.IsNullOrEmpty(posterPath) ? null : $"https://image.tmdb.org/t/p/w500{posterPath}",
             backdropUrl = string.IsNullOrEmpty(backdropPath) ? null : $"https://image.tmdb.org/t/p/w1280{backdropPath}",
-            voteAverage, releaseDate, year = releaseDate?.Length >= 4 ? releaseDate[..4] : null,
+            voteAverage, voteCount, releaseDate, year = releaseDate?.Length >= 4 ? releaseDate[..4] : null,
             genres, imdbId, mediaType = isMovie ? "Movie" : "Series",
-            numberOfSeasons, trailer = featuredTrailerObj, recommendations = recs,
+            numberOfSeasons, seasons, cast, trailer = featuredTrailerObj, recommendations = recs,
+            collection = belongsToCollection,
         }, jsonSerializerOptions);
+    }
+    catch (Exception ex)
+    {
+        return Results.Json(new { error = ex.Message }, jsonSerializerOptions);
+    }
+});
+
+// —— Stream TMDB Discover (trending / popular / top-rated / upcoming) ——
+app.MapGet("/api/stream/discover", async (string? category, CancellationToken ct) =>
+{
+    var apiKey = AppSettings.ResolvedTmdbApiKey;
+    if (!AppSettings.IsValidTmdbKey(apiKey))
+        return Results.Json(Array.Empty<object>(), jsonSerializerOptions);
+
+    var cat = (category ?? "trending-movie").Trim().ToLowerInvariant();
+
+    string tmdbUrl;
+    bool defaultIsMovie;
+
+    switch (cat)
+    {
+        case "trending-movie":
+            tmdbUrl = $"https://api.themoviedb.org/3/trending/movie/week?api_key={Uri.EscapeDataString(apiKey!)}&language=en-US";
+            defaultIsMovie = true;
+            break;
+        case "trending-tv":
+            tmdbUrl = $"https://api.themoviedb.org/3/trending/tv/week?api_key={Uri.EscapeDataString(apiKey!)}&language=en-US";
+            defaultIsMovie = false;
+            break;
+        case "popular-movie":
+            tmdbUrl = $"https://api.themoviedb.org/3/movie/popular?api_key={Uri.EscapeDataString(apiKey!)}&language=en-US";
+            defaultIsMovie = true;
+            break;
+        case "popular-tv":
+            tmdbUrl = $"https://api.themoviedb.org/3/tv/popular?api_key={Uri.EscapeDataString(apiKey!)}&language=en-US";
+            defaultIsMovie = false;
+            break;
+        case "top-rated-movie":
+            tmdbUrl = $"https://api.themoviedb.org/3/movie/top_rated?api_key={Uri.EscapeDataString(apiKey!)}&language=en-US";
+            defaultIsMovie = true;
+            break;
+        case "top-rated-tv":
+            tmdbUrl = $"https://api.themoviedb.org/3/tv/top_rated?api_key={Uri.EscapeDataString(apiKey!)}&language=en-US";
+            defaultIsMovie = false;
+            break;
+        case "upcoming":
+            tmdbUrl = $"https://api.themoviedb.org/3/movie/upcoming?api_key={Uri.EscapeDataString(apiKey!)}&language=en-US";
+            defaultIsMovie = true;
+            break;
+        default:
+            tmdbUrl = $"https://api.themoviedb.org/3/trending/movie/week?api_key={Uri.EscapeDataString(apiKey!)}&language=en-US";
+            defaultIsMovie = true;
+            break;
+    }
+
+    try
+    {
+        using var http = new HttpClient();
+        http.DefaultRequestHeaders.UserAgent.ParseAdd("Pitflix/1.0");
+        var json = await http.GetStringAsync(new Uri(tmdbUrl), ct).ConfigureAwait(false);
+        using var doc = System.Text.Json.JsonDocument.Parse(json);
+        var root = doc.RootElement;
+
+        var items = new List<object>();
+        if (root.TryGetProperty("results", out var results) && results.ValueKind == System.Text.Json.JsonValueKind.Array)
+        {
+            foreach (var item in results.EnumerateArray().Take(20))
+            {
+                var id = item.TryGetProperty("id", out var idEl) && idEl.TryGetInt32(out var idVal) ? idVal : 0;
+                if (id <= 0) continue;
+
+                var title = item.TryGetProperty("title", out var tt) ? tt.GetString()
+                    : item.TryGetProperty("name", out var nn) ? nn.GetString() : null;
+                if (string.IsNullOrEmpty(title)) continue;
+
+                var overview = item.TryGetProperty("overview", out var ov) ? ov.GetString() : null;
+                var posterPath = item.TryGetProperty("poster_path", out var pp) ? pp.GetString() : null;
+                var backdropPath = item.TryGetProperty("backdrop_path", out var bp) ? bp.GetString() : null;
+                var voteAvg = item.TryGetProperty("vote_average", out var va) && va.TryGetDouble(out var vd) ? vd : 0;
+                var relDate = item.TryGetProperty("release_date", out var rd) ? rd.GetString()
+                    : item.TryGetProperty("first_air_date", out var fa) ? fa.GetString() : null;
+                var mediaTypeField = item.TryGetProperty("media_type", out var mt) ? mt.GetString() : null;
+                var isMovie = mediaTypeField == null ? defaultIsMovie : mediaTypeField != "tv";
+
+                items.Add(new
+                {
+                    id,
+                    title,
+                    overview,
+                    posterUrl = string.IsNullOrEmpty(posterPath) ? null : $"https://image.tmdb.org/t/p/w342{posterPath}",
+                    backdropUrl = string.IsNullOrEmpty(backdropPath) ? null : $"https://image.tmdb.org/t/p/w1280{backdropPath}",
+                    voteAverage = voteAvg,
+                    year = relDate?.Length >= 4 ? relDate[..4] : null,
+                    mediaType = isMovie ? "Movie" : "Series",
+                });
+            }
+        }
+
+        return Results.Json(items, jsonSerializerOptions);
     }
     catch (Exception ex)
     {
@@ -1376,10 +1847,10 @@ app.MapPost("/api/scan/start", async (ScanStartBody body, LibraryRepository repo
         {
             error = "NO_LIBRARY_FOLDERS",
             message =
-                "No library folders are configured. Open Settings, add at least one folder under “Library folders”, then scan again."
+                "No library folders are configured. Open Settings, add at least one folder under \"Library folders\", then scan again."
         });
 
-    var jobId = scan.BeginJob();
+    var jobId = await scan.BeginJobAsync().ConfigureAwait(false);
     scan.StartCancellationSource();
     var token = scan.ScanToken;
 
@@ -1421,7 +1892,7 @@ app.MapPost("/api/scan/start", async (ScanStartBody body, LibraryRepository repo
 
             var progress = new Progress<ScanProgress>(p =>
             {
-                scan.Update(p.Current, p.CurrentFile, p.MatchedSoFar, p.UnmatchedSoFar);
+                scan.Update(p.Current, p.CurrentFile, p.MatchedSoFar, p.UnmatchedSoFar, p.SkippedSoFar);
                 _ = scan.BroadcastAsync(new
                 {
                     type = "progress",
@@ -1453,7 +1924,7 @@ app.MapPost("/api/scan/start", async (ScanStartBody body, LibraryRepository repo
         finally
         {
             scan.DisposeCancellationSource();
-            scan.EndJob();
+            await scan.EndJobAsync().ConfigureAwait(false);
         }
     }, CancellationToken.None);
 
@@ -1503,12 +1974,16 @@ app.MapGet("/api/scan/stream", async (HttpContext ctx, ScanRuntime scan, Cancell
 
 // —— Watch history ——
 app.MapGet("/api/history", async (LibraryRepository repo, int limit = 10, bool includeSuppressed = false,
-        CancellationToken ct = default) =>
+        bool lite = false, CancellationToken ct = default) =>
 {
-    var tmdb = TmdbClientFactory.Create();
     var cap = Math.Clamp(limit, 1, 200);
     var list = (await repo.GetRecentHistoryAsync(cap, includeSuppressed, ct).ConfigureAwait(false)).ToList();
-    foreach (var h in list)
+    // `lite=true` skips the per-row poster/backdrop/TMDB/episode enrichment below —
+    // callers that only need raw resume-position fields (e.g. usePlayback's
+    // "where did I leave off" lookup) were paying for ~7 sequential DB/TMDB
+    // calls per history row (up to 200 rows) just to compute a resume second.
+    var tmdb = lite ? null : TmdbClientFactory.Create();
+    foreach (var h in lite ? Enumerable.Empty<WatchHistory>() : list)
     {
         // (1) Empty poster → resolve from library file path.
         // (2) Stale/missing file on disk → ToImageUrl returns null after mapping — resolve again from library.
@@ -1913,6 +2388,8 @@ app.MapGet("/api/lists/{id:int}/items", async (int id, LibraryRepository repo, C
             Title = row.Title,
             Year = row.Year,
             PosterLocalPath = row.PosterLocalPath,
+            PosterRemoteUrl = row.PosterRemoteUrl,
+            ImdbId = row.ImdbId,
             IsArabic = false,
             TmdbMediaType = string.Equals(row.MediaType, "Series", StringComparison.OrdinalIgnoreCase)
                 ? "Series"
@@ -1928,7 +2405,8 @@ app.MapGet("/api/lists/{id:int}/items", async (int id, LibraryRepository repo, C
 
 app.MapPost("/api/lists/{id:int}/items", async (int id, AddListItemBody body, LibraryRepository repo, CancellationToken ct) =>
 {
-    await repo.AddListItemAsync(id, body.TmdbId, body.MediaType ?? "Movie", ct).ConfigureAwait(false);
+    await repo.AddListItemAsync(id, body.TmdbId, body.MediaType ?? "Movie",
+        body.Title, body.PosterRemoteUrl, body.ImdbId, ct).ConfigureAwait(false);
     return Results.Json(new { success = true });
 });
 
@@ -1979,6 +2457,91 @@ app.MapGet("/api/people/{tmdbId:int}", async (int tmdbId, LibraryRepository reqR
     }
 
     return Results.Json(new { person = personOut, localAppearances = local.Select(ImageUrls.MapLocalSimilar).ToList() });
+});
+
+app.MapGet("/api/people/{tmdbId:int}/stream-credits", async (int tmdbId, CancellationToken ct) =>
+{
+    var apiKey = AppSettings.ResolvedTmdbApiKey;
+    if (!AppSettings.IsValidTmdbKey(apiKey) || tmdbId <= 0)
+        return Results.Json(new { credits = Array.Empty<object>(), error = "TMDB not configured." }, jsonSerializerOptions);
+
+    try
+    {
+        using var handler = new System.Net.Http.HttpClientHandler
+        {
+            AutomaticDecompression = System.Net.DecompressionMethods.GZip | System.Net.DecompressionMethods.Deflate
+        };
+        using var http = new HttpClient(handler);
+        http.DefaultRequestHeaders.UserAgent.ParseAdd("Pitflix/1.0");
+        var url = $"https://api.themoviedb.org/3/person/{tmdbId}/combined_credits?api_key={Uri.EscapeDataString(apiKey!)}&language=en-US";
+        var json = await http.GetStringAsync(new Uri(url), ct).ConfigureAwait(false);
+        using var doc = System.Text.Json.JsonDocument.Parse(json);
+        var root = doc.RootElement;
+
+        static string? Str(System.Text.Json.JsonElement el, string key) =>
+            el.TryGetProperty(key, out var v) && v.ValueKind == System.Text.Json.JsonValueKind.String ? v.GetString() : null;
+        static int? Int32(System.Text.Json.JsonElement el, string key) =>
+            el.TryGetProperty(key, out var v) && v.ValueKind == System.Text.Json.JsonValueKind.Number ? v.GetInt32() : null;
+        static double Dbl(System.Text.Json.JsonElement el, string key) =>
+            el.TryGetProperty(key, out var v) && v.ValueKind == System.Text.Json.JsonValueKind.Number ? v.GetDouble() : 0;
+
+        var castCredits  = new List<object>();
+        var crewCredits  = new List<object>();
+        var seenCast     = new HashSet<int>();
+        var seenCrew     = new HashSet<string>(); // "id:job" to allow director + writer same film
+
+        foreach (var section in new[] { "cast", "crew" })
+        {
+            if (!root.TryGetProperty(section, out var arr) || arr.ValueKind != System.Text.Json.JsonValueKind.Array)
+                continue;
+            foreach (var item in arr.EnumerateArray())
+            {
+                var id = Int32(item, "id");
+                if (id is null) continue;
+
+                var mediaType = Str(item, "media_type");
+                var title = Str(item, "title") ?? Str(item, "name");
+                if (string.IsNullOrWhiteSpace(title)) continue;
+
+                var posterPath = Str(item, "poster_path");
+                var posterUrl = string.IsNullOrWhiteSpace(posterPath)
+                    ? null : $"https://image.tmdb.org/t/p/w342{posterPath}";
+                var releaseDate = Str(item, "release_date") ?? Str(item, "first_air_date");
+                var year = releaseDate?.Length >= 4 ? releaseDate[..4] : null;
+                var voteAverage = Dbl(item, "vote_average");
+                var mt = string.Equals(mediaType, "tv", StringComparison.OrdinalIgnoreCase) ? "Series" : "Movie";
+
+                if (section == "cast")
+                {
+                    if (!seenCast.Add(id.Value)) continue;
+                    var character = Str(item, "character");
+                    castCredits.Add(new { id = id.Value, title, mediaType = mt, posterUrl, year, voteAverage, character, job = (string?)null, creditType = "cast" });
+                }
+                else
+                {
+                    var job = Str(item, "job");
+                    if (string.IsNullOrWhiteSpace(job)) continue;
+                    var crewKey = $"{id.Value}:{job}";
+                    if (!seenCrew.Add(crewKey)) continue;
+                    crewCredits.Add(new { id = id.Value, title, mediaType = mt, posterUrl, year, voteAverage, character = (string?)null, job, creditType = "crew" });
+                }
+            }
+        }
+
+        static List<object> Top(List<object> list, int n) =>
+            list.Cast<dynamic>().OrderByDescending(x => (double)x.voteAverage).Take(n).Cast<object>().ToList();
+
+        return Results.Json(new
+        {
+            cast  = Top(castCredits,  50),
+            crew  = Top(crewCredits,  40),
+            error = (string?)null
+        }, jsonSerializerOptions);
+    }
+    catch (Exception ex)
+    {
+        return Results.Json(new { credits = Array.Empty<object>(), error = ex.Message }, jsonSerializerOptions);
+    }
 });
 
 // —— Images ——
@@ -2309,6 +2872,12 @@ app.MapGet("/api/settings", async (LibraryRepository repo, LibraryContext db, Ca
     var masked = MaskKey(key);
     var osKey = await repo.GetSettingAsync("OpenSubtitlesApiKey", ct).ConfigureAwait(false);
     var osMasked = MaskKey(osKey);
+    var sdlKey = await repo.GetSettingAsync("SubDlApiKey", ct).ConfigureAwait(false);
+    var sdlMasked = MaskKey(sdlKey);
+    var mdblistKey = await repo.GetSettingAsync("MdblistApiKey", ct).ConfigureAwait(false);
+    var mdblistMasked = MaskKey(mdblistKey);
+    var tvdbKey = await repo.GetSettingAsync("TvdbApiKey", ct).ConfigureAwait(false);
+    var tvdbMasked = MaskKey(tvdbKey);
     var paths = await repo.GetAllLibraryPathsAsync(ct).ConfigureAwait(false);
     var pinnedScanPaths = (await repo.GetPinnedScanPathsAsync(ct).ConfigureAwait(false)).ToList();
     var excludedScanPaths = (await repo.GetExcludedScanPathsAsync(ct).ConfigureAwait(false)).ToList();
@@ -2320,6 +2889,7 @@ app.MapGet("/api/settings", async (LibraryRepository repo, LibraryContext db, Ca
     var useBuiltinRaw = await repo.GetSettingAsync("UseBuiltinPlayer", ct).ConfigureAwait(false);
     var useBuiltinPlayer = string.IsNullOrWhiteSpace(useBuiltinRaw) ||
                            string.Equals(useBuiltinRaw, "true", StringComparison.OrdinalIgnoreCase);
+    var playerMode = await repo.GetSettingAsync("PlayerMode", ct).ConfigureAwait(false) ?? "detached";
 
     var scanToastsRaw = await repo.GetSettingAsync("LibraryScanDesktopToasts", ct).ConfigureAwait(false);
     var libraryScanDesktopToasts = string.IsNullOrWhiteSpace(scanToastsRaw) ||
@@ -2348,6 +2918,9 @@ app.MapGet("/api/settings", async (LibraryRepository repo, LibraryContext db, Ca
     {
         tmdbApiKey = masked,
         openSubtitlesApiKey = osMasked,
+        subDlApiKey = sdlMasked,
+        mdblistApiKey = mdblistMasked,
+        tvdbApiKey = tvdbMasked,
         libraryPaths = paths,
         pinnedScanPaths,
         excludedScanPaths,
@@ -2356,6 +2929,7 @@ app.MapGet("/api/settings", async (LibraryRepository repo, LibraryContext db, Ca
         unmatchedCount,
         mediaPlayerPath,
         useBuiltinPlayer,
+        playerMode,
         libraryScanDesktopToasts,
         setupComplete,
         setupWizardStep,
@@ -2388,6 +2962,15 @@ app.MapPost("/api/settings", async (SettingsBody body, LibraryRepository repo, C
     if (!string.IsNullOrWhiteSpace(body.OpenSubtitlesApiKey))
         await repo.SaveSettingAsync("OpenSubtitlesApiKey", body.OpenSubtitlesApiKey.Trim(), ct).ConfigureAwait(false);
 
+    if (!string.IsNullOrWhiteSpace(body.SubDlApiKey))
+        await repo.SaveSettingAsync("SubDlApiKey", body.SubDlApiKey.Trim(), ct).ConfigureAwait(false);
+
+    if (!string.IsNullOrWhiteSpace(body.MdblistApiKey))
+        await repo.SaveSettingAsync("MdblistApiKey", body.MdblistApiKey.Trim(), ct).ConfigureAwait(false);
+
+    if (!string.IsNullOrWhiteSpace(body.TvdbApiKey))
+        await repo.SaveSettingAsync("TvdbApiKey", body.TvdbApiKey.Trim(), ct).ConfigureAwait(false);
+
     if (body.OpenSubtitlesAppName != null)
         await repo.SaveSettingAsync("OpenSubtitlesAppName", body.OpenSubtitlesAppName.Trim(), ct).ConfigureAwait(false);
 
@@ -2397,6 +2980,9 @@ app.MapPost("/api/settings", async (SettingsBody body, LibraryRepository repo, C
     if (body.UseBuiltinPlayer.HasValue)
         await repo.SaveSettingAsync("UseBuiltinPlayer", body.UseBuiltinPlayer.Value ? "true" : "false", ct)
             .ConfigureAwait(false);
+
+    if (!string.IsNullOrWhiteSpace(body.PlayerMode))
+        await repo.SaveSettingAsync("PlayerMode", body.PlayerMode.Trim(), ct).ConfigureAwait(false);
 
     if (body.LibraryScanDesktopToasts.HasValue)
         await repo.SaveSettingAsync("LibraryScanDesktopToasts", body.LibraryScanDesktopToasts.Value ? "true" : "false", ct)
@@ -2453,6 +3039,133 @@ app.MapGet("/api/settings/verify-opensubtitles", async (string? key, Cancellatio
             ? "Unauthorized — check the API key."
             : $"OpenSubtitles returned {(int)res.StatusCode}.";
         return Results.Json(new { valid = false, error = err }, jsonSerializerOptions);
+    }
+    catch (Exception ex)
+    {
+        return Results.Json(new { valid = false, error = ex.Message }, jsonSerializerOptions);
+    }
+});
+
+app.MapGet("/api/settings/verify-subdl", async (string? key, CancellationToken ct) =>
+{
+    var k = key?.Trim();
+    if (string.IsNullOrEmpty(k))
+        return Results.Json(new { valid = false, error = "Key is required." }, jsonSerializerOptions);
+
+    try
+    {
+        using var http = new HttpClient { Timeout = TimeSpan.FromSeconds(15) };
+        // Use a known IMDB ID (The Godfather) for a reliable probe
+        var url = $"https://api.subdl.com/api/v1/subtitles?api_key={Uri.EscapeDataString(k)}&imdb_id=tt0068646&type=movie";
+        using var res = await http.GetAsync(url, ct).ConfigureAwait(false);
+
+        if (res.StatusCode == HttpStatusCode.Unauthorized || res.StatusCode == HttpStatusCode.Forbidden)
+            return Results.Json(new { valid = false, error = "Unauthorized — check the API key." }, jsonSerializerOptions);
+
+        if (res.IsSuccessStatusCode)
+        {
+            // SubDL returns {"status":false,...} for invalid keys even on 200
+            var body = await res.Content.ReadAsStringAsync(ct).ConfigureAwait(false);
+            try
+            {
+                using var doc = JsonDocument.Parse(body);
+                if (doc.RootElement.TryGetProperty("status", out var statusEl))
+                {
+                    // status can be bool true/false or int 1/0
+                    var ok = statusEl.ValueKind == JsonValueKind.True
+                        || (statusEl.ValueKind == JsonValueKind.Number && statusEl.GetInt32() == 1);
+                    if (!ok)
+                    {
+                        var msg = doc.RootElement.TryGetProperty("message", out var m) ? m.GetString() : null;
+                        return Results.Json(new { valid = false, error = msg ?? "Invalid API key." }, jsonSerializerOptions);
+                    }
+                }
+            }
+            catch { /* If we can't parse, assume valid (empty result is OK) */ }
+            return Results.Json(new { valid = true, error = (string?)null }, jsonSerializerOptions);
+        }
+
+        return Results.Json(new { valid = false, error = $"SubDL returned {(int)res.StatusCode}." }, jsonSerializerOptions);
+    }
+    catch (Exception ex)
+    {
+        return Results.Json(new { valid = false, error = ex.Message }, jsonSerializerOptions);
+    }
+});
+
+app.MapGet("/api/settings/verify-mdblist", async (string? key, CancellationToken ct) =>
+{
+    var k = key?.Trim();
+    if (string.IsNullOrEmpty(k))
+        return Results.Json(new { valid = false, error = "Key is required." }, jsonSerializerOptions);
+
+    try
+    {
+        using var http = new HttpClient { Timeout = TimeSpan.FromSeconds(15) };
+        // Probe with The Shawshank Redemption (tt0111161)
+        var url = $"https://mdblist.com/api/?i=tt0111161&apikey={Uri.EscapeDataString(k)}";
+        using var res = await http.GetAsync(url, ct).ConfigureAwait(false);
+        if (!res.IsSuccessStatusCode)
+            return Results.Json(new { valid = false, error = $"MDBList returned {(int)res.StatusCode}." }, jsonSerializerOptions);
+
+        var body = await res.Content.ReadAsStringAsync(ct).ConfigureAwait(false);
+        using var doc = JsonDocument.Parse(body);
+        // MDBList returns { "error": true, "message": "..." } on bad key
+        if (doc.RootElement.TryGetProperty("error", out var errEl) && errEl.ValueKind == JsonValueKind.True)
+        {
+            var msg = doc.RootElement.TryGetProperty("message", out var m) ? m.GetString() : null;
+            return Results.Json(new { valid = false, error = msg ?? "Invalid API key." }, jsonSerializerOptions);
+        }
+
+        // Extract IMDb score for the toast
+        float? imdbScore = null;
+        if (doc.RootElement.TryGetProperty("ratings", out var ratingsEl))
+        {
+            foreach (var item in ratingsEl.EnumerateArray())
+            {
+                if (!item.TryGetProperty("source", out var src) || src.GetString() != "imdb") continue;
+                if (!item.TryGetProperty("value", out var val)) continue;
+                if (val.ValueKind == JsonValueKind.Number)
+                    imdbScore = val.GetSingle();
+                else if (val.ValueKind == JsonValueKind.String &&
+                         float.TryParse(val.GetString(), System.Globalization.NumberStyles.Any,
+                             System.Globalization.CultureInfo.InvariantCulture, out var parsed))
+                    imdbScore = parsed;
+            }
+        }
+
+        // Include a raw body snippet to help diagnose parsing issues
+        var rawSnippet = body.Length > 600 ? body[..600] + "…" : body;
+        return Results.Json(new { valid = true, imdbScore, rawSnippet, error = (string?)null }, jsonSerializerOptions);
+    }
+    catch (Exception ex)
+    {
+        return Results.Json(new { valid = false, error = ex.Message }, jsonSerializerOptions);
+    }
+});
+
+app.MapGet("/api/settings/verify-tvdb", async (string? key, CancellationToken ct) =>
+{
+    var k = key?.Trim();
+    if (string.IsNullOrEmpty(k))
+        return Results.Json(new { valid = false, error = "Key is required." }, jsonSerializerOptions);
+
+    try
+    {
+        using var http = new HttpClient { Timeout = TimeSpan.FromSeconds(15) };
+        using var req = new HttpRequestMessage(HttpMethod.Post, "https://api4.thetvdb.com/v4/login");
+        req.Content = JsonContent.Create(new { apikey = k });
+        using var res = await http.SendAsync(req, ct).ConfigureAwait(false);
+        if (!res.IsSuccessStatusCode)
+            return Results.Json(new { valid = false, error = $"TVDB returned {(int)res.StatusCode}." }, jsonSerializerOptions);
+
+        var body = await res.Content.ReadAsStringAsync(ct).ConfigureAwait(false);
+        using var doc = JsonDocument.Parse(body);
+        if (!doc.RootElement.TryGetProperty("data", out var data) ||
+            !data.TryGetProperty("token", out _))
+            return Results.Json(new { valid = false, error = "TVDB did not return a token." }, jsonSerializerOptions);
+
+        return Results.Json(new { valid = true, error = (string?)null }, jsonSerializerOptions);
     }
     catch (Exception ex)
     {
@@ -3056,6 +3769,167 @@ app.MapGet("/api/stats/watch", async (LibraryRepository repo, CancellationToken 
     }, jsonSerializerOptions);
 });
 
+// ── Unified watch tracking ───────────────────────────────────────────────────
+
+app.MapPost("/api/history/mark-watched", async (HttpRequest req, LibraryRepository repo, CancellationToken ct) =>
+{
+    var body = await req.ReadFromJsonAsync<UnifiedWatchBody>(cancellationToken: ct).ConfigureAwait(false);
+    if (body == null || body.TmdbId <= 0)
+        return Results.Json(new { success = false, error = "tmdbId is required." }, jsonSerializerOptions, statusCode: 400);
+
+    var source = string.IsNullOrWhiteSpace(body.Source) ? "manual" : body.Source.Trim().ToLowerInvariant();
+    if (source is not ("streaming" or "manual"))
+        source = "manual";
+
+    await repo.RecordUnifiedWatchAsync(
+        tmdbId: body.TmdbId,
+        imdbId: body.ImdbId?.Trim(),
+        mediaType: body.MediaType ?? "Movie",
+        title: body.Title ?? "",
+        posterUrl: body.PosterUrl?.Trim(),
+        source: source,
+        seasonNumber: body.SeasonNumber,
+        episodeNumber: body.EpisodeNumber,
+        estimatedSeconds: body.RuntimeMinutes > 0 ? body.RuntimeMinutes * 60 : 0,
+        ct: ct).ConfigureAwait(false);
+
+    return Results.Json(new { success = true }, jsonSerializerOptions);
+});
+
+// ── Watch history re-enrichment (back-fill analytics on old rows) ────────────
+
+app.MapPost("/api/history/re-enrich", async (LibraryRepository repo, CancellationToken ct) =>
+{
+    var updated = await repo.ReEnrichHistoryRowsAsync(ct).ConfigureAwait(false);
+    return Results.Json(new { success = true, updatedRows = updated }, jsonSerializerOptions);
+});
+
+// ── Coming Soon ──────────────────────────────────────────────────────────────
+
+app.MapGet("/api/coming-soon", async (LibraryRepository repo, CancellationToken ct) =>
+{
+    var rows = await repo.GetPinnedComingSoonAsync(ct).ConfigureAwait(false);
+    return Results.Json(rows.Select(r => new
+    {
+        r.Id, r.TmdbId, r.MediaType, r.Title,
+        r.PosterUrl, r.ReleaseDate, r.TrailerUrl, r.Overview, r.PinnedAt
+    }), jsonSerializerOptions);
+});
+
+app.MapPost("/api/coming-soon", async (HttpRequest req, LibraryRepository repo, CancellationToken ct) =>
+{
+    var body = await req.ReadFromJsonAsync<PinComingSoonBody>(cancellationToken: ct).ConfigureAwait(false);
+    if (body == null || body.TmdbId <= 0)
+        return Results.Json(new { success = false, error = "tmdbId is required." }, jsonSerializerOptions, statusCode: 400);
+
+    var item = new PinnedComingSoon
+    {
+        TmdbId = body.TmdbId,
+        MediaType = body.MediaType ?? "Movie",
+        Title = body.Title ?? "",
+        PosterUrl = body.PosterUrl?.Trim(),
+        ReleaseDate = body.ReleaseDate?.Trim(),
+        TrailerUrl = body.TrailerUrl?.Trim(),
+        Overview = body.Overview?.Trim(),
+    };
+    var saved = await repo.PinComingSoonAsync(item, ct).ConfigureAwait(false);
+    return Results.Json(new { success = true, id = saved?.Id }, jsonSerializerOptions);
+});
+
+app.MapDelete("/api/coming-soon/{id:int}", async (int id, LibraryRepository repo, CancellationToken ct) =>
+{
+    var ok = await repo.UnpinComingSoonAsync(id, ct).ConfigureAwait(false);
+    return ok
+        ? Results.Json(new { success = true }, jsonSerializerOptions)
+        : Results.NotFound(new { success = false, error = "Not found." });
+});
+
+// ── Trailer embed URL for local library items ────────────────────────────────
+
+app.MapGet("/api/trailers/embed", async (int? tmdbId, string? mediaType, TrailersRepository trailersRepo, CancellationToken ct) =>
+{
+    if (tmdbId is null or <= 0)
+        return Results.Json(new { embedUrl = (string?)null, trailers = Array.Empty<object>(), error = "tmdbId required." }, jsonSerializerOptions, statusCode: 400);
+
+    static int TrailerTypePriority(string? t) => t switch
+    {
+        "Trailer" => 0,
+        "Teaser"  => 1,
+        "Clip"    => 2,
+        _         => 3
+    };
+
+    // 1) Try persisted trailers DB — grab up to 5 so we can offer a choice
+    var rows = await trailersRepo.GetTrailersByTmdbIdAsync(tmdbId.Value, mediaType, true, null, 5, ct).ConfigureAwait(false);
+    static string InferTrailerType(string title)
+    {
+        var t = title ?? "";
+        if (t.Contains("Teaser", StringComparison.OrdinalIgnoreCase))  return "Teaser";
+        if (t.Contains("Clip",   StringComparison.OrdinalIgnoreCase))   return "Clip";
+        return "Trailer";
+    }
+
+    var dbTrailers = rows
+        .Select(r => new
+        {
+            url  = YoutubeEmbedUrl(r.YoutubeUrl ?? r.VideoId),
+            name = r.Title,
+            type = InferTrailerType(r.Title),
+            key  = TrailerYoutubeKey(r.YoutubeUrl ?? r.VideoId)
+        })
+        .Where(x => x.url != null)
+        .OrderBy(x => TrailerTypePriority(x.type))
+        .ToList();
+
+    if (dbTrailers.Count > 0)
+    {
+        var best = dbTrailers[0];
+        var allTrailers = dbTrailers.Select(t => new { embedUrl = t.url, title = t.name, type = t.type, youtubeKey = t.key }).ToList();
+        return Results.Json(new { embedUrl = best.url, title = best.name, trailers = allTrailers }, jsonSerializerOptions);
+    }
+
+    // 2) Fallback: live TMDB fetch — returns trailer + teaser pair when both exist
+    var tmdb = TmdbClientFactory.Create();
+    if (tmdb == null)
+        return Results.Json(new { embedUrl = (string?)null, trailers = Array.Empty<object>(), error = "TMDB not configured." }, jsonSerializerOptions);
+
+    var isMovie = !string.Equals(mediaType, "Series", StringComparison.OrdinalIgnoreCase);
+    var clips = await tmdb.TryGetTrailerAndTeaserClipsAsync(tmdbId.Value, isMovie ? "Movie" : "Series", ct).ConfigureAwait(false);
+    if (clips.Count > 0)
+    {
+        var tmdbTrailers = clips
+            .Select(c => new { embedUrl = $"https://www.youtube.com/embed/{c.Key}?autoplay=1&rel=0", title = c.Name, type = "Trailer", youtubeKey = c.Key })
+            .ToList();
+        return Results.Json(new { embedUrl = tmdbTrailers[0].embedUrl, title = tmdbTrailers[0].title, trailers = tmdbTrailers }, jsonSerializerOptions);
+    }
+
+    return Results.Json(new { embedUrl = (string?)null, trailers = Array.Empty<object>(), error = "No trailer found." }, jsonSerializerOptions);
+});
+
+static string? TrailerYoutubeKey(string? raw)
+{
+    if (string.IsNullOrWhiteSpace(raw)) return null;
+    var m = Regex.Match(raw, @"(?:v=|youtu\.be/|embed/)([A-Za-z0-9_-]{11})");
+    if (m.Success) return m.Groups[1].Value;
+    if (Regex.IsMatch(raw, @"^[A-Za-z0-9_-]{11}$")) return raw;
+    return null;
+}
+
+static string? YoutubeEmbedUrl(string? raw)
+{
+    if (string.IsNullOrWhiteSpace(raw)) return null;
+    // Already an embed URL
+    if (raw.Contains("/embed/", StringComparison.Ordinal)) return raw;
+    // Extract v= param from watch URL: youtube.com/watch?v=XXXX or youtu.be/XXXX
+    var vidMatch = Regex.Match(raw, @"(?:v=|youtu\.be/)([A-Za-z0-9_-]{11})");
+    if (vidMatch.Success)
+        return $"https://www.youtube.com/embed/{vidMatch.Groups[1].Value}?autoplay=1";
+    // Bare video ID (11 chars)
+    if (Regex.IsMatch(raw, @"^[A-Za-z0-9_-]{11}$"))
+        return $"https://www.youtube.com/embed/{raw}?autoplay=1";
+    return null;
+}
+
 OpenSubtitlesClient? CreateOpenSubtitlesClient(IConfiguration cfg)
 {
     var key = AppSettings.ResolvedOpenSubtitlesApiKey?.Trim();
@@ -3279,6 +4153,106 @@ app.MapPost("/api/play", async (PlayBody body, LibraryRepository repo, Cancellat
     }
 });
 
+// Duplicate detection — finds movies and episodes that appear more than once in the library
+app.MapGet("/api/library/duplicates", async (LibraryRepository repo, LibraryContext db, CancellationToken ct) =>
+{
+    var allMovies = await repo.GetAllMoviesAsync(ct).ConfigureAwait(false);
+
+    // Movie duplicates: group by TmdbId (matched) or normalised title+year (unmatched)
+    var movieGroups = allMovies
+        .GroupBy(m => m.TmdbId > 0
+            ? $"tmdb:{m.TmdbId}"
+            : $"title:{m.Title.Trim().ToLowerInvariant()}:{m.Year}")
+        .Where(g => g.Count() > 1)
+        .Select(g =>
+        {
+            var first = g.First();
+            var posterUrl = string.IsNullOrEmpty(first.SelectedPosterPath)
+                ? (string.IsNullOrEmpty(first.PosterLocalPath) ? null : $"{publicBase}/images/{Path.GetFileName(first.PosterLocalPath)}")
+                : $"{publicBase}/images/{Path.GetFileName(first.SelectedPosterPath)}";
+            return new
+            {
+                tmdbId    = first.TmdbId,
+                title     = first.Title,
+                year      = first.Year,
+                posterUrl,
+                copies = g.Select(m => new
+                {
+                    id          = m.Id,
+                    filePath    = m.FilePath,
+                    fileExists  = File.Exists(m.FilePath),
+                    fileSize    = TryGetFileSize(m.FilePath),
+                    dateAdded   = m.DateAdded,
+                    watchStatus = m.WatchStatus,
+                }).OrderBy(c => c.dateAdded).ToList(),
+            };
+        })
+        .OrderBy(g => g.title)
+        .ToList();
+
+    // Episode duplicates: group by ShowId + Season + EpisodeNumber, joined with show title
+    var epRows = await db.Episodes.AsNoTracking()
+        .GroupBy(e => new { e.ShowId, e.Season, e.EpisodeNumber })
+        .Where(g => g.Count() > 1)
+        .ToListAsync(ct).ConfigureAwait(false);
+
+    var showIds = epRows.Select(g => g.Key.ShowId).Distinct().ToList();
+    var showMap = await db.Shows.AsNoTracking()
+        .Where(s => showIds.Contains(s.Id))
+        .ToDictionaryAsync(s => s.Id, s => s.Title, ct).ConfigureAwait(false);
+
+    // Re-fetch the actual episodes for those groups so we have FilePath etc.
+    var dupEpIds = new List<int>();
+    foreach (var grp in epRows)
+    {
+        dupEpIds.AddRange(grp.Select(e => e.Id));
+    }
+    var dupEpisodes = await db.Episodes.AsNoTracking()
+        .Where(e => dupEpIds.Contains(e.Id))
+        .ToListAsync(ct).ConfigureAwait(false);
+
+    var episodeDuplicates = dupEpisodes
+        .GroupBy(e => $"{e.ShowId}:{e.Season}:{e.EpisodeNumber}")
+        .Where(g => g.Count() > 1)
+        .Select(g =>
+        {
+            var first = g.First();
+            showMap.TryGetValue(first.ShowId, out var showTitle);
+            return new
+            {
+                showId        = first.ShowId,
+                showTitle     = showTitle ?? "Unknown Show",
+                season        = first.Season,
+                episodeNumber = first.EpisodeNumber,
+                episodeTitle  = first.Title,
+                copies = g.Select(e => new
+                {
+                    id          = e.Id,
+                    filePath    = e.FilePath,
+                    fileExists  = File.Exists(e.FilePath),
+                    fileSize    = TryGetFileSize(e.FilePath),
+                    watchStatus = e.WatchStatus,
+                }).OrderBy(c => c.id).ToList(),
+            };
+        })
+        .OrderBy(g => g.showTitle).ThenBy(g => g.season).ThenBy(g => g.episodeNumber)
+        .ToList();
+
+    return Results.Json(new
+    {
+        movieDuplicates   = movieGroups,
+        episodeDuplicates,
+        totalMovieDuplicateGroups   = movieGroups.Count,
+        totalEpisodeDuplicateGroups = episodeDuplicates.Count,
+    }, jsonSerializerOptions);
+
+    static long? TryGetFileSize(string path)
+    {
+        try { return string.IsNullOrEmpty(path) ? null : new FileInfo(path).Length; }
+        catch { return null; }
+    }
+});
+
 app.MapPost("/api/library/bulk-watch", async (BulkWatchBody body, LibraryRepository repo, CancellationToken ct) =>
 {
     var status = body.WatchStatus ?? "";
@@ -3352,6 +4326,32 @@ app.MapPost("/api/library/bulk-delete-from-device", async (BulkLibraryIdsBody bo
     }
 
     return Results.Json(new { success = true, filesDeleted, errors }, jsonSerializerOptions);
+});
+
+app.MapGet("/api/ratings/queue/status", async (RatingsRefreshQueue queue, RatingsSnapshotRepository repo,
+        CancellationToken ct) =>
+{
+    var coverage = await repo.GetCoverageStatsAsync(ct).ConfigureAwait(false);
+    var depth = queue.QueueDepth;
+    var active = queue.IsProcessing || depth > 0;
+    return Results.Json(new
+    {
+        ok = true,
+        active,
+        queueDepth = depth,
+        isProcessing = queue.IsProcessing,
+        processedTotal = queue.ProcessedTotal,
+        lastProcessedUtc = queue.LastProcessedUtc,
+        lastError = queue.LastError,
+        coverage = new
+        {
+            total = coverage.Total,
+            withImdb = coverage.WithImdb,
+            withRottenTomatoes = coverage.WithRottenTomatoes,
+            tmdbOnly = coverage.TmdbOnly,
+            hasImdbIdButNoImdbScore = coverage.HasImdbIdButNoImdbScore,
+        }
+    }, jsonSerializerOptions);
 });
 
 app.MapGet("/api/ratings/{tmdbId:int}", async (
@@ -3502,6 +4502,177 @@ app.MapPost("/api/ratings/queue-library", async (HttpRequest req, LibraryReposit
     }, jsonSerializerOptions);
 });
 
+// —— MDBList ratings ——
+app.MapGet("/api/ratings/mdblist", async (string? imdbId, int? tmdbId, MdbListService mdbList, CancellationToken ct) =>
+{
+    var id = imdbId?.Trim();
+    if (string.IsNullOrEmpty(id) && (tmdbId is null or <= 0))
+        return Results.BadRequest();
+
+    var ratings = await mdbList.GetRatingsAsync(
+        string.IsNullOrWhiteSpace(id) ? null : id,
+        tmdbId,
+        ct).ConfigureAwait(false);
+    if (ratings is null)
+        return Results.NotFound();
+
+    return Results.Json(new
+    {
+        imdbScore             = ratings.ImdbScore,
+        imdbVotes             = ratings.ImdbVotes,
+        rottenTomatoesScore   = ratings.RottenTomatoesScore,
+        rottenTomatoesAudience = ratings.RottenTomatoesAudience,
+        metacriticScore       = ratings.MetacriticScore,
+        letterboxdScore       = ratings.LetterboxdScore,
+        traktScore            = ratings.TraktScore,
+        rogerEbertScore       = ratings.RogerEbertScore,
+    }, jsonSerializerOptions);
+});
+
+// Batch cache-only ratings lookup for filmography cards — no new API calls, pure SQLite reads.
+// ids = comma-separated "movie:123,tv:456,movie:789" strings (max 200).
+app.MapGet("/api/ratings/batch-cached", async (string? ids, LibraryContext db, CancellationToken ct) =>
+{
+    if (string.IsNullOrWhiteSpace(ids))
+        return Results.Json(new { results = Array.Empty<object>() }, jsonSerializerOptions);
+
+    var parsed = ids.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+        .Take(200)
+        .Select(s =>
+        {
+            var sep = s.IndexOf(':');
+            if (sep <= 0 || sep == s.Length - 1) return ((string?)null, 0);
+            var type = s[..sep].Trim().ToLowerInvariant();
+            return int.TryParse(s[(sep + 1)..], out var id) && id > 0 ? (type, id) : ((string?)null, 0);
+        })
+        .Where(x => x.Item1 != null && x.Item2 > 0)
+        .ToList();
+
+    if (parsed.Count == 0)
+        return Results.Json(new { results = Array.Empty<object>() }, jsonSerializerOptions);
+
+    var tmdbIds = parsed.Select(x => x.Item2).Distinct().ToList();
+
+    // ── RatingsSnapshots: indexed on (TmdbId, MediaType) ────────────────────
+    var conn = db.Database.GetDbConnection();
+    await conn.OpenAsync(ct).ConfigureAwait(false);
+
+    var snapshots = new Dictionary<string, (double? tmdb, string? imdb, string? rt, string? rtAud)>(StringComparer.OrdinalIgnoreCase);
+    using (var cmd = conn.CreateCommand())
+    {
+        var placeholders = string.Join(",", Enumerable.Range(0, tmdbIds.Count).Select(i => $"@id{i}"));
+        cmd.CommandText = $"""
+            SELECT TmdbId, MediaType, TmdbRating, ImdbRating, RottenTomatoesCritics, RottenTomatoesAudience
+            FROM RatingsSnapshots WHERE TmdbId IN ({placeholders})
+            """;
+        for (int i = 0; i < tmdbIds.Count; i++)
+        {
+            var p = cmd.CreateParameter(); p.ParameterName = $"@id{i}"; p.Value = tmdbIds[i];
+            cmd.Parameters.Add(p);
+        }
+        using var rdr = await cmd.ExecuteReaderAsync(ct).ConfigureAwait(false);
+        while (await rdr.ReadAsync(ct).ConfigureAwait(false))
+        {
+            var tid = rdr.GetInt32(0);
+            var mt  = rdr.IsDBNull(1) ? "movie" : rdr.GetString(1).ToLowerInvariant();
+            var key = $"{(mt is "series" or "tv" ? "tv" : "movie")}:{tid}";
+            snapshots[key] = (
+                rdr.IsDBNull(2) ? null : rdr.GetDouble(2),
+                rdr.IsDBNull(3) ? null : rdr.GetString(3),
+                rdr.IsDBNull(4) ? null : rdr.GetString(4),
+                rdr.IsDBNull(5) ? null : rdr.GetString(5));
+        }
+    }
+
+    // ── MdbListRatingsCache: keyed by ImdbId but TmdbId column exists ────────
+    var mdbByTmdbId = new Dictionary<int, (float? mc, float? lb, float? trakt, float? imdb, float? rt, float? rtAud)>();
+    using (var cmd = conn.CreateCommand())
+    {
+        var placeholders = string.Join(",", Enumerable.Range(0, tmdbIds.Count).Select(i => $"@id{i}"));
+        cmd.CommandText = $"SELECT TmdbId, RatingsJson FROM MdbListRatingsCache WHERE TmdbId IN ({placeholders})";
+        for (int i = 0; i < tmdbIds.Count; i++)
+        {
+            var p = cmd.CreateParameter(); p.ParameterName = $"@id{i}"; p.Value = tmdbIds[i];
+            cmd.Parameters.Add(p);
+        }
+        using var rdr = await cmd.ExecuteReaderAsync(ct).ConfigureAwait(false);
+        while (await rdr.ReadAsync(ct).ConfigureAwait(false))
+        {
+            if (rdr.IsDBNull(0) || rdr.IsDBNull(1)) continue;
+            var tid  = rdr.GetInt32(0);
+            var json = rdr.GetString(1);
+            try
+            {
+                var m = System.Text.Json.JsonSerializer.Deserialize<Pitflix.API.Services.MdbListRatings>(json,
+                    new System.Text.Json.JsonSerializerOptions(System.Text.Json.JsonSerializerDefaults.Web));
+                if (m != null)
+                    mdbByTmdbId[tid] = (m.MetacriticScore, m.LetterboxdScore, m.TraktScore,
+                                        m.ImdbScore, m.RottenTomatoesScore, m.RottenTomatoesAudience);
+            }
+            catch { }
+        }
+    }
+
+    var results = parsed.Select(x =>
+    {
+        var key = $"{x.Item1}:{x.Item2}";
+        snapshots.TryGetValue(key, out var snap);
+        mdbByTmdbId.TryGetValue(x.Item2, out var mdb);
+        return new
+        {
+            key,
+            tmdbRating    = snap.tmdb,
+            imdbRating    = snap.imdb ?? (mdb.imdb.HasValue ? $"{mdb.imdb:F1}" : null),
+            rtCritics     = snap.rt   ?? (mdb.rt.HasValue   ? $"{(int)mdb.rt.Value}%" : null),
+            rtAudience    = snap.rtAud ?? (mdb.rtAud.HasValue ? $"{(int)mdb.rtAud.Value}%" : null),
+            metacritic    = mdb.mc.HasValue    ? (int?)mdb.mc.Value    : null,
+            letterboxd    = mdb.lb.HasValue    ? (float?)mdb.lb.Value  : null,
+            trakt         = mdb.trakt.HasValue ? (float?)mdb.trakt.Value : null,
+        };
+    }).ToList();
+
+    return Results.Json(new { results }, jsonSerializerOptions);
+});
+
+// —— TVDB endpoints ——
+app.MapGet("/api/tvdb/artworks", async (int? tmdbId, string? mediaType, TvdbService tvdb, CancellationToken ct) =>
+{
+    if (tmdbId is null or <= 0 || string.IsNullOrWhiteSpace(mediaType))
+        return Results.BadRequest();
+
+    var artworks = await tvdb.GetArtworksAsync(tmdbId.Value, mediaType, ct).ConfigureAwait(false);
+    if (artworks is null)
+        return Results.NotFound();
+
+    return Results.Json(artworks.Select(a => new
+    {
+        url       = a.Url,
+        thumbnail = a.Thumbnail,
+        type      = a.Type,
+        score     = a.Score,
+        width     = a.Width,
+        height    = a.Height,
+    }), jsonSerializerOptions);
+});
+
+app.MapGet("/api/tvdb/people", async (int? tmdbId, string? mediaType, TvdbService tvdb, CancellationToken ct) =>
+{
+    if (tmdbId is null or <= 0 || string.IsNullOrWhiteSpace(mediaType))
+        return Results.BadRequest();
+
+    var people = await tvdb.GetPeopleAsync(tmdbId.Value, mediaType, ct).ConfigureAwait(false);
+    if (people is null)
+        return Results.NotFound();
+
+    return Results.Json(people.Select(p => new
+    {
+        personName    = p.PersonName,
+        characterName = p.CharacterName,
+        imageUrl      = p.ImageUrl,
+        role          = p.Role,
+    }), jsonSerializerOptions);
+});
+
 app.MapPost("/api/recommendations/from", async (RecommendationFromBody? body, CancellationToken ct) =>
 {
     if (body == null || body.TmdbId <= 0)
@@ -3628,6 +4799,111 @@ app.MapPost("/api/awards/cache/cancel", (AwardsCachePreloadCoordinator coord) =>
     return Results.Json(new { ok = true }, jsonSerializerOptions);
 });
 
+// Awards nominations for a specific title — live from Wikidata (no preload needed).
+app.MapGet("/api/awards/for-title", async (int tmdbId, string? mediaType, string? imdbId, WikidataAwardsService wikidata, CancellationToken ct) =>
+{
+    if (tmdbId <= 0) return Results.BadRequest();
+    var isTv = string.Equals(mediaType, "tv", StringComparison.OrdinalIgnoreCase)
+            || string.Equals(mediaType, "Series", StringComparison.OrdinalIgnoreCase);
+
+    // Try TMDB ID first; fall back to IMDb ID (P345) which has much better Wikidata coverage.
+    var raw = await wikidata.GetAwardsAsync(tmdbId, isTv, ct).ConfigureAwait(false);
+    if (raw.Count == 0 && !string.IsNullOrWhiteSpace(imdbId))
+        raw = await wikidata.GetAwardsByImdbIdAsync(imdbId, ct).ConfigureAwait(false);
+    if (raw.Count == 0 && !string.IsNullOrWhiteSpace(imdbId) && TmdbClientFactory.Create() is null)
+    {
+        // no TMDB configured — already tried imdbId above, nothing more to do
+    }
+    else if (raw.Count == 0 && string.IsNullOrWhiteSpace(imdbId) && TmdbClientFactory.Create() is { } tmdbFallback)
+    {
+        // Caller didn't send imdbId — look it up from TMDB
+        var mt = isTv ? "Series" : "Movie";
+        var fetched = await tmdbFallback.TryGetImdbIdAsync(tmdbId, mt, ct).ConfigureAwait(false);
+        if (!string.IsNullOrWhiteSpace(fetched))
+            raw = await wikidata.GetAwardsByImdbIdAsync(fetched, ct).ConfigureAwait(false);
+    }
+
+    var nominations = raw
+        .Select(a =>
+        {
+            var (ceremonyId, ceremonyName, categoryName) = WikidataAwardsService.ParseAwardLabel(a.AwardLabel);
+            return new
+            {
+                awardId      = ceremonyId,
+                awardName    = ceremonyName,
+                year         = a.Year,
+                categoryId   = a.AwardLabel.ToLowerInvariant().Replace(' ', '-'),
+                categoryName,
+                winner       = a.Winner,
+            };
+        })
+        .OrderByDescending(n => n.year)
+        .ThenBy(n => n.awardId)
+        .ToList();
+
+    return Results.Json(new { nominations }, jsonSerializerOptions);
+});
+
+// Awards won/nominated by a person — live from Wikidata (P4985 = TMDB person ID).
+app.MapGet("/api/awards/for-person", async (int tmdbId, WikidataAwardsService wikidata, CancellationToken ct) =>
+{
+    if (tmdbId <= 0) return Results.BadRequest();
+
+    var raw = await wikidata.GetPersonAwardsAsync(tmdbId, ct).ConfigureAwait(false);
+
+    // Parse ceremony info first
+    var parsed = raw.Select(a =>
+    {
+        var (ceremonyId, ceremonyName, categoryName) = WikidataAwardsService.ParseAwardLabel(a.AwardLabel);
+        return (ceremonyId, ceremonyName, categoryName, a);
+    }).ToList();
+
+    // Enrich with TMDB poster URLs in parallel (capped at 6 concurrent)
+    var posterUrls = new string?[parsed.Count];
+    var tmdbClient = TmdbClientFactory.Create();
+    if (tmdbClient != null)
+    {
+        var sem = new SemaphoreSlim(6, 6);
+        await Task.WhenAll(parsed.Select(async (entry, i) =>
+        {
+            var tid = entry.a.WorkTmdbMovieId ?? entry.a.WorkTmdbTvId;
+            if (tid == null) return;
+            var mt = entry.a.WorkTmdbMovieId != null ? "Movie" : "Series";
+            await sem.WaitAsync(ct).ConfigureAwait(false);
+            try
+            {
+                var art = await tmdbClient.GetArtworkPathsAsync(tid.Value, mt, ct).ConfigureAwait(false);
+                if (art.HasValue && !string.IsNullOrWhiteSpace(art.Value.PosterPath))
+                {
+                    var p = art.Value.PosterPath.Trim().TrimStart('/');
+                    var b = ImageUrls.PublicBase.TrimEnd('/');
+                    posterUrls[i] = $"{b}/api/img/tmdb?size=w154&file={Uri.EscapeDataString(p)}";
+                }
+            }
+            catch { /* non-critical */ }
+            finally { sem.Release(); }
+        })).ConfigureAwait(false);
+    }
+
+    var nominations = parsed.Select((entry, i) => new
+    {
+        awardId         = entry.ceremonyId,
+        awardName       = entry.ceremonyName,
+        year            = entry.a.Year,
+        categoryName    = entry.categoryName,
+        winner          = entry.a.Winner,
+        workTitle       = entry.a.WorkTitle,
+        workTmdbMovieId = entry.a.WorkTmdbMovieId,
+        workTmdbTvId    = entry.a.WorkTmdbTvId,
+        posterUrl       = posterUrls[i],
+    })
+    .OrderByDescending(n => n.year)
+    .ThenBy(n => n.awardId)
+    .ToList();
+
+    return Results.Json(new { nominations }, jsonSerializerOptions);
+});
+
 // Fast path: branded poster placeholders (same-origin) so awards never fall back to nominee/movie art.
 app.MapGet("/api/awards/placeholder/poster", (string awardId, int? year, string? title, string? accent) =>
 {
@@ -3686,7 +4962,7 @@ app.MapGet("/api/awards/placeholder/poster", (string awardId, int? year, string?
     return Results.Text(svg, "image/svg+xml; charset=utf-8");
 });
 
-app.MapGet("/api/home/coming-soon", async (CancellationToken ct) =>
+app.MapGet("/api/home/coming-soon", async (LibraryRepository repo, CancellationToken ct) =>
 {
     var tmdb = TmdbClientFactory.Create();
     if (tmdb == null)
@@ -3696,16 +4972,106 @@ app.MapGet("/api/home/coming-soon", async (CancellationToken ct) =>
             jsonSerializerOptions);
     }
 
-    var moviesRaw = await tmdb.GetUpcomingMoviesAsync(1, ct).ConfigureAwait(false);
-    var movies = moviesRaw
+    var today = DateOnly.FromDateTime(DateTime.UtcNow);
+    var todayStr = today.ToString("yyyy-MM-dd");
+    var cutoffStr = today.AddDays(30).ToString("yyyy-MM-dd");
+
+    // Fetch movies, new series, TMDB candidate pools, AND library shows — all in parallel
+    var moviesTask        = tmdb.GetUpcomingMoviesAsync(1, ct);
+    var newTvTask         = tmdb.DiscoverTvFirstAirFromAsync(todayStr, 1, ct);
+    var trendingTvTask    = tmdb.GetTrendingTvWeekAsync(ct);
+    var onTheAirTask1     = tmdb.GetOnTheAirTvAsync(1, ct);
+    var onTheAirTask2     = tmdb.GetOnTheAirTvAsync(2, ct);
+    var popularTvTask1    = tmdb.DiscoverPopularTvAsync(1, ct);
+    var popularTvTask2    = tmdb.DiscoverPopularTvAsync(2, ct);
+    var libraryShowsTask  = repo.GetAllShowsAsync(ct);
+    await Task.WhenAll(moviesTask, newTvTask, trendingTvTask, onTheAirTask1, onTheAirTask2, popularTvTask1, popularTvTask2, libraryShowsTask).ConfigureAwait(false);
+
+    var movies = moviesTask.Result
         .Where(m => TrailersFeedHelpers.IsStrictlyFutureReleaseDate(m.ReleaseDate))
         .ToList();
 
-    var today = DateOnly.FromDateTime(DateTime.UtcNow).ToString("yyyy-MM-dd");
-    var tvRaw = await tmdb.DiscoverTvFirstAirFromAsync(today, 1, ct).ConfigureAwait(false);
-    var tv = tvRaw
+    // New series: first_air_date is strictly in the future
+    var newSeries = newTvTask.Result
         .Where(t => TrailersFeedHelpers.IsStrictlyFutureReleaseDate(t.ReleaseDate))
         .ToList();
+
+    // Library shows → TmdbDiscoverItem stubs so they always enter the candidate pool.
+    // This guarantees shows the user is already watching appear if a new season is coming.
+    static string? ExtractPosterPath(string? url)
+    {
+        if (string.IsNullOrEmpty(url)) return null;
+        var marker = "image.tmdb.org/t/p/";
+        var idx = url.IndexOf(marker, StringComparison.OrdinalIgnoreCase);
+        if (idx < 0) return null;
+        var afterSize = url[(idx + marker.Length)..];
+        var slash = afterSize.IndexOf('/');
+        return slash >= 0 ? afterSize[slash..] : null;
+    }
+
+    var libraryStubs = libraryShowsTask.Result
+        .Where(s => s.IsMatched && s.TmdbId > 0)
+        .Select(s => new TmdbDiscoverItem
+        {
+            Id         = s.TmdbId,
+            MediaType  = "tv",
+            Title      = s.Title,
+            PosterPath = ExtractPosterPath(s.PosterRemoteUrl) ?? "",
+        })
+        .ToList();
+
+    // Candidate pool: library shows first (guaranteed), then TMDB public lists — all deduplicated.
+    var newSeriesIds = new HashSet<int>(newSeries.Select(s => s.Id));
+    var candidates = libraryStubs
+        .Concat(trendingTvTask.Result)
+        .Concat(onTheAirTask1.Result)
+        .Concat(onTheAirTask2.Result)
+        .Concat(popularTvTask1.Result)
+        .Concat(popularTvTask2.Result)
+        .GroupBy(s => s.Id)
+        .Select(g => g.First())
+        .Where(s => !newSeriesIds.Contains(s.Id))
+        .Take(80)
+        .ToList();
+
+    // Enrich each candidate with a concurrency cap to avoid TMDB rate-limiting.
+    // Keep shows whose next_episode_to_air is season 2+ and airs within the next 30 days.
+    var sem = new SemaphoreSlim(6, 6);
+    var enrichTasks = candidates.Select(async show =>
+    {
+        await sem.WaitAsync(ct).ConfigureAwait(false);
+        try
+        {
+            var info = await tmdb.TryGetTvNextAiringAsync(show.Id, ct).ConfigureAwait(false);
+            var next = info?.NextEpisode;
+            if (next == null) return ((TmdbDiscoverItem Show, int SeasonNumber, string AirDate)?)null;
+            var seasonNum  = (int?)next["season_number"];
+            var episodeNum = (int?)next["episode_number"];
+            var airDate    = (string?)next["air_date"];
+            // Season 2+ premiere only — episode 1 means the season hasn't started yet
+            if (seasonNum == null || seasonNum < 2 || episodeNum != 1) return null;
+            if (string.IsNullOrEmpty(airDate)) return null;
+            if (string.Compare(airDate, todayStr,  StringComparison.Ordinal) < 0) return null;
+            if (string.Compare(airDate, cutoffStr, StringComparison.Ordinal) > 0) return null;
+            return ((TmdbDiscoverItem Show, int SeasonNumber, string AirDate)?)(Show: show, SeasonNumber: seasonNum.Value, AirDate: airDate!);
+        }
+        finally { sem.Release(); }
+    });
+
+    var enriched = (await Task.WhenAll(enrichTasks).ConfigureAwait(false))
+        .Where(r => r != null)
+        .Select(r => r!.Value)
+        .OrderBy(e => e.AirDate)
+        .ToList();
+
+    // Merge: new series first, then upcoming seasons (already ordered by air date); deduplicate by tmdbId
+    var seenIds = new HashSet<int>(newSeries.Select(s => s.Id));
+    var mergedTv = newSeries.Select(s => (Show: s, SeasonNumber: (int?)null, AirDate: s.ReleaseDate)).ToList();
+    foreach (var e in enriched)
+    {
+        if (seenIds.Add(e.Show.Id))
+            mergedTv.Add((e.Show, (int?)e.SeasonNumber, e.AirDate));
+    }
 
     object MapMovie(Pitflix.Core.Models.TmdbDiscoverItem x)
     {
@@ -3720,31 +5086,32 @@ app.MapGet("/api/home/coming-soon", async (CancellationToken ct) =>
                 ? null
                 : $"https://image.tmdb.org/t/p/w342{x.PosterPath}",
             overview = ov.Length > 160 ? ov[..160] + "…" : ov,
-            voteAverage = x.VoteAverage
-        };
-    }
-
-    object MapTv(Pitflix.Core.Models.TmdbDiscoverItem x)
-    {
-        var ov = x.Overview ?? "";
-        return new
-        {
-            tmdbId = x.Id,
-            mediaType = "tv",
-            title = x.Title,
-            releaseDate = x.ReleaseDate,
-            posterUrl = string.IsNullOrEmpty(x.PosterPath)
-                ? null
-                : $"https://image.tmdb.org/t/p/w342{x.PosterPath}",
-            overview = ov.Length > 160 ? ov[..160] + "…" : ov,
-            voteAverage = x.VoteAverage
+            voteAverage = x.VoteAverage,
+            seasonNumber = (int?)null
         };
     }
 
     return Results.Json(new
         {
             movies = movies.Take(12).Select(MapMovie).ToList(),
-            tv = tv.Take(12).Select(MapTv).ToList()
+            tv = mergedTv.Take(20).Select(e =>
+            {
+                var x = e.Show;
+                var ov = x.Overview ?? "";
+                return new
+                {
+                    tmdbId = x.Id,
+                    mediaType = "tv",
+                    title = x.Title,
+                    releaseDate = e.AirDate,
+                    posterUrl = string.IsNullOrEmpty(x.PosterPath)
+                        ? null
+                        : $"https://image.tmdb.org/t/p/w342{x.PosterPath}",
+                    overview = ov.Length > 160 ? ov[..160] + "…" : ov,
+                    voteAverage = x.VoteAverage,
+                    seasonNumber = e.SeasonNumber
+                };
+            }).ToList()
         },
         jsonSerializerOptions);
 });
@@ -4024,8 +5391,16 @@ async Task<IResult> HomeTrailersLatestCore(TrailersRepository trailersRepo, Tmdb
     var rows = await PersistedTrailerUiFeed.BuildAsync(trailersRepo, tmdb, limit: 120, mediaType: null, ct)
         .ConfigureAwait(false);
     var today = DateOnly.FromDateTime(DateTime.UtcNow);
-    var recentReleaseCutoff = today.AddDays(-75);
-    var freshTrailerCutoffUtc = DateTime.UtcNow.AddDays(-21);
+    // Show trailers for content released within this window (movie hit theaters recently).
+    const int RecentlyReleasedWindowDays = 60;
+    // For content with an OLD release date (e.g. an ongoing show whose first season aired
+    // years ago), still show the trailer if it was published very recently — this is the
+    // "House of the Dragon Season 3" case where TMDB's first_air_date is 2022 but a
+    // brand-new season trailer just dropped.
+    var freshOngoingCutoffUtc = DateTime.UtcNow.AddDays(-21);
+    // For content with NO release date at all, be more generous (90 days) since these
+    // are typically unannounced upcoming titles where the date isn't on TMDB yet.
+    var freshNoDateCutoffUtc = DateTime.UtcNow.AddDays(-90);
 
     bool TryParseDateOnly(string? ymd, out DateOnly d)
     {
@@ -4035,43 +5410,41 @@ async Task<IResult> HomeTrailersLatestCore(TrailersRepository trailersRepo, Tmdb
         return DateOnly.TryParse(ymd.AsSpan(0, 10), out d);
     }
 
-    int Bucket(Pitflix.API.Services.Trailers.TrailerCardUiRow r)
+    bool IsUpcomingOrRecent(Pitflix.API.Services.Trailers.TrailerCardUiRow r)
     {
         var hasPub = r.TrailerPublishedAtUtc != default;
-        var isFreshTrailer = hasPub && r.TrailerPublishedAtUtc >= freshTrailerCutoffUtc;
 
         if (TryParseDateOnly(r.ReleaseDate, out var release))
         {
-            if (release > today)
-                return 0; // unreleased (upcoming) first
-            
-            // If it already released, only show if it's VERY recent (last 75 days)
-            if (release >= recentReleaseCutoff)
-                return 1; // recently released
+            // Upcoming — not yet released
+            if (release > today) return true;
 
-            // If it's older than 75 days, we don't want it in "Latest" even if the trailer is new,
-            // because the user doesn't want "old" series/movies showing up just because of a new trailer.
-            return 9; // too old for "latest"
+            // Recently released — within the 60-day window
+            if (release >= today.AddDays(-RecentlyReleasedWindowDays)) return true;
+
+            // Release date is older than 60 days (e.g. ongoing TV show whose first season
+            // aired years ago). Still show if the trailer itself is very fresh (≤21 days),
+            // which is the signal that a new season / new content is being promoted.
+            return hasPub && r.TrailerPublishedAtUtc >= freshOngoingCutoffUtc;
         }
 
-        // Unknown release date: keep only if trailer itself is very recent.
-        if (isFreshTrailer)
-            return 3;
-        return 9;
+        // No release date on TMDB — show if the trailer clip was published within 90 days.
+        return hasPub && r.TrailerPublishedAtUtc >= freshNoDateCutoffUtc;
     }
 
     rows = rows
-        .Select(r => (Row: r, B: Bucket(r)))
-        .Where(x => x.B < 9)
-        .OrderBy(x => x.B)
-        .ThenByDescending(x => x.Row.TrailerPublishedAtUtc)
-        .ThenBy(x => x.Row.Title, StringComparer.OrdinalIgnoreCase)
-        .Select(x => x.Row)
-        .Take(20)
+        .Where(r => IsUpcomingOrRecent(r))
+        .OrderByDescending(r => r.TrailerPublishedAtUtc)
+        .ThenBy(r => r.ReleaseDate, StringComparer.OrdinalIgnoreCase)
+        .ThenBy(r => r.Title, StringComparer.OrdinalIgnoreCase)
+        .Take(100)
         .ToList();
 
     if (rows.Count == 0)
-        logger.LogInformation("Home trailers latest: no rows passed latest-window gate (run ingestion or widen channels).");
+        logger.LogInformation(
+            "Home trailers latest: 0 rows passed the window gate " +
+            "(upcoming OR released ≤{Days}d ago OR no-release-date trailer ≤90d old). " +
+            "Run ingestion or check channel config.", RecentlyReleasedWindowDays);
     return Results.Json(rows.Select(c => new
     {
         tmdbId = c.TmdbId,
@@ -4444,6 +5817,443 @@ app.MapGet("/api/trailers/browse", async (TrailersRepository trailersRepo, Trail
     }).ToList(), jsonSerializerOptions);
 });
 
+// —— Library Browse ——
+
+// Decade browsing: returns movies or shows (or both) filtered by decade
+app.MapGet("/api/library/browse/decade", async (
+    LibraryContext db,
+    int decade,
+    string mediaType = "all",
+    CancellationToken ct = default) =>
+{
+    var decadeStart = (decade / 10) * 10;
+    var decadeEnd = decadeStart + 10;
+    var tmdb = TmdbClientFactory.Create();
+    var results = new List<object>();
+
+    var rawCards = new List<MediaCardDto>();
+
+    if (!string.Equals(mediaType, "Series", StringComparison.OrdinalIgnoreCase))
+    {
+        var movies = await db.Movies.AsNoTracking()
+            .Where(m => m.IsMatched && m.Year.HasValue && m.Year >= decadeStart && m.Year < decadeEnd)
+            .OrderByDescending(m => m.VoteAverage)
+            .Take(120)
+            .ToListAsync(ct).ConfigureAwait(false);
+        rawCards.AddRange(movies.Select(ToCardFromMovie));
+    }
+
+    if (!string.Equals(mediaType, "Movie", StringComparison.OrdinalIgnoreCase))
+    {
+        var shows = await db.Shows.AsNoTracking()
+            .Where(s => s.IsMatched && s.Year.HasValue && s.Year >= decadeStart && s.Year < decadeEnd)
+            .OrderByDescending(s => s.VoteAverage)
+            .Take(120)
+            .ToListAsync(ct).ConfigureAwait(false);
+        rawCards.AddRange(shows.Select(ToCardFromShow));
+    }
+
+    await MediaCardPosterEnricher.EnrichMissingRemotePostersAsync(rawCards, tmdb, ct).ConfigureAwait(false);
+    var mappedCards = rawCards.OrderByDescending(c => c.VoteAverage).Select(ImageUrls.MapMediaCard).ToList();
+    return Results.Json(new { decade = decadeStart, items = mappedCards, total = mappedCards.Count }, jsonSerializerOptions);
+});
+
+// Keyword browsing: returns library items whose KeywordsJson contains the given keyword name
+app.MapGet("/api/library/browse/keyword", async (
+    LibraryContext db,
+    string keyword,
+    string mediaType = "all",
+    CancellationToken ct = default) =>
+{
+    if (string.IsNullOrWhiteSpace(keyword))
+        return Results.Json(new { items = Array.Empty<object>(), total = 0 }, jsonSerializerOptions);
+
+    var needle = keyword.Trim().ToLowerInvariant();
+    var tmdb = TmdbClientFactory.Create();
+    var rawCards = new List<MediaCardDto>();
+
+    if (!string.Equals(mediaType, "Series", StringComparison.OrdinalIgnoreCase))
+    {
+        var movies = await db.Movies.AsNoTracking()
+            .Where(m => m.IsMatched && m.KeywordsJson != null &&
+                        EF.Functions.Like(m.KeywordsJson.ToLower(), $"%\"name\":\"{needle}\"%"))
+            .OrderByDescending(m => m.VoteAverage)
+            .Take(80)
+            .ToListAsync(ct).ConfigureAwait(false);
+        rawCards.AddRange(movies.Select(ToCardFromMovie));
+    }
+
+    if (!string.Equals(mediaType, "Movie", StringComparison.OrdinalIgnoreCase))
+    {
+        var shows = await db.Shows.AsNoTracking()
+            .Where(s => s.IsMatched && s.KeywordsJson != null &&
+                        EF.Functions.Like(s.KeywordsJson.ToLower(), $"%\"name\":\"{needle}\"%"))
+            .OrderByDescending(s => s.VoteAverage)
+            .Take(80)
+            .ToListAsync(ct).ConfigureAwait(false);
+        rawCards.AddRange(shows.Select(ToCardFromShow));
+    }
+
+    await MediaCardPosterEnricher.EnrichMissingRemotePostersAsync(rawCards, tmdb, ct).ConfigureAwait(false);
+    var mappedCards = rawCards.Select(ImageUrls.MapMediaCard).ToList();
+    return Results.Json(new { keyword, items = mappedCards, total = mappedCards.Count }, jsonSerializerOptions);
+});
+
+// TMDB collection details — used by streaming page to show all collection parts
+app.MapGet("/api/stream/collection/{collectionId:int}", async (int collectionId, CancellationToken ct) =>
+{
+    var tmdb = TmdbClientFactory.Create();
+    if (tmdb == null)
+        return Results.Json(new { error = "TMDB API key not configured." }, jsonSerializerOptions);
+
+    var col = await tmdb.TryGetCollectionAsync(collectionId, ct).ConfigureAwait(false);
+    if (col == null)
+        return Results.NotFound();
+
+    return Results.Json(new
+    {
+        id = col.Id,
+        name = col.Name,
+        overview = col.Overview,
+        posterUrl = string.IsNullOrEmpty(col.PosterPath) ? null : $"https://image.tmdb.org/t/p/w500{col.PosterPath}",
+        backdropUrl = string.IsNullOrEmpty(col.BackdropPath) ? null : $"https://image.tmdb.org/t/p/w1280{col.BackdropPath}",
+        parts = col.Parts.Select(p => new
+        {
+            tmdbId = p.Id,
+            title = p.Title,
+            posterUrl = string.IsNullOrEmpty(p.PosterPath) ? null : $"https://image.tmdb.org/t/p/w342{p.PosterPath}",
+            releaseDate = p.ReleaseDate,
+            year = p.ReleaseDate?.Length >= 4 ? p.ReleaseDate[..4] : null,
+            voteAverage = p.VoteAverage,
+        }).ToList(),
+    }, jsonSerializerOptions);
+});
+
+// Chapter / intro-outro detection — used by the player overlay for "Skip Intro" / "Skip Credits" buttons
+app.MapGet("/api/playback/chapters", async (
+    string? filePath,
+    string? mediaType,
+    double? duration,
+    CancellationToken ct) =>
+{
+    if (string.IsNullOrWhiteSpace(filePath))
+        return Results.BadRequest(new { error = "filePath is required." });
+
+    if (!File.Exists(filePath))
+        return Results.NotFound(new { error = "File not found." });
+
+    var result = await Pitflix.API.Services.ChapterDetectorService.DetectAsync(
+        filePath, mediaType, duration, null, ct).ConfigureAwait(false);
+
+    return Results.Json(new
+    {
+        chapters = result.Chapters.Select(c => new
+        {
+            id = c.Id,
+            title = c.Title,
+            startSec = c.StartSec,
+            endSec = c.EndSec,
+        }).ToList(),
+        introEnd = result.IntroEnd,
+        outroStart = result.OutroStart,
+        source = result.Source,
+    }, jsonSerializerOptions);
+});
+
+// —— Skip detection (intro/outro) ——
+// Season is not a first-class entity in this schema (Episode.Season is just an int),
+// so season-level rows are addressed by (showId, seasonNumber) rather than a SeasonId.
+app.MapGet("/api/skip/season/{showId:int}/{seasonNumber:int}", async (
+    int showId, int seasonNumber, SkipSegmentsRepository repo, CancellationToken ct) =>
+{
+    var segment = await repo.GetSeasonSegmentAsync(showId, seasonNumber, ct).ConfigureAwait(false);
+    return segment is null ? Results.NotFound() : Results.Json(segment, jsonSerializerOptions);
+});
+
+app.MapGet("/api/skip/episode/{episodeId:int}", async (
+    int episodeId, SkipSegmentsRepository repo, SkipSegmentDetectionService detector,
+    SkipFingerprintQueue fpQueue, CancellationToken ct) =>
+{
+    var episode = await repo.GetEpisodeAsync(episodeId, ct).ConfigureAwait(false);
+    if (episode is null)
+        return Results.NotFound(new { error = "Episode not found." });
+
+    var segment = await repo.GetSeasonSegmentAsync(episode.ShowId, episode.Season, ct).ConfigureAwait(false);
+    if (segment is null)
+    {
+        // Lazily compute on first request for this season instead of requiring a separate
+        // background pass — chapter probing is a single cheap ffprobe call per sampled file.
+        segment = await detector.DetectAndStoreForSeasonAsync(episode.ShowId, episode.Season, ct)
+            .ConfigureAwait(false);
+    }
+
+    // Chapter markers (and eventually AniSkip) are confident enough on their own. Only fall
+    // back to the slower audio-fingerprint layer when at least one segment still has no
+    // confirmed source, there are enough scanned episodes to correlate, and we haven't already
+    // tried recently — the ComputedAt cooldown stops this from re-queuing on every episode view
+    // once a season has been attempted (including a "found nothing confident" attempt).
+    var hasConfirmedIntro = segment.IntroSource is "chapter" or "anilist";
+    var hasConfirmedOutro = segment.OutroSource is "chapter" or "anilist";
+    if (!hasConfirmedIntro || !hasConfirmedOutro)
+    {
+        var staleEnough = DateTime.UtcNow - segment.ComputedAt > TimeSpan.FromHours(6);
+        if (staleEnough)
+        {
+            var episodeCount = await repo.CountSeasonEpisodesAsync(episode.ShowId, episode.Season, ct)
+                .ConfigureAwait(false);
+            if (episodeCount >= 3)
+                fpQueue.TryEnqueue(episode.ShowId, episode.Season);
+        }
+    }
+
+    var over = await repo.GetEpisodeOverrideAsync(episodeId, ct).ConfigureAwait(false);
+
+    object? intro = null;
+    if (over?.SuppressIntro == true)
+        intro = null;
+    else if (over?.IntroStartSeconds != null && over.IntroEndSeconds != null)
+        intro = new { start = over.IntroStartSeconds, end = over.IntroEndSeconds, confidence = 1.0, source = over.Source };
+    else if (segment.IntroStartSeconds != null && segment.IntroEndSeconds != null)
+        intro = new { start = segment.IntroStartSeconds, end = segment.IntroEndSeconds, confidence = segment.IntroConfidence, source = segment.IntroSource };
+
+    // Outro: a fingerprint-sourced season row stores the window as seconds-before-end (see
+    // SeasonSkipSegment doc) because absolute timestamps don't transfer across episodes of
+    // different runtime. Resolve to absolute using THIS episode's own duration when possible;
+    // fall back to the stored (season-reference-episode-relative) absolute value only if this
+    // episode's duration can't be resolved at all.
+    double? outroStart = segment.OutroStartSeconds;
+    double? outroEnd = segment.OutroEndSeconds;
+    if (segment.OutroSource == "fingerprint" &&
+        segment.OutroSecondsBeforeEndStart != null && segment.OutroSecondsBeforeEndEnd != null)
+    {
+        var episodeDuration = await repo.TryGetKnownDurationSecondsAsync(episode.FilePath, ct).ConfigureAwait(false)
+            ?? await ChapterDetectorService.GetDurationSecondsAsync(episode.FilePath, ct).ConfigureAwait(false);
+        if (episodeDuration is { } dur)
+        {
+            outroStart = dur - segment.OutroSecondsBeforeEndStart.Value;
+            outroEnd = dur - segment.OutroSecondsBeforeEndEnd.Value;
+        }
+    }
+
+    object? outro = null;
+    if (over?.SuppressOutro == true)
+        outro = null;
+    else if (over?.OutroStartSeconds != null && over.OutroEndSeconds != null)
+        outro = new { start = over.OutroStartSeconds, end = over.OutroEndSeconds, confidence = 1.0, source = over.Source };
+    else if (outroStart != null && outroEnd != null)
+        outro = new { start = outroStart, end = outroEnd, confidence = segment.OutroConfidence, source = segment.OutroSource };
+
+    return Results.Json(new { intro, outro }, jsonSerializerOptions);
+});
+
+app.MapPost("/api/skip/season/{showId:int}/{seasonNumber:int}/rescan", async (
+    int showId, int seasonNumber, SkipSegmentDetectionService detector, SkipFingerprintQueue fpQueue,
+    SkipSegmentsRepository repo, CancellationToken ct) =>
+{
+    // Re-run chapter detection synchronously (cheap) and re-queue fingerprinting (slow,
+    // off the request path) — both already prefer/never-downgrade an existing chapter-sourced
+    // value, so this is safe to call even on a season that's already fully resolved.
+    var segment = await detector.DetectAndStoreForSeasonAsync(showId, seasonNumber, ct).ConfigureAwait(false);
+
+    var episodeCount = await repo.CountSeasonEpisodesAsync(showId, seasonNumber, ct).ConfigureAwait(false);
+    if (episodeCount >= 3)
+        fpQueue.TryEnqueue(showId, seasonNumber);
+
+    return Results.Json(segment, jsonSerializerOptions);
+});
+
+// —— Player microservice ——
+
+app.MapPost("/api/player/play", async (PlayerPlayBody body, PlayerService playerService, CancellationToken ct) =>
+{
+    if (string.IsNullOrWhiteSpace(body.FilePath))
+        return Results.BadRequest(new { error = "filePath is required." });
+
+    try
+    {
+        var session = await playerService.StartAsync(
+            body.FilePath,
+            body.MediaId,
+            body.EpisodeId,
+            body.StartPosition ?? 0.0,
+            body.SubtitleTrack,
+            body.Player,
+            ct).ConfigureAwait(false);
+        return Results.Json(session, jsonSerializerOptions);
+    }
+    catch (Exception ex)
+    {
+        return Results.Problem(ex.Message);
+    }
+});
+
+app.MapPost("/api/player/attach", async (PlayerAttachBody body, PlayerService playerService, CancellationToken ct) =>
+{
+    try
+    {
+        var session = await playerService.AttachWindowAsync(body.Hwnd, ct).ConfigureAwait(false);
+        return Results.Json(session, jsonSerializerOptions);
+    }
+    catch (InvalidOperationException ex)
+    {
+        return Results.NotFound(new { error = ex.Message });
+    }
+    catch (Exception ex)
+    {
+        return Results.Problem(ex.Message);
+    }
+});
+
+app.MapPost("/api/player/command", async (PlayerCommandBody body, PlayerService playerService) =>
+{
+    var session = playerService.GetSession();
+    if (session is null)
+        return Results.NotFound(new { error = "No active player session." });
+
+    // "subtitle" uses a native int for sid — handle separately to preserve JSON type.
+    if (body.Command == "subtitle")
+    {
+        var trackId = (int)(body.Value ?? 0);
+        await playerService.SendRawCommandAsync(["set_property", "sid", (object)trackId])
+                           .ConfigureAwait(false);
+        return Results.Ok(new { success = true });
+    }
+
+    string[] ipcCommand = body.Command switch
+    {
+        "pause"  => ["cycle", "pause"],
+        "seek"   => ["seek", (body.Value ?? 0).ToString("F3"), "absolute"],
+        "stop"   => ["quit"],
+        "next"   => ["playlist-next"],
+        "prev"   => ["playlist-prev"],
+        "volume" => ["set_property", "volume", (body.Value ?? 100).ToString("F1")],
+        _        => []
+    };
+
+    if (ipcCommand.Length == 0)
+        return Results.BadRequest(new { error = $"Unknown command: {body.Command}" });
+
+    await playerService.SendCommandAsync(ipcCommand).ConfigureAwait(false);
+
+    if (body.Command == "stop")
+        await playerService.StopAsync().ConfigureAwait(false);
+
+    return Results.Ok(new { success = true });
+});
+
+// Raw mpv command — WPF companion sends every command (pause, seek, sid, etc.) here.
+// Body: { "args": ["set_property", "pause", "no"] }  — all values as strings.
+app.MapPost("/api/player/mpv-command", async (PlayerMpvCommandBody body, PlayerService playerService) =>
+{
+    var session = playerService.GetSession();
+    if (session is null)
+        return Results.NotFound(new { error = "No active player session." });
+    await playerService.SendCommandAsync(body.Args).ConfigureAwait(false);
+    return Results.Ok(new { success = true });
+});
+
+// Batch playlist build — one call replaces N individual IPC loadfile calls from the WPF companion.
+// Body: { "files": [...paths...], "current": "currently playing path" }
+app.MapPost("/api/player/playlist", async (PlayerPlaylistBody body, PlayerService playerService) =>
+{
+    var session = playerService.GetSession();
+    if (session is null)
+        return Results.NotFound(new { error = "No active player session." });
+    await playerService.BuildPlaylistAsync(body.Files, body.Current).ConfigureAwait(false);
+    return Results.Ok(new { success = true });
+});
+
+app.MapGet("/api/player/session", (PlayerService playerService) =>
+{
+    var session = playerService.GetSession();
+    return session is null
+        ? Results.NotFound(new { error = "No active player session." })
+        : Results.Json(session, jsonSerializerOptions);
+});
+
+app.MapPost("/api/player/stop", async (PlayerService playerService) =>
+{
+    await playerService.StopAsync().ConfigureAwait(false);
+    return Results.Ok(new { success = true });
+});
+
+// PitflixPlayer calls this synchronously from its OnClosed handler so the
+// user's final position is committed to the WatchHistory row BEFORE the
+// window actually closes — that way the moment Tauri's main window regains
+// focus and the React app's focus listener fires + refetches history, the
+// DB already has the up-to-date value.  Without this round-trip the save
+// happened only via the async HandleMpvExited hook, which can fire after
+// React has already refetched the (stale) old row.
+app.MapPost("/api/player/save-progress-now", async (PlayerService playerService, CancellationToken ct) =>
+{
+    await playerService.SaveProgressNowAsync(ct).ConfigureAwait(false);
+    return Results.Ok(new { success = true });
+});
+
+app.MapGet("/api/player/tracks", async (PlayerService playerService) =>
+{
+    // Returns both subtitle AND audio tracks; the WPF companion routes by
+    // `type` ("sub" / "audio") into separate menus.  Previously this
+    // projection stripped the type field, leaving the audio menu permanently
+    // empty (one of the user-reported regressions).
+    var tracks = await playerService.GetSubtitleTracksAsync().ConfigureAwait(false);
+    return Results.Json(
+        tracks.Select(t => new { index = t.Index, language = t.Language, title = t.Title, type = t.Type }),
+        jsonSerializerOptions);
+});
+
+app.Map("/api/player/ws", async (HttpContext ctx, PlayerService playerService) =>
+{
+    if (!ctx.WebSockets.IsWebSocketRequest)
+    {
+        ctx.Response.StatusCode = StatusCodes.Status400BadRequest;
+        return;
+    }
+
+    using var ws = await ctx.WebSockets.AcceptWebSocketAsync().ConfigureAwait(false);
+    var wsJsonOpts = new JsonSerializerOptions { PropertyNamingPolicy = JsonNamingPolicy.CamelCase };
+
+    static ValueTask SendJson<T>(System.Net.WebSockets.WebSocket socket, T value, JsonSerializerOptions opts, CancellationToken ct)
+    {
+        var bytes = JsonSerializer.SerializeToUtf8Bytes(value, opts);
+        return socket.SendAsync(bytes.AsMemory(), System.Net.WebSockets.WebSocketMessageType.Text, true, ct);
+    }
+
+    // Send current session immediately on connect
+    var initial = playerService.GetSession();
+    await SendJson(ws, initial, wsJsonOpts, CancellationToken.None).ConfigureAwait(false);
+
+    while (ws.State == System.Net.WebSockets.WebSocketState.Open)
+    {
+        await Task.Delay(1000).ConfigureAwait(false);
+
+        if (ws.State != System.Net.WebSockets.WebSocketState.Open)
+            break;
+
+        var current = playerService.GetSession();
+
+        if (current is null || current.IsStopped)
+        {
+            try
+            {
+                await SendJson(ws, new { isStopped = true }, wsJsonOpts, CancellationToken.None).ConfigureAwait(false);
+                await ws.CloseAsync(System.Net.WebSockets.WebSocketCloseStatus.NormalClosure, "session ended", CancellationToken.None).ConfigureAwait(false);
+            }
+            catch { /* client already disconnected */ }
+            break;
+        }
+
+        try
+        {
+            await SendJson(ws, current, wsJsonOpts, CancellationToken.None).ConfigureAwait(false);
+        }
+        catch
+        {
+            break;
+        }
+    }
+});
+
 // Diagnostics + ping (registered last — avoids any odd ordering with top-level local functions)
 app.MapGet("/api/ping", () => Results.Text("pitflix-api", "text/plain"));
 app.MapGet("/api/debug/images", () => BuildImageFolderDiagnostics(imagesPath));
@@ -4466,16 +6276,29 @@ try
 {
     app.Run();
 }
+catch (SocketException ex) when (ex.SocketErrorCode == SocketError.AccessDenied)
+{
+    Console.Error.WriteLine();
+    Console.Error.WriteLine("Cannot bind to the listen URL — Windows blocked the port (socket error 10013).");
+    Console.Error.WriteLine("Common cause: Hyper-V / WSL reserved port ranges (check with):");
+    Console.Error.WriteLine("  netsh interface ipv4 show excludedportrange protocol=tcp");
+    Console.Error.WriteLine($"Tried: {string.Join("; ", listenAddresses)}");
+    Console.Error.WriteLine("Fix: pick a port outside excluded ranges, e.g.:");
+    Console.Error.WriteLine("  $env:PITFLIX_LISTEN_URLS='http://127.0.0.1:5280'; dotnet run");
+    Console.Error.WriteLine("  (set Pitflix.UI VITE_API_ORIGIN to the same origin)");
+    Console.Error.WriteLine();
+    Environment.Exit(1);
+}
 catch (IOException ex) when (PortInUse(ex))
 {
     Console.Error.WriteLine();
     Console.Error.WriteLine("Port already in use — another Pitflix.API (or app) is using this URL.");
     Console.Error.WriteLine("Fix: close that terminal, or stop the process:");
-    Console.Error.WriteLine("  netstat -ano | findstr \":5001\"   (use the LISTENING PID)");
+    Console.Error.WriteLine("  netstat -ano | findstr \":5280\"   (use the LISTENING PID)");
     Console.Error.WriteLine("  taskkill /PID <pid> /F");
     Console.Error.WriteLine("Or use another port:");
     Console.Error.WriteLine("  dotnet run --launch-profile http-alt");
-    Console.Error.WriteLine("  (then set Pitflix.UI VITE_API_ORIGIN=http://127.0.0.1:5002)");
+    Console.Error.WriteLine("  (then set Pitflix.UI VITE_API_ORIGIN=http://127.0.0.1:5281)");
     Console.Error.WriteLine();
     Environment.Exit(1);
 }
@@ -4749,6 +6572,7 @@ static MediaCardDto ToMediaCardFromSimilar(LocalSimilarRow r) =>
         VoteAverage = 0,
         PosterLocalPath = r.PosterLocalPath,
         IsArabic = false,
+        WatchStatus = r.WatchStatus ?? "",
         DateAdded = default,
         GenresCsv = null,
         Overview = null,
@@ -4857,10 +6681,12 @@ internal sealed record HistoryDismissBody(bool? MarkCompleted);
 internal sealed record CreateListBody(string? Name);
 
 internal sealed record RenameListBody(string? Name);
-internal sealed record AddListItemBody(int TmdbId, string? MediaType);
+internal sealed record AddListItemBody(int TmdbId, string? MediaType, string? Title = null, string? PosterRemoteUrl = null, string? ImdbId = null);
 internal sealed record ImageSelectBody(int TmdbId, string? MediaType, string? PosterPath, string? BackdropPath);
 internal sealed record SettingsBody(string? TmdbApiKey, string? OpenSubtitlesApiKey, string? OpenSubtitlesAppName,
-    List<string>? LibraryPaths, string? MediaPlayerPath, bool? UseBuiltinPlayer, bool? LibraryScanDesktopToasts);
+    string? SubDlApiKey, string? MdblistApiKey, string? TvdbApiKey,
+    List<string>? LibraryPaths, string? MediaPlayerPath, bool? UseBuiltinPlayer, bool? LibraryScanDesktopToasts,
+    string? PlayerMode);
 
 internal sealed record WizardProgressBody(int Step, string? StateJson);
 
@@ -4888,3 +6714,23 @@ internal sealed record DeleteFromDeviceRequest(string? Path, string? MediaType, 
 internal sealed record AutostartRequest(bool Enable);
 internal sealed record PlayBody(string? FilePath, int? StartSeconds, string? Title, string? PosterPath,
     string? MediaType, int? DurationSeconds, bool? SkipHistoryAdd);
+
+internal sealed record UnifiedWatchBody(
+    int TmdbId, string? ImdbId, string? MediaType, string? Title,
+    string? PosterUrl, string? Source, int? SeasonNumber, int? EpisodeNumber, int RuntimeMinutes);
+
+internal sealed record PinComingSoonBody(
+    int TmdbId, string? MediaType, string? Title,
+    string? PosterUrl, string? ReleaseDate, string? TrailerUrl, string? Overview);
+
+internal sealed record PlayerPlayBody(
+    string? FilePath, int MediaId, int? EpisodeId,
+    double? StartPosition, string? SubtitleTrack,
+    string? Player = null);
+
+/// <summary>Body for POST /api/player/attach — carries the WPF child HWND.</summary>
+internal sealed record PlayerAttachBody(long Hwnd);
+
+internal sealed record PlayerCommandBody(string Command, double? Value);
+internal sealed record PlayerMpvCommandBody(string[] Args);
+internal sealed record PlayerPlaylistBody(string[] Files, string Current);

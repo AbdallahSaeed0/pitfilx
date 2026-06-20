@@ -113,7 +113,7 @@ public sealed class AwardNomineeCacheRepository
             await using var cmd = conn.CreateCommand();
             cmd.CommandText =
                 """
-                INSERT INTO AwardNomineeCache (
+                INSERT OR REPLACE INTO AwardNomineeCache (
                     AwardId, Year, CategoryId, Title, MediaType, IsWinner, TmdbId, ImdbId,
                     PosterPath, BackdropPath, LocalLibraryMatch, StreamAvailableEstimate, LastUpdatedAtUtc)
                 VALUES ($a,$y,$ci,$t,$mt,$w,$tid,$imdb,$pp,$bp,$lib,$stream,$lu);
@@ -135,6 +135,37 @@ public sealed class AwardNomineeCacheRepository
         }
     }
 
+    public async Task<IReadOnlyList<AwardNomineeCacheRow>> GetRowsByTmdbIdAsync(int tmdbId, CancellationToken ct = default)
+    {
+        var conn = _db.Database.GetDbConnection();
+        if (conn.State != ConnectionState.Open)
+            await conn.OpenAsync(ct).ConfigureAwait(false);
+        await using var cmd = conn.CreateCommand();
+        cmd.CommandText =
+            """
+            SELECT AwardId, Year, CategoryId, Title, MediaType, IsWinner, TmdbId, ImdbId, PosterPath, BackdropPath,
+                   LocalLibraryMatch, StreamAvailableEstimate, LastUpdatedAtUtc
+            FROM AwardNomineeCache WHERE TmdbId = $tid
+            ORDER BY Year DESC, AwardId, CategoryId
+            """;
+        cmd.Parameters.Add(new SqliteParameter("$tid", tmdbId));
+        var list = new List<AwardNomineeCacheRow>();
+        await using var r = await cmd.ExecuteReaderAsync(ct).ConfigureAwait(false);
+        while (await r.ReadAsync(ct).ConfigureAwait(false))
+        {
+            list.Add(new AwardNomineeCacheRow(
+                r.GetString(0), r.GetInt32(1), r.GetString(2), r.GetString(3), r.GetString(4),
+                r.GetInt32(5) != 0,
+                r.IsDBNull(6) ? null : r.GetInt32(6),
+                r.IsDBNull(7) ? null : r.GetString(7),
+                r.IsDBNull(8) ? null : r.GetString(8),
+                r.IsDBNull(9) ? null : r.GetString(9),
+                r.GetInt32(10) != 0, r.GetInt32(11) != 0,
+                DateTime.Parse(r.GetString(12), CultureInfo.InvariantCulture, DateTimeStyles.RoundtripKind)));
+        }
+        return list;
+    }
+
     public async Task<int> CountRowsAsync(CancellationToken ct = default)
     {
         var conn = _db.Database.GetDbConnection();
@@ -142,6 +173,20 @@ public sealed class AwardNomineeCacheRepository
             await conn.OpenAsync(ct).ConfigureAwait(false);
         await using var cmd = conn.CreateCommand();
         cmd.CommandText = "SELECT COUNT(*) FROM AwardNomineeCache;";
+        var o = await cmd.ExecuteScalarAsync(ct).ConfigureAwait(false);
+        return Convert.ToInt32(o ?? 0);
+    }
+
+    /// <summary>Returns the number of cached rows for a specific (awardId, year) edition.</summary>
+    public async Task<int> CountEditionRowsAsync(string awardId, int year, CancellationToken ct = default)
+    {
+        var conn = _db.Database.GetDbConnection();
+        if (conn.State != ConnectionState.Open)
+            await conn.OpenAsync(ct).ConfigureAwait(false);
+        await using var cmd = conn.CreateCommand();
+        cmd.CommandText = "SELECT COUNT(*) FROM AwardNomineeCache WHERE AwardId = $aid AND Year = $yr;";
+        cmd.Parameters.Add(new SqliteParameter("$aid", awardId));
+        cmd.Parameters.Add(new SqliteParameter("$yr", year));
         var o = await cmd.ExecuteScalarAsync(ct).ConfigureAwait(false);
         return Convert.ToInt32(o ?? 0);
     }

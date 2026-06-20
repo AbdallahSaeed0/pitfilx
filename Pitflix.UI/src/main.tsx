@@ -8,8 +8,10 @@ import "./index.css";
 const queryClient = new QueryClient({
   defaultOptions: {
     queries: {
-      staleTime: 30_000,
+      staleTime: 5 * 60_000,   // 5 min — avoids re-fetch on every navigation
+      gcTime: 15 * 60_000,     // 15 min — keep unused data in memory
       retry: 1,
+      refetchOnWindowFocus: false,
     },
   },
 });

@@ -1,5 +1,5 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { Lightbulb, Search, Trash2 } from "lucide-react";
+import { Bot, ChevronDown, ChevronUp, Film, Lightbulb, Search, SkipForward, Trash2, Tv } from "lucide-react";
 import { useMemo, useState } from "react";
 import { API_ORIGIN } from "../api/client";
 import { clearAllUnmatched, searchUnmatched, skipUnmatched } from "../api/unmatched";
@@ -9,6 +9,7 @@ import { Badge } from "../components/ui/Badge";
 import { DeterminateMatchBar, IndeterminateMatchBar } from "../components/ui/MatchProgressBar";
 import { Pagination } from "../components/ui/Pagination";
 import { Spinner } from "../components/ui/Spinner";
+import { cn } from "../utils/cn";
 import { getUnmatchedMatchHints } from "../utils/pathFolderHints";
 import { startSmartScan } from "../api/smartMatch";
 import { getStats } from "../api/stats";
@@ -67,6 +68,7 @@ function UnmatchedRow({
   onDone: () => void;
   onSiblingsPrompt: (p: BulkConfirmState) => void;
 }) {
+  const [expanded, setExpanded] = useState(true);
   const [searching, setSearching] = useState(false);
   const [query, setQuery] = useState("");
   const [results, setResults] = useState<ParsedSuggestion[]>([]);
@@ -184,170 +186,219 @@ function UnmatchedRow({
     }
   };
 
+  const isMovie = rowGuessType.toLowerCase() !== "series";
+  const TypeIcon = isMovie ? Film : Tv;
+
+  /* collapsed view: just the title row + auto-suggestions (no search panel) */
   return (
-    <div className="group mb-3 rounded-xl border border-pitflix-card bg-pitflix-card p-4">
-      <div className="flex flex-wrap items-start justify-between gap-4">
-        <div className="min-w-0 flex-1">
-          <p className="font-semibold text-white">{item.cleanName}</p>
-          <p className="mt-0.5 truncate text-xs text-pitflix-subtle">{item.filePath}</p>
+    <div className={cn(
+      // border gives 1px on all sides; border-l-4 overrides just left to 4px accent stripe
+      "overflow-hidden rounded-xl border border-l-4 transition-colors",
+      // Left accent color varies by media type so each card is instantly recognisable
+      matching
+        ? "border-pitflix-primary/40 border-l-pitflix-primary bg-pitflix-primary/5"
+        : isMovie
+          ? "border-pitflix-card border-l-blue-500/70 bg-pitflix-card"
+          : "border-pitflix-card border-l-violet-500/70 bg-pitflix-card",
+    )}>
+      {/* ── Header row ── */}
+      <div className="flex items-center gap-3 px-4 py-3.5">
+        {/* media-type icon pill */}
+        <div className={cn(
+          "flex h-8 w-8 shrink-0 items-center justify-center rounded-lg",
+          isMovie ? "bg-blue-500/15 text-blue-300" : "bg-violet-500/15 text-violet-300",
+        )}>
+          <TypeIcon className="h-4 w-4" strokeWidth={1.75} />
         </div>
-        <Badge className="shrink-0 border-pitflix-subtle/50 text-pitflix-muted">{rowGuessType}</Badge>
-      </div>
 
-      <div className="mt-2 flex flex-wrap items-center gap-2">
-        <span className="text-[10px] text-pitflix-subtle">Search as:</span>
-        {(["auto", "Movie", "Series", "Both"] as const).map((k) => (
+        {/* title + path */}
+        <div className="min-w-0 flex-1">
+          <p className="truncate text-sm font-semibold text-white">{item.cleanName}</p>
+          <p className="mt-0.5 truncate text-[11px] text-pitflix-subtle">{item.filePath}</p>
+        </div>
+
+        {/* actions: skip + expand */}
+        <div className="flex shrink-0 items-center gap-1">
           <button
-            key={k}
             type="button"
+            title="Skip this file"
             disabled={matching}
-            onClick={() => setSearchKind(k)}
-            className={`rounded-md px-2 py-1 text-[10px] font-medium transition-colors disabled:opacity-50 ${
-              searchKind === k
-                ? "bg-pitflix-primary text-white"
-                : "border border-pitflix-card bg-pitflix-bg text-pitflix-muted hover:text-white"
-            }`}
+            onClick={() => void skipUnmatched(item.id).then(onDone)}
+            className="flex h-7 w-7 items-center justify-center rounded-lg text-pitflix-subtle hover:bg-pitflix-surface hover:text-pitflix-muted disabled:opacity-30"
           >
-            {k === "auto" ? "Auto" : k === "Both" ? "Movies + TV" : k}
+            <SkipForward className="h-3.5 w-3.5" strokeWidth={2} />
           </button>
-        ))}
+          <button
+            type="button"
+            onClick={() => setExpanded((v) => !v)}
+            className="flex h-7 w-7 items-center justify-center rounded-lg text-pitflix-subtle hover:bg-pitflix-surface hover:text-white"
+          >
+            {expanded
+              ? <ChevronUp className="h-4 w-4" />
+              : <ChevronDown className="h-4 w-4" />}
+          </button>
+        </div>
       </div>
 
-      {matching ? <IndeterminateMatchBar label="Contacting TMDB and updating library…" /> : null}
-
-      {suggestions.length > 0 ? (
-        <div className="mt-3 flex flex-wrap gap-2">
+      {/* ── Auto-suggestions (always visible if present) ── */}
+      {suggestions.length > 0 && !matching ? (
+        <div className="flex flex-wrap gap-2 border-t border-white/5 px-4 pb-3 pt-2.5">
+          <span className="self-center text-[10px] text-pitflix-subtle">Quick match:</span>
           {suggestions.map((s) => (
             <button
               key={s.id}
               type="button"
               disabled={matching}
               onClick={() => void handleMatch(s.id, s.title, s)}
-              className="rounded-lg border border-pitflix-primary/50 px-3 py-1.5 text-xs text-white transition-colors hover:bg-pitflix-primary disabled:opacity-50"
+              className="inline-flex items-center gap-1 rounded-lg border border-pitflix-primary/40 bg-pitflix-primary/10 px-2.5 py-1 text-xs font-medium text-white transition-colors hover:border-pitflix-primary/70 hover:bg-pitflix-primary/25 disabled:opacity-50"
             >
-              ✓ {s.title}
-              {s.year ? ` (${s.year})` : ""}
+              <span className="text-pitflix-primary text-[10px]">✓</span>
+              {s.title}
+              {s.year ? <span className="text-pitflix-muted">({s.year})</span> : null}
             </button>
           ))}
         </div>
       ) : null}
 
-      <div className="mt-3 flex flex-wrap items-center gap-2">
-        <button
-          type="button"
-          disabled={matching}
-          className="inline-flex items-center gap-1.5 rounded-lg border border-pitflix-primary/35 bg-pitflix-primary/10 px-3 py-2 text-xs font-medium text-pitflix-light transition-colors hover:border-pitflix-primary/60 hover:bg-pitflix-primary/20 disabled:opacity-50 disabled:hover:border-pitflix-primary/35 disabled:hover:bg-pitflix-primary/10"
-          onClick={() => setSearching(!searching)}
-        >
-          <Search className="h-3.5 w-3.5 opacity-90" strokeWidth={2} />
-          {searching ? "Hide manual search" : "Search TMDB"}
-        </button>
-      </div>
-
-      {folderHints.length > 0 ? (
-        <div className="mt-4 overflow-hidden rounded-xl border border-pitflix-primary/20 bg-gradient-to-b from-pitflix-surface/90 to-pitflix-bg/80 shadow-inner shadow-black/20">
-          <div className="flex items-start gap-3 border-b border-white/5 px-4 py-3">
-            <div className="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-pitflix-primary/20 text-pitflix-primary">
-              <Lightbulb className="h-4 w-4" strokeWidth={2} />
-            </div>
-            <div className="min-w-0 flex-1">
-              <p className="text-sm font-semibold text-white">Quick search suggestions</p>
-              <p className="mt-0.5 text-xs leading-relaxed text-pitflix-subtle">
-                One tap runs a TMDB lookup using a cleaned guess from the folder or file path.
-              </p>
-            </div>
-          </div>
-          <div className="grid gap-2 p-4 sm:grid-cols-2">
-            {folderHints.map((h) => (
-              <button
-                key={h}
-                type="button"
-                disabled={matching || loading}
-                onClick={() => {
-                  setSearching(true);
-                  void runSearchWithQuery(h);
-                }}
-                className="flex min-h-[2.75rem] items-center justify-center rounded-lg border border-pitflix-card bg-pitflix-card/60 px-3 py-2.5 text-left text-xs font-medium leading-snug text-white shadow-sm transition-all hover:border-pitflix-primary/55 hover:bg-pitflix-primary/15 hover:shadow-md disabled:opacity-50"
-              >
-                <span className="line-clamp-2">{h}</span>
-              </button>
-            ))}
-          </div>
+      {matching ? (
+        <div className="border-t border-white/5 px-4 pb-3 pt-2">
+          <IndeterminateMatchBar label="Contacting TMDB and updating library…" />
         </div>
       ) : null}
 
-      {searching ? (
-        <div className="mt-2 flex flex-wrap gap-2 border-t border-pitflix-surface pt-3">
-          <input
-            value={query}
-            onChange={(e) => setQuery(e.target.value)}
-            placeholder="Search title…"
-            className="min-w-[160px] flex-1 rounded-lg border border-pitflix-surface bg-pitflix-bg px-3 py-2 text-sm text-white"
-            onKeyDown={(e) => e.key === "Enter" && void handleSearch()}
-          />
-          <button
-            type="button"
-            disabled={loading}
-            onClick={() => void handleSearch()}
-            className="rounded-lg bg-pitflix-primary px-3 py-2 text-xs font-medium text-white disabled:opacity-50"
-          >
-            {loading ? "…" : "Search"}
-          </button>
-        </div>
-      ) : null}
+      {/* ── Expanded panel ── */}
+      {expanded ? (
+        <div className="border-t border-white/10 bg-pitflix-bg/60 px-4 pb-4 pt-3 space-y-4">
+          {/* Search-as type selector */}
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="text-[10px] font-medium uppercase tracking-wide text-pitflix-muted">Search as</span>
+            <div className="flex gap-1">
+              {(["auto", "Movie", "Series", "Both"] as const).map((k) => (
+                <button
+                  key={k}
+                  type="button"
+                  disabled={matching}
+                  onClick={() => setSearchKind(k)}
+                  className={cn(
+                    "rounded-md px-2.5 py-1 text-[11px] font-medium transition-colors disabled:opacity-50",
+                    searchKind === k
+                      ? "bg-pitflix-primary text-white"
+                      : "border border-pitflix-card bg-pitflix-card/80 text-pitflix-muted hover:text-white",
+                  )}
+                >
+                  {k === "auto" ? "Auto" : k === "Both" ? "Movies + TV" : k}
+                </button>
+              ))}
+            </div>
+          </div>
 
-      {results.length > 0 ? (
-        <div className="mt-3 space-y-0 rounded-lg border border-pitflix-card/50 overflow-hidden">
-          {results.map((s) => (
+          {/* Folder hints */}
+          {folderHints.length > 0 ? (
+            <div className="rounded-xl border border-amber-500/15 bg-amber-950/10">
+              <div className="flex items-center gap-2.5 border-b border-white/5 px-3 py-2.5">
+                <Lightbulb className="h-3.5 w-3.5 shrink-0 text-amber-300/80" strokeWidth={2} />
+                <p className="text-xs font-semibold text-white">Path hints</p>
+                <p className="text-[10px] text-pitflix-subtle">— one tap searches TMDB</p>
+              </div>
+              <div className="grid gap-1.5 p-3 sm:grid-cols-2">
+                {folderHints.map((h) => (
+                  <button
+                    key={h}
+                    type="button"
+                    disabled={matching || loading}
+                    onClick={() => {
+                      setSearching(true);
+                      void runSearchWithQuery(h);
+                    }}
+                    className="flex min-h-[2.25rem] items-center rounded-lg border border-pitflix-card/80 bg-pitflix-card/40 px-3 py-2 text-left text-xs font-medium text-white transition-all hover:border-pitflix-primary/50 hover:bg-pitflix-primary/15 disabled:opacity-50"
+                  >
+                    <span className="line-clamp-2">{h}</span>
+                  </button>
+                ))}
+              </div>
+            </div>
+          ) : null}
+
+          {/* Manual search */}
+          <div>
             <button
-              key={s.id}
               type="button"
               disabled={matching}
-              onClick={() => void handleMatch(s.id, s.title, s)}
-              className="flex w-full items-center gap-3 border-b border-pitflix-card/50 p-2 text-left transition-colors last:border-b-0 hover:bg-pitflix-primary/20 disabled:opacity-50"
-            >
-              {s.posterUrl ? (
-                <img
-                  src={s.posterUrl}
-                  alt={s.title}
-                  className="h-14 w-10 shrink-0 rounded object-cover"
-                  onError={(e) => {
-                    e.currentTarget.style.display = "none";
-                  }}
-                />
-              ) : (
-                <div className="flex h-14 w-10 shrink-0 items-center justify-center rounded bg-pitflix-card">
-                  <span className="text-xs text-pitflix-subtle">?</span>
-                </div>
+              className={cn(
+                "inline-flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-xs font-medium transition-colors disabled:opacity-50",
+                searching
+                  ? "border-pitflix-primary/50 bg-pitflix-primary/15 text-white"
+                  : "border-pitflix-card/80 bg-pitflix-card/40 text-pitflix-muted hover:text-white",
               )}
-              <div className="min-w-0 flex-1">
-                <p className="truncate text-sm font-medium text-white">{s.title}</p>
-                <p className="text-xs text-pitflix-muted">
-                  {s.year ?? "—"} · {s.mediaType ?? rowGuessType}
-                </p>
-                {s.overview ? (
-                  <p className="mt-0.5 line-clamp-1 text-xs text-pitflix-subtle">{s.overview}</p>
-                ) : null}
-              </div>
+              onClick={() => setSearching(!searching)}
+            >
+              <Search className="h-3.5 w-3.5" strokeWidth={2} />
+              {searching ? "Hide search" : "Search TMDB manually"}
             </button>
-          ))}
+
+            {searching ? (
+              <div className="mt-2 flex gap-2">
+                <input
+                  autoFocus
+                  value={query}
+                  onChange={(e) => setQuery(e.target.value)}
+                  placeholder="Search title…"
+                  className="min-w-[160px] flex-1 rounded-lg border border-pitflix-card/80 bg-pitflix-bg px-3 py-2 text-sm text-white placeholder-pitflix-subtle focus:border-pitflix-primary/60 focus:outline-none"
+                  onKeyDown={(e) => e.key === "Enter" && void handleSearch()}
+                />
+                <button
+                  type="button"
+                  disabled={loading || !query.trim()}
+                  onClick={() => void handleSearch()}
+                  className="rounded-lg bg-pitflix-primary px-3 py-2 text-xs font-medium text-white hover:bg-pitflix-light disabled:opacity-50"
+                >
+                  {loading ? "…" : "Search"}
+                </button>
+              </div>
+            ) : null}
+          </div>
+
+          {/* Search results */}
+          {results.length > 0 ? (
+            <div className="overflow-hidden rounded-xl border border-pitflix-card/60">
+              {results.map((s) => (
+                <button
+                  key={s.id}
+                  type="button"
+                  disabled={matching}
+                  onClick={() => void handleMatch(s.id, s.title, s)}
+                  className="flex w-full items-center gap-3 border-b border-pitflix-card/40 p-2.5 text-left transition-colors last:border-b-0 hover:bg-pitflix-primary/15 disabled:opacity-50"
+                >
+                  {s.posterUrl ? (
+                    <img
+                      src={s.posterUrl}
+                      alt={s.title}
+                      className="h-14 w-10 shrink-0 rounded-md object-cover shadow-md"
+                      onError={(e) => { e.currentTarget.style.display = "none"; }}
+                    />
+                  ) : (
+                    <div className="flex h-14 w-10 shrink-0 items-center justify-center rounded-md bg-pitflix-card/80">
+                      <span className="text-xs text-pitflix-subtle">?</span>
+                    </div>
+                  )}
+                  <div className="min-w-0 flex-1">
+                    <p className="truncate text-sm font-semibold text-white">{s.title}</p>
+                    <p className="mt-0.5 text-[11px] text-pitflix-muted">
+                      {s.year ?? "—"} · {s.mediaType ?? rowGuessType}
+                    </p>
+                    {s.overview ? (
+                      <p className="mt-0.5 line-clamp-2 text-[11px] text-pitflix-subtle">{s.overview}</p>
+                    ) : null}
+                  </div>
+                  <span className="shrink-0 rounded-md bg-pitflix-primary/20 px-2 py-1 text-[10px] font-semibold text-pitflix-primary">
+                    Match
+                  </span>
+                </button>
+              ))}
+            </div>
+          ) : null}
         </div>
       ) : null}
-
-      <div className="mt-3 flex justify-end">
-        <button
-          type="button"
-          disabled={matching}
-          className="rounded-lg px-3 py-1 text-xs text-pitflix-subtle opacity-0 transition-opacity hover:bg-pitflix-surface group-hover:opacity-100 disabled:opacity-30"
-          onClick={() =>
-            void skipUnmatched(item.id).then(() => {
-              onDone();
-            })
-          }
-        >
-          Skip
-        </button>
-      </div>
     </div>
   );
 }
@@ -457,76 +508,82 @@ export function UnmatchedPage() {
 
   return (
     <div>
-      <div className="flex flex-wrap items-center justify-between gap-4">
-        <h1 className="text-3xl font-bold text-white">Unmatched Files</h1>
-        <div className="flex flex-wrap items-center gap-3">
+      {/* ── Page header ── */}
+      <div className="mb-6 flex flex-wrap items-start justify-between gap-4">
+        <div>
+          <h1 className="text-3xl font-bold text-white">Unmatched Files</h1>
+          <p className="mt-1 text-sm text-pitflix-muted">
+            {globalUnmatched > 0
+              ? `${globalUnmatched} file${globalUnmatched === 1 ? "" : "s"} couldn't be matched to a title automatically.`
+              : "All files are matched — nothing to do here."}
+          </p>
+        </div>
+        <div className="flex flex-wrap items-center gap-2">
           <button
             type="button"
             disabled={smartStarting}
             onClick={() => void runSmartScan()}
-            className="rounded-lg bg-pitflix-primary px-4 py-2 text-sm font-medium text-white hover:bg-pitflix-light disabled:opacity-50"
+            className="inline-flex items-center gap-2 rounded-xl bg-pitflix-primary px-4 py-2.5 text-sm font-semibold text-white hover:bg-pitflix-light disabled:opacity-50"
           >
-            {smartStarting ? "…" : "🤖 Smart Auto-Match"}
+            <Bot className="h-4 w-4" strokeWidth={2} />
+            {smartStarting ? "Starting…" : "Smart Auto-Match"}
           </button>
           <button
             type="button"
             disabled={clearBusy || globalUnmatched === 0}
             onClick={() => void runClearAllUnmatched()}
             title="Delete all unmatched scan logs (files on disk are not removed)"
-            className="inline-flex items-center gap-2 rounded-lg border border-red-900/60 bg-red-950/40 px-3 py-2 text-sm font-medium text-red-200 hover:bg-red-950/70 disabled:opacity-50"
+            className="inline-flex items-center gap-2 rounded-xl border border-red-900/60 bg-red-950/30 px-3 py-2.5 text-sm font-medium text-red-200 hover:bg-red-950/60 disabled:opacity-50"
           >
             <Trash2 className="h-4 w-4 opacity-90" strokeWidth={2} />
-            {clearBusy ? "…" : "Remove all"}
+            {clearBusy ? "…" : "Clear all"}
           </button>
-          <Badge>{data?.total ?? 0} total</Badge>
         </div>
       </div>
-      <div className="mt-4 flex flex-wrap gap-3">
-        <input
-          value={search}
-          onChange={(e) => {
-            setSearch(e.target.value);
-            setPage(1);
-          }}
-          placeholder="Search title, folder, or file name…"
-          className="min-w-[200px] flex-1 rounded-lg border border-pitflix-card bg-pitflix-surface px-3 py-2 text-sm text-white"
-        />
+
+      {/* ── Filters ── */}
+      <div className="mb-6 flex flex-wrap gap-2">
+        <div className="relative flex-1 min-w-[200px]">
+          <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-pitflix-subtle" />
+          <input
+            value={search}
+            onChange={(e) => { setSearch(e.target.value); setPage(1); }}
+            placeholder="Search title, folder, or file name…"
+            className="w-full rounded-xl border border-pitflix-card bg-pitflix-card/60 py-2.5 pl-9 pr-3 text-sm text-white placeholder-pitflix-subtle focus:border-pitflix-primary/60 focus:outline-none"
+          />
+        </div>
         <select
           value={type}
-          onChange={(e) => {
-            setType(e.target.value);
-            setPage(1);
-          }}
-          className="rounded-lg border border-pitflix-card bg-pitflix-surface px-3 py-2 text-sm text-white"
+          onChange={(e) => { setType(e.target.value); setPage(1); }}
+          className="cursor-pointer rounded-xl border border-pitflix-card bg-pitflix-card/60 px-3 py-2.5 text-sm text-white focus:border-pitflix-primary/60 focus:outline-none"
         >
-          <option value="all">All</option>
+          <option value="all">All types</option>
           <option value="movie">Movies</option>
           <option value="series">Series</option>
         </select>
         <select
           value={sortBy}
-          onChange={(e) => {
-            setSortBy(e.target.value);
-            setPage(1);
-          }}
-          className="rounded-lg border border-pitflix-card bg-pitflix-surface px-3 py-2 text-sm text-white"
+          onChange={(e) => { setSortBy(e.target.value); setPage(1); }}
+          className="cursor-pointer rounded-xl border border-pitflix-card bg-pitflix-card/60 px-3 py-2.5 text-sm text-white focus:border-pitflix-primary/60 focus:outline-none"
         >
-          <option value="date">Date</option>
-          <option value="name">Name</option>
-          <option value="path">Path</option>
-          <option value="media">Media type</option>
+          <option value="date">Sort: Date</option>
+          <option value="name">Sort: Name</option>
+          <option value="path">Sort: Path</option>
+          <option value="media">Sort: Type</option>
         </select>
         <select
           value={sortDir}
-          onChange={(e) => {
-            setSortDir(e.target.value);
-            setPage(1);
-          }}
-          className="rounded-lg border border-pitflix-card bg-pitflix-surface px-3 py-2 text-sm text-white"
+          onChange={(e) => { setSortDir(e.target.value); setPage(1); }}
+          className="cursor-pointer rounded-xl border border-pitflix-card bg-pitflix-card/60 px-3 py-2.5 text-sm text-white focus:border-pitflix-primary/60 focus:outline-none"
         >
-          <option value="desc">Desc</option>
-          <option value="asc">Asc</option>
+          <option value="desc">↓ Newest</option>
+          <option value="asc">↑ Oldest</option>
         </select>
+        {data?.total != null ? (
+          <div className="flex items-center self-center">
+            <Badge>{data.total} result{data.total === 1 ? "" : "s"}</Badge>
+          </div>
+        ) : null}
       </div>
 
       {bulkConfirm ? (
@@ -580,9 +637,17 @@ export function UnmatchedPage() {
         <div className="flex justify-center py-20">
           <Spinner />
         </div>
+      ) : (data?.total ?? 0) === 0 && !search && type === "all" ? (
+        <div className="flex flex-col items-center gap-3 py-24 text-center">
+          <p className="text-4xl">✅</p>
+          <p className="text-lg font-semibold text-white">No unmatched files</p>
+          <p className="max-w-sm text-sm text-pitflix-subtle">
+            All scanned files have been matched to a title in your library.
+          </p>
+        </div>
       ) : (
         <>
-          <div className="mt-6">
+          <div className="flex flex-col gap-4">
             {(data?.items ?? []).map((row: UnmatchedRowItem) => (
               <UnmatchedRow
                 key={row.id}
@@ -591,6 +656,9 @@ export function UnmatchedPage() {
                 onSiblingsPrompt={setBulkConfirm}
               />
             ))}
+            {(data?.items ?? []).length === 0 && search ? (
+              <p className="py-12 text-center text-sm text-pitflix-muted">No results for "{search}".</p>
+            ) : null}
           </div>
           <div className="mt-8">
             <Pagination

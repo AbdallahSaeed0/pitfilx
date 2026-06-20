@@ -171,6 +171,10 @@ public sealed class AwardsPreloadStatusDto
     public int TotalNominees { get; set; }
     public int SuccessCount { get; set; }
     public int FailedCount { get; set; }
+    /// <summary>Nominees belonging to editions that were already in the cache and skipped (incremental run only).</summary>
+    public int SkippedNominees { get; set; }
     public int CachedRowCount { get; set; }
     public string? LastError { get; set; }
+    /// <summary>UTC ISO-8601 timestamp of the last completed (or cancelled) cache run.</summary>
+    public string? LastCompletedAt { get; set; }
 }

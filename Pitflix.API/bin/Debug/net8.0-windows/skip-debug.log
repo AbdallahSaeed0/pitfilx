@@ -1,0 +1,177 @@
+[09:22:22.505] [Information] [AudioFingerprintService] Skip fingerprinting: no confident intro/outro match for ShowId=338 Season=1 (sampled 5 episodes) — storing the attempt so this season isn't re-queued every view.
+[09:25:47.817] [Information] [AudioFingerprintService] Skip fingerprinting: no confident intro/outro match for ShowId=338 Season=1 (sampled 5 episodes) — storing the attempt so this season isn't re-queued every view.
+[09:27:44.643] [Information] [AudioFingerprintService] Skip fingerprinting: ShowId=338 Season=1 reference=1.mp4 comparing against 4 other episode(s) (threshold corr>=0.55, run>=8s, confidence>=0.75)
+[09:27:45.270] [Information] [AudioFingerprintService] Skip fingerprinting: intro vs 2.mp4 bestCorr=0.30 longestRun=0.0s matched=False
+[09:27:45.941] [Information] [AudioFingerprintService] Skip fingerprinting: outro vs 2.mp4 bestCorr=0.39 longestRun=0.0s matched=False
+[09:27:46.586] [Information] [AudioFingerprintService] Skip fingerprinting: intro vs 3.mp4 bestCorr=0.55 longestRun=6.0s matched=False
+[09:27:47.229] [Information] [AudioFingerprintService] Skip fingerprinting: outro vs 3.mp4 bestCorr=0.50 longestRun=0.0s matched=False
+[09:27:47.868] [Information] [AudioFingerprintService] Skip fingerprinting: intro vs 4.mp4 bestCorr=0.57 longestRun=6.0s matched=False
+[09:27:48.499] [Information] [AudioFingerprintService] Skip fingerprinting: outro vs 4.mp4 bestCorr=0.34 longestRun=0.0s matched=False
+[09:27:49.620] [Information] [AudioFingerprintService] Skip fingerprinting: intro vs 5.mp4 bestCorr=0.50 longestRun=0.0s matched=False
+[09:27:50.232] [Information] [AudioFingerprintService] Skip fingerprinting: outro vs 5.mp4 bestCorr=0.43 longestRun=0.0s matched=False
+[09:27:50.233] [Information] [AudioFingerprintService] Skip fingerprinting: intro candidates=0 result=null
+[09:27:50.233] [Information] [AudioFingerprintService] Skip fingerprinting: outro candidates=0 clipLocalResult=null
+[09:27:50.234] [Information] [AudioFingerprintService] Skip fingerprinting: no confident intro/outro match for ShowId=338 Season=1 (sampled 5 episodes) — storing the attempt so this season isn't re-queued every view.
+[09:31:13.082] [Information] [AudioFingerprintService] Skip fingerprinting: ShowId=338 Season=1 reference=1.mp4 comparing against 4 other episode(s) (threshold corr>=0.55, run>=8s, confidence>=0.75)
+[09:31:13.696] [Information] [AudioFingerprintService] Skip fingerprinting: intro vs 2.mp4 bestCorr=0.30 longestRun=0.0s matched=False
+[09:31:14.313] [Information] [AudioFingerprintService] Skip fingerprinting: outro vs 2.mp4 bestCorr=0.39 longestRun=0.0s matched=False
+[09:31:14.898] [Information] [AudioFingerprintService] Skip fingerprinting: intro vs 3.mp4 bestCorr=0.55 longestRun=6.0s matched=False
+[09:31:15.510] [Information] [AudioFingerprintService] Skip fingerprinting: outro vs 3.mp4 bestCorr=0.50 longestRun=0.0s matched=False
+[09:31:16.089] [Information] [AudioFingerprintService] Skip fingerprinting: intro vs 4.mp4 bestCorr=0.57 longestRun=6.0s matched=False
+[09:31:16.703] [Information] [AudioFingerprintService] Skip fingerprinting: outro vs 4.mp4 bestCorr=0.34 longestRun=0.0s matched=False
+[09:31:17.313] [Information] [AudioFingerprintService] Skip fingerprinting: intro vs 5.mp4 bestCorr=0.50 longestRun=0.0s matched=False
+[09:31:17.921] [Information] [AudioFingerprintService] Skip fingerprinting: outro vs 5.mp4 bestCorr=0.43 longestRun=0.0s matched=False
+[09:31:17.922] [Information] [AudioFingerprintService] Skip fingerprinting: intro candidates=0 result=null
+[09:31:17.922] [Information] [AudioFingerprintService] Skip fingerprinting: outro candidates=0 clipLocalResult=null
+[09:31:17.922] [Information] [AudioFingerprintService] Skip fingerprinting: no confident intro/outro match for ShowId=338 Season=1 (sampled 5 episodes) — storing the attempt so this season isn't re-queued every view.
+[09:34:22.578] [Information] [AudioFingerprintService] Skip fingerprinting: ShowId=338 Season=1 reference=1.mp4 comparing against 4 other episode(s) (threshold corr>=0.55, run>=8s, confidence>=0.75)
+[09:34:24.210] [Information] [AudioFingerprintService] Skip fingerprinting: intro vs 2.mp4 bestCorr=0.30 longestRun=0.0s matched=False
+[09:34:25.847] [Information] [AudioFingerprintService] Skip fingerprinting: outro vs 2.mp4 bestCorr=0.39 longestRun=0.0s matched=False
+[09:34:27.475] [Information] [AudioFingerprintService] Skip fingerprinting: intro vs 3.mp4 bestCorr=0.55 longestRun=6.0s matched=False
+[09:34:29.095] [Information] [AudioFingerprintService] Skip fingerprinting: outro vs 3.mp4 bestCorr=0.50 longestRun=0.0s matched=False
+[09:34:30.765] [Information] [AudioFingerprintService] Skip fingerprinting: intro vs 4.mp4 bestCorr=0.57 longestRun=6.0s matched=False
+[09:34:32.415] [Information] [AudioFingerprintService] Skip fingerprinting: outro vs 4.mp4 bestCorr=0.34 longestRun=0.0s matched=False
+[09:34:34.092] [Information] [AudioFingerprintService] Skip fingerprinting: intro vs 5.mp4 bestCorr=0.50 longestRun=0.0s matched=False
+[09:34:35.786] [Information] [AudioFingerprintService] Skip fingerprinting: outro vs 5.mp4 bestCorr=0.43 longestRun=0.0s matched=False
+[09:34:35.786] [Information] [AudioFingerprintService] Skip fingerprinting: intro candidates=0 result=null
+[09:34:35.787] [Information] [AudioFingerprintService] Skip fingerprinting: outro candidates=0 clipLocalResult=null
+[09:34:35.787] [Information] [AudioFingerprintService] Skip fingerprinting: no confident intro/outro match for ShowId=338 Season=1 (sampled 5 episodes) — storing the attempt so this season isn't re-queued every view.
+[09:40:00.301] [Information] [AudioFingerprintService] Skip fingerprinting: ShowId=338 Season=1 reference=1.mp4 comparing against 4 other episode(s) (threshold corr>=0.55, run>=8s, confidence>=0.75)
+[09:40:03.777] [Information] [AudioFingerprintService] Skip fingerprinting: intro vs 2.mp4 bestCorr=0.30 longestRun=0.0s matched=False
+[09:40:07.303] [Information] [AudioFingerprintService] Skip fingerprinting: outro vs 2.mp4 bestCorr=0.39 longestRun=0.0s matched=False
+[09:40:10.766] [Information] [AudioFingerprintService] Skip fingerprinting: intro vs 3.mp4 bestCorr=0.55 longestRun=6.0s matched=False
+[09:40:14.103] [Information] [AudioFingerprintService] Skip fingerprinting: outro vs 3.mp4 bestCorr=0.50 longestRun=0.0s matched=False
+[09:40:17.687] [Information] [AudioFingerprintService] Skip fingerprinting: intro vs 4.mp4 bestCorr=0.57 longestRun=6.0s matched=False
+[09:40:21.509] [Information] [AudioFingerprintService] Skip fingerprinting: outro vs 4.mp4 bestCorr=0.34 longestRun=0.0s matched=False
+[09:40:25.338] [Information] [AudioFingerprintService] Skip fingerprinting: intro vs 5.mp4 bestCorr=0.50 longestRun=0.0s matched=False
+[09:40:28.758] [Information] [AudioFingerprintService] Skip fingerprinting: outro vs 5.mp4 bestCorr=0.43 longestRun=0.0s matched=False
+[09:40:28.759] [Information] [AudioFingerprintService] Skip fingerprinting: intro candidates=0 result=null
+[09:40:28.760] [Information] [AudioFingerprintService] Skip fingerprinting: outro candidates=0 clipLocalResult=null
+[09:40:28.760] [Information] [AudioFingerprintService] Skip fingerprinting: no confident intro/outro match for ShowId=338 Season=1 (sampled 5 episodes) — storing the attempt so this season isn't re-queued every view.
+[09:48:35.558] [Information] [AudioFingerprintService] Skip fingerprinting: ShowId=338 Season=1 reference=1.mp4 comparing against 4 other episode(s) (threshold corr>=0.55, run>=8s, confidence>=0.75)
+[09:48:40.735] [Information] [AudioFingerprintService] Skip fingerprinting: intro vs 2.mp4 bestCorr=0.80 longestRun=9.0s matched=True
+[09:48:46.022] [Information] [AudioFingerprintService] Skip fingerprinting: outro vs 2.mp4 bestCorr=0.65 longestRun=7.0s matched=False
+[09:48:51.463] [Information] [AudioFingerprintService] Skip fingerprinting: intro vs 3.mp4 bestCorr=0.85 longestRun=10.0s matched=True
+[09:48:56.691] [Information] [AudioFingerprintService] Skip fingerprinting: outro vs 3.mp4 bestCorr=0.63 longestRun=7.0s matched=False
+[09:49:01.649] [Information] [AudioFingerprintService] Skip fingerprinting: intro vs 4.mp4 bestCorr=0.86 longestRun=10.0s matched=True
+[09:49:06.612] [Information] [AudioFingerprintService] Skip fingerprinting: outro vs 4.mp4 bestCorr=0.69 longestRun=7.0s matched=False
+[09:49:11.671] [Information] [AudioFingerprintService] Skip fingerprinting: intro vs 5.mp4 bestCorr=0.83 longestRun=9.0s matched=True
+[09:49:16.762] [Information] [AudioFingerprintService] Skip fingerprinting: outro vs 5.mp4 bestCorr=0.69 longestRun=7.0s matched=False
+[09:49:16.766] [Information] [AudioFingerprintService] Skip fingerprinting: intro candidates=4 result=[0.2-9.8s conf=0.95]
+[09:49:16.766] [Information] [AudioFingerprintService] Skip fingerprinting: outro candidates=0 clipLocalResult=null
+[09:51:35.091] [Information] [AudioFingerprintService] Skip fingerprinting: ShowId=338 Season=1 reference=1.mp4 comparing against 4 other episode(s) (threshold corr>=0.55, run>=20s, confidence>=0.75)
+[09:51:40.357] [Information] [AudioFingerprintService] Skip fingerprinting: intro vs 2.mp4 bestCorr=0.80 longestRun=9.0s matched=False
+[09:51:45.390] [Information] [AudioFingerprintService] Skip fingerprinting: outro vs 2.mp4 bestCorr=0.65 longestRun=7.0s matched=False
+[09:51:50.719] [Information] [AudioFingerprintService] Skip fingerprinting: intro vs 3.mp4 bestCorr=0.85 longestRun=10.0s matched=False
+[09:51:56.152] [Information] [AudioFingerprintService] Skip fingerprinting: outro vs 3.mp4 bestCorr=0.63 longestRun=7.0s matched=False
+[09:52:01.542] [Information] [AudioFingerprintService] Skip fingerprinting: intro vs 4.mp4 bestCorr=0.86 longestRun=10.0s matched=False
+[09:52:06.922] [Information] [AudioFingerprintService] Skip fingerprinting: outro vs 4.mp4 bestCorr=0.69 longestRun=7.0s matched=False
+[09:52:11.880] [Information] [AudioFingerprintService] Skip fingerprinting: intro vs 5.mp4 bestCorr=0.83 longestRun=9.0s matched=False
+[09:52:16.835] [Information] [AudioFingerprintService] Skip fingerprinting: outro vs 5.mp4 bestCorr=0.69 longestRun=7.0s matched=False
+[09:52:16.836] [Information] [AudioFingerprintService] Skip fingerprinting: intro candidates=0 result=null
+[09:52:16.836] [Information] [AudioFingerprintService] Skip fingerprinting: outro candidates=0 clipLocalResult=null
+[09:52:16.836] [Information] [AudioFingerprintService] Skip fingerprinting: no confident intro/outro match for ShowId=338 Season=1 (sampled 5 episodes) — storing the attempt so this season isn't re-queued every view.
+[09:58:44.991] [Information] [AudioFingerprintService] Skip fingerprinting: ShowId=338 Season=1 reference=1.mp4 comparing against 4 other episode(s) (threshold corr>=0.60, run>=20s, confidence>=0.75, lag search ±150s)
+[09:58:46.953] [Information] [AudioFingerprintService] Skip fingerprinting: intro vs 2.mp4 bestCorr=1.00 longestRun=27.0s matched=True
+[09:58:48.935] [Information] [AudioFingerprintService] Skip fingerprinting: outro vs 2.mp4 bestCorr=0.98 longestRun=107.0s matched=True
+[09:58:50.768] [Information] [AudioFingerprintService] Skip fingerprinting: intro vs 3.mp4 bestCorr=1.00 longestRun=28.0s matched=True
+[09:58:52.608] [Information] [AudioFingerprintService] Skip fingerprinting: outro vs 3.mp4 bestCorr=0.98 longestRun=31.0s matched=True
+[09:58:54.528] [Information] [AudioFingerprintService] Skip fingerprinting: intro vs 4.mp4 bestCorr=0.99 longestRun=45.0s matched=True
+[09:58:56.502] [Information] [AudioFingerprintService] Skip fingerprinting: outro vs 4.mp4 bestCorr=0.98 longestRun=45.0s matched=True
+[09:58:58.456] [Information] [AudioFingerprintService] Skip fingerprinting: intro vs 5.mp4 bestCorr=0.99 longestRun=27.0s matched=True
+[09:59:00.352] [Information] [AudioFingerprintService] Skip fingerprinting: outro vs 5.mp4 bestCorr=0.98 longestRun=38.0s matched=True
+[09:59:00.356] [Information] [AudioFingerprintService] Skip fingerprinting: intro candidates=4 result=[153.0-180.3s conf=0.75]
+[09:59:00.356] [Information] [AudioFingerprintService] Skip fingerprinting: outro candidates=4 clipLocalResult=null
+[10:01:04.611] [Information] [AudioFingerprintService] Skip fingerprinting: ShowId=338 Season=1 reference=1.mp4 comparing against 4 other episode(s) (threshold corr>=0.60, run>=20s, confidence>=0.75, lag search ±150s)
+[10:01:06.691] [Information] [AudioFingerprintService] Skip fingerprinting: intro vs 2.mp4 bestCorr=1.00 longestRun=27.0s matched=True start=153.0 end=180.0
+[10:01:08.716] [Information] [AudioFingerprintService] Skip fingerprinting: outro vs 2.mp4 bestCorr=0.98 longestRun=107.0s matched=True start=193.0 end=300.0
+[10:01:10.770] [Information] [AudioFingerprintService] Skip fingerprinting: intro vs 3.mp4 bestCorr=1.00 longestRun=28.0s matched=True start=153.0 end=181.0
+[10:01:12.689] [Information] [AudioFingerprintService] Skip fingerprinting: outro vs 3.mp4 bestCorr=0.98 longestRun=31.0s matched=True start=68.0 end=99.0
+[10:01:14.504] [Information] [AudioFingerprintService] Skip fingerprinting: intro vs 4.mp4 bestCorr=0.99 longestRun=45.0s matched=True start=28.0 end=73.0
+[10:01:16.430] [Information] [AudioFingerprintService] Skip fingerprinting: outro vs 4.mp4 bestCorr=0.98 longestRun=45.0s matched=True start=0.0 end=45.0
+[10:01:18.431] [Information] [AudioFingerprintService] Skip fingerprinting: intro vs 5.mp4 bestCorr=0.99 longestRun=27.0s matched=True start=153.0 end=180.0
+[10:01:20.365] [Information] [AudioFingerprintService] Skip fingerprinting: outro vs 5.mp4 bestCorr=0.98 longestRun=38.0s matched=True start=0.0 end=38.0
+[10:01:20.369] [Information] [AudioFingerprintService] Skip fingerprinting: intro candidates=4 result=[153.0-180.3s conf=0.75]
+[10:01:20.369] [Information] [AudioFingerprintService] Skip fingerprinting: outro candidates=4 clipLocalResult=null
+[10:05:23.664] [Information] [AudioFingerprintService] Skip fingerprinting: ShowId=338 Season=1 reference=1.mp4 comparing against 4 other episode(s) (threshold corr>=0.60, run>=20s, confidence>=0.75, lag search ±150s)
+[10:05:25.580] [Information] [AudioFingerprintService] Skip fingerprinting: intro vs 2.mp4 bestCorr=1.00 longestRun=27.0s matched=True start=153.0 end=180.0
+[10:05:28.634] [Information] [AudioFingerprintService] Skip fingerprinting: outro vs 2.mp4 bestCorr=0.98 longestRun=107.0s matched=True start=343.0 end=450.0
+[10:05:30.517] [Information] [AudioFingerprintService] Skip fingerprinting: intro vs 3.mp4 bestCorr=1.00 longestRun=28.0s matched=True start=153.0 end=181.0
+[10:05:33.484] [Information] [AudioFingerprintService] Skip fingerprinting: outro vs 3.mp4 bestCorr=0.98 longestRun=55.0s matched=True start=133.0 end=188.0
+[10:05:35.300] [Information] [AudioFingerprintService] Skip fingerprinting: intro vs 4.mp4 bestCorr=0.99 longestRun=45.0s matched=True start=28.0 end=73.0
+[10:05:38.321] [Information] [AudioFingerprintService] Skip fingerprinting: outro vs 4.mp4 bestCorr=0.98 longestRun=50.0s matched=True start=145.0 end=195.0
+[10:05:40.171] [Information] [AudioFingerprintService] Skip fingerprinting: intro vs 5.mp4 bestCorr=0.99 longestRun=27.0s matched=True start=153.0 end=180.0
+[10:05:43.167] [Information] [AudioFingerprintService] Skip fingerprinting: outro vs 5.mp4 bestCorr=0.98 longestRun=50.0s matched=True start=134.0 end=184.0
+[10:05:43.170] [Information] [AudioFingerprintService] Skip fingerprinting: intro candidates=4 result=[153.0-180.3s conf=0.75]
+[10:05:43.170] [Information] [AudioFingerprintService] Skip fingerprinting: outro candidates=4 clipLocalResult=null
+[10:08:26.737] [Information] [AudioFingerprintService] Skip fingerprinting: ShowId=338 Season=1 reference=1.mp4 comparing against 4 other episode(s) (threshold corr>=0.60, run>=20s, confidence>=0.75, lag search ±150s)
+[10:08:28.825] [Information] [AudioFingerprintService] Skip fingerprinting: intro vs 2.mp4 bestCorr=1.00 longestRun=27.0s matched=True start=153.0 end=180.0
+[10:08:31.931] [Information] [AudioFingerprintService] Skip fingerprinting: outro vs 2.mp4 bestCorr=0.98 longestRun=107.0s matched=True start=343.0 end=450.0
+[10:08:33.818] [Information] [AudioFingerprintService] Skip fingerprinting: intro vs 3.mp4 bestCorr=1.00 longestRun=28.0s matched=True start=153.0 end=181.0
+[10:08:36.799] [Information] [AudioFingerprintService] Skip fingerprinting: outro vs 3.mp4 bestCorr=0.98 longestRun=55.0s matched=True start=133.0 end=188.0
+[10:08:38.854] [Information] [AudioFingerprintService] Skip fingerprinting: intro vs 4.mp4 bestCorr=0.99 longestRun=45.0s matched=True start=28.0 end=73.0
+[10:08:42.045] [Information] [AudioFingerprintService] Skip fingerprinting: outro vs 4.mp4 bestCorr=0.98 longestRun=50.0s matched=True start=145.0 end=195.0
+[10:08:43.993] [Information] [AudioFingerprintService] Skip fingerprinting: intro vs 5.mp4 bestCorr=0.99 longestRun=27.0s matched=True start=153.0 end=180.0
+[10:08:47.014] [Information] [AudioFingerprintService] Skip fingerprinting: outro vs 5.mp4 bestCorr=0.98 longestRun=50.0s matched=True start=134.0 end=184.0
+[10:08:47.018] [Information] [AudioFingerprintService] Skip fingerprinting: intro candidates=4 result=[153.0-180.3s conf=0.75]
+[10:08:47.018] [Information] [AudioFingerprintService] Skip fingerprinting: outro candidates=4 clipLocalResult=[137.3-189.0s conf=0.75]
+[16:13:15.539] [Information] [AudioFingerprintService] Skip fingerprinting: ShowId=338 Season=1 reference=1.mp4 comparing against 4 other episode(s) (threshold corr>=0.60, run>=20s, confidence>=0.75, lag search ±150s)
+[16:13:17.482] [Information] [AudioFingerprintService] Skip fingerprinting: intro vs 2.mp4 bestCorr=1.00 longestRun=27.0s matched=True start=153.0 end=180.0
+[16:13:20.552] [Information] [AudioFingerprintService] Skip fingerprinting: outro vs 2.mp4 bestCorr=0.98 longestRun=107.0s matched=True start=343.0 end=450.0
+[16:13:22.594] [Information] [AudioFingerprintService] Skip fingerprinting: intro vs 3.mp4 bestCorr=1.00 longestRun=28.0s matched=True start=153.0 end=181.0
+[16:13:25.661] [Information] [AudioFingerprintService] Skip fingerprinting: outro vs 3.mp4 bestCorr=0.98 longestRun=55.0s matched=True start=133.0 end=188.0
+[16:13:27.649] [Information] [AudioFingerprintService] Skip fingerprinting: intro vs 4.mp4 bestCorr=0.99 longestRun=45.0s matched=True start=28.0 end=73.0
+[16:13:30.650] [Information] [AudioFingerprintService] Skip fingerprinting: outro vs 4.mp4 bestCorr=0.98 longestRun=50.0s matched=True start=145.0 end=195.0
+[16:13:32.754] [Information] [AudioFingerprintService] Skip fingerprinting: intro vs 5.mp4 bestCorr=0.99 longestRun=27.0s matched=True start=153.0 end=180.0
+[16:13:36.161] [Information] [AudioFingerprintService] Skip fingerprinting: outro vs 5.mp4 bestCorr=0.98 longestRun=50.0s matched=True start=134.0 end=184.0
+[16:13:36.165] [Information] [AudioFingerprintService] Skip fingerprinting: intro candidates=4 result=[153.0-180.3s conf=0.75]
+[16:13:36.165] [Information] [AudioFingerprintService] Skip fingerprinting: outro candidates=4 clipLocalResult=[137.3-189.0s conf=0.75]
+[16:25:19.946] [Information] [AudioFingerprintService] Skip fingerprinting: ShowId=338 Season=1 reference=1.mp4 comparing against 4 other episode(s) (threshold corr>=0.60, run>=20s, confidence>=0.75, lag search ±150s)
+[16:25:22.092] [Information] [AudioFingerprintService] Skip fingerprinting: intro vs 2.mp4 bestCorr=1.00 longestRun=27.0s matched=True start=153.0 end=180.0
+[16:25:25.797] [Information] [AudioFingerprintService] Skip fingerprinting: outro vs 2.mp4 bestCorr=0.98 longestRun=107.0s matched=True start=343.0 end=450.0
+[16:25:27.882] [Information] [AudioFingerprintService] Skip fingerprinting: intro vs 3.mp4 bestCorr=1.00 longestRun=28.0s matched=True start=153.0 end=181.0
+[16:25:31.342] [Information] [AudioFingerprintService] Skip fingerprinting: outro vs 3.mp4 bestCorr=0.98 longestRun=55.0s matched=True start=133.0 end=188.0
+[16:25:33.557] [Information] [AudioFingerprintService] Skip fingerprinting: intro vs 4.mp4 bestCorr=0.99 longestRun=45.0s matched=True start=28.0 end=73.0
+[16:25:36.983] [Information] [AudioFingerprintService] Skip fingerprinting: outro vs 4.mp4 bestCorr=0.98 longestRun=50.0s matched=True start=145.0 end=195.0
+[16:25:39.316] [Information] [AudioFingerprintService] Skip fingerprinting: intro vs 5.mp4 bestCorr=0.99 longestRun=27.0s matched=True start=153.0 end=180.0
+[16:25:42.634] [Information] [AudioFingerprintService] Skip fingerprinting: outro vs 5.mp4 bestCorr=0.98 longestRun=50.0s matched=True start=134.0 end=184.0
+[16:25:42.638] [Information] [AudioFingerprintService] Skip fingerprinting: intro candidates=4 result=[153.0-180.3s conf=0.75]
+[16:25:42.686] [Information] [AudioFingerprintService] Skip fingerprinting: intro override for EpisodeId=9370 (4.mp4) — measured [28.0-73.0s], season cluster says [153.0-180.3s]
+[16:25:42.686] [Information] [AudioFingerprintService] Skip fingerprinting: outro candidates=4 clipLocalResult=[137.3-189.0s conf=0.75]
+[16:25:42.699] [Information] [AudioFingerprintService] Skip fingerprinting: outro override for EpisodeId=9372 (2.mp4) — measured [3210.0-3317.0s] using its own duration=3317s
+[16:38:18.949] [Information] [AudioFingerprintService] Skip fingerprinting: ShowId=338 Season=1 reference=1.mp4 comparing against 4 other episode(s) (threshold corr>=0.60, run>=60s, confidence>=0.75, lag search ±150s)
+[16:38:20.878] [Information] [AudioFingerprintService] Skip fingerprinting: intro vs 2.mp4 bestCorr=1.00 longestRun=27.0s matched=False start=(null) end=(null)
+[16:38:24.043] [Information] [AudioFingerprintService] Skip fingerprinting: outro vs 2.mp4 bestCorr=0.98 longestRun=107.0s matched=True start=343.0 end=450.0
+[16:38:25.880] [Information] [AudioFingerprintService] Skip fingerprinting: intro vs 3.mp4 bestCorr=1.00 longestRun=28.0s matched=False start=(null) end=(null)
+[16:38:28.750] [Information] [AudioFingerprintService] Skip fingerprinting: outro vs 3.mp4 bestCorr=0.98 longestRun=55.0s matched=False start=(null) end=(null)
+[16:38:30.656] [Information] [AudioFingerprintService] Skip fingerprinting: intro vs 4.mp4 bestCorr=0.99 longestRun=45.0s matched=False start=(null) end=(null)
+[16:38:33.659] [Information] [AudioFingerprintService] Skip fingerprinting: outro vs 4.mp4 bestCorr=0.98 longestRun=50.0s matched=False start=(null) end=(null)
+[16:38:35.614] [Information] [AudioFingerprintService] Skip fingerprinting: intro vs 5.mp4 bestCorr=0.99 longestRun=27.0s matched=False start=(null) end=(null)
+[16:38:38.559] [Information] [AudioFingerprintService] Skip fingerprinting: outro vs 5.mp4 bestCorr=0.98 longestRun=50.0s matched=False start=(null) end=(null)
+[16:38:38.560] [Information] [AudioFingerprintService] Skip fingerprinting: intro candidates=0 result=null
+[16:38:38.561] [Information] [AudioFingerprintService] Skip fingerprinting: outro candidates=1 clipLocalResult=null
+[16:38:38.561] [Information] [AudioFingerprintService] Skip fingerprinting: no confident intro/outro match for ShowId=338 Season=1 (sampled 5 episodes) — storing the attempt so this season isn't re-queued every view.
+[16:49:43.555] [Information] [AudioFingerprintService] Skip fingerprinting: ShowId=338 Season=1 reference=1.mp4 comparing against 4 other episode(s) (threshold corr>=0.60, run>=60s, confidence>=0.75, lag search ±150s)
+[16:49:45.593] [Information] [AudioFingerprintService] Skip fingerprinting: intro vs 2.mp4 bestCorr=1.00 atPos=0.0s longestRun=82.0s matched=True start=200.0 end=282.0
+[16:49:48.853] [Information] [AudioFingerprintService] Skip fingerprinting: outro vs 2.mp4 bestCorr=0.98 atPos=444.0s longestRun=128.0s matched=True start=322.0 end=450.0
+[16:49:50.801] [Information] [AudioFingerprintService] Skip fingerprinting: intro vs 3.mp4 bestCorr=1.00 atPos=0.0s longestRun=161.0s matched=True start=117.0 end=278.0
+[16:49:53.928] [Information] [AudioFingerprintService] Skip fingerprinting: outro vs 3.mp4 bestCorr=0.98 atPos=444.0s longestRun=278.0s matched=True start=0.0 end=278.0
+[16:49:55.854] [Information] [AudioFingerprintService] Skip fingerprinting: intro vs 4.mp4 bestCorr=0.99 atPos=2.0s longestRun=161.0s matched=True start=139.0 end=300.0
+[16:49:58.802] [Information] [AudioFingerprintService] Skip fingerprinting: outro vs 4.mp4 bestCorr=0.98 atPos=443.0s longestRun=212.0s matched=True start=73.0 end=285.0
+[16:50:00.770] [Information] [AudioFingerprintService] Skip fingerprinting: intro vs 5.mp4 bestCorr=0.99 atPos=2.0s longestRun=102.0s matched=True start=0.0 end=102.0
+[16:50:03.909] [Information] [AudioFingerprintService] Skip fingerprinting: outro vs 5.mp4 bestCorr=0.98 atPos=444.0s longestRun=121.0s matched=True start=79.0 end=200.0
+[16:50:03.911] [Information] [AudioFingerprintService] Skip fingerprinting: intro candidates=4 result=null
+[16:50:03.912] [Information] [AudioFingerprintService] Skip fingerprinting: outro candidates=4 clipLocalResult=null
+[16:50:03.912] [Information] [AudioFingerprintService] Skip fingerprinting: no confident intro/outro match for ShowId=338 Season=1 (sampled 5 episodes) — storing the attempt so this season isn't re-queued every view.
+[16:54:37.500] [Information] [AudioFingerprintService] Skip fingerprinting: ShowId=338 Season=1 reference=1.mp4 comparing against 4 other episode(s) (threshold corr>=0.60, run>=60s, confidence>=0.75, lag search ±150s)
+[16:54:39.476] [Information] [AudioFingerprintService] Skip fingerprinting: intro vs 2.mp4 bestCorr=1.00 atPos=0.0s longestRun=61.0s matched=True start=200.0 end=261.0
+[16:54:42.607] [Information] [AudioFingerprintService] Skip fingerprinting: outro vs 2.mp4 bestCorr=0.98 atPos=444.0s longestRun=128.0s matched=True start=322.0 end=450.0
+[16:54:44.632] [Information] [AudioFingerprintService] Skip fingerprinting: intro vs 3.mp4 bestCorr=1.00 atPos=0.0s longestRun=72.0s matched=True start=198.0 end=270.0
+[16:54:47.693] [Information] [AudioFingerprintService] Skip fingerprinting: outro vs 3.mp4 bestCorr=0.98 atPos=444.0s longestRun=126.0s matched=True start=88.0 end=214.0
+[16:54:49.575] [Information] [AudioFingerprintService] Skip fingerprinting: intro vs 4.mp4 bestCorr=0.99 atPos=2.0s longestRun=84.0s matched=True start=198.0 end=282.0
+[16:54:52.473] [Information] [AudioFingerprintService] Skip fingerprinting: outro vs 4.mp4 bestCorr=0.98 atPos=443.0s longestRun=195.0s matched=False start=(null) end=(null)
+[16:54:54.325] [Information] [AudioFingerprintService] Skip fingerprinting: intro vs 5.mp4 bestCorr=0.99 atPos=2.0s longestRun=65.0s matched=True start=28.0 end=93.0
+[16:54:57.358] [Information] [AudioFingerprintService] Skip fingerprinting: outro vs 5.mp4 bestCorr=0.98 atPos=444.0s longestRun=114.0s matched=True start=84.0 end=198.0
+[16:54:57.361] [Information] [AudioFingerprintService] Skip fingerprinting: intro candidates=4 result=[198.7-271.0s conf=0.75]
+[16:54:57.415] [Information] [AudioFingerprintService] Skip fingerprinting: intro override for EpisodeId=9368 (5.mp4) — measured [28.0-93.0s], season cluster says [198.7-271.0s]
+[16:54:57.416] [Information] [AudioFingerprintService] Skip fingerprinting: outro candidates=3 clipLocalResult=null

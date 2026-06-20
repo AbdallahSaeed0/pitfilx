@@ -1,0 +1,18 @@
+{
+  "default": null,
+  "permission": [
+    {
+      "identifier": "allow-remote-player",
+      "description": "Fullscreen-remote player commands (mpv IPC bridge)",
+      "commands": {
+        "allow": [
+          "remote_open",
+          "remote_play_pause",
+          "remote_seek",
+          "remote_close"
+        ],
+        "deny": []
+      }
+    }
+  ]
+}

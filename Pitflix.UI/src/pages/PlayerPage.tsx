@@ -4,7 +4,8 @@ import { getCurrentWindow } from "@tauri-apps/api/window";
 import { useQueryClient } from "@tanstack/react-query";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
-import { addHistory, historyStopped, postHistoryProgress, dismissHistoryEntry } from "../api/history";
+import { addHistory, getHistory, historyStopped, postHistoryProgress, dismissHistoryEntry } from "../api/history";
+import { trustedResumeHeadFromRow, type HistoryResumeFields } from "../utils/trustedResume";
 import { getNextLibraryEpisode, getPreviousLibraryEpisode, resolvePlaybackByPath } from "../api/series";
 import type { NextLibraryEpisode } from "../api/series";
 import type { PlaybackLaunchState } from "../types/playback";
@@ -12,6 +13,12 @@ import {
   Captions,
   ChevronLeft,
   ChevronRight,
+  ChevronUp,
+  ChevronDown,
+  RotateCcw,
+  Clock,
+  ArrowUpDown,
+  SlidersHorizontal,
   ExternalLink,
   List,
   ListMusic,
@@ -26,7 +33,7 @@ import {
 } from "lucide-react";
 import { cn } from "../utils/cn";
 import { pickReturnToAfterLibraryNavigation } from "../utils/playbackReturnTo";
-import { getStatusInfo, mapPlaybackStatus } from "../utils/playbackStatus";
+import { mapPlaybackStatus } from "../utils/playbackStatus";
 import { sanitizeErrorMessage } from "../utils/sanitizeError";
 import { CinematicPlayerShell } from "../components/player/CinematicPlayerShell";
 import { MediaHeroCard } from "../components/player/MediaHeroCard";
@@ -34,6 +41,8 @@ import { PlaybackStatusBadge } from "../components/player/PlaybackStatusBadge";
 import { PlayerActionButton } from "../components/player/PlayerActionButton";
 import { PlayerQuickTips } from "../components/player/PlayerQuickTips";
 import { EpisodeNavigationOverlay } from "../components/player/EpisodeNavigationOverlay";
+import { SkipSegmentOverlay, type ActiveSkipSegment } from "../components/player/SkipSegmentOverlay";
+import { getEpisodeSkip, type EpisodeSkipResult } from "../api/skip";
 import { 
   startRuntimeMonitor, 
   stopRuntimeMonitor, 
@@ -138,9 +147,13 @@ function num(v: unknown): number {
 
 function fmtTime(s: number) {
   if (!Number.isFinite(s) || s < 0) return "0:00";
-  const m = Math.floor(s / 60);
   const sec = Math.floor(s % 60);
-  return `${m}:${sec.toString().padStart(2, "0")}`;
+  const totalMin = Math.floor(s / 60);
+  const h = Math.floor(totalMin / 60);
+  const m = totalMin % 60;
+  const ss = sec.toString().padStart(2, "0");
+  if (h > 0) return `${h}:${m.toString().padStart(2, "0")}:${ss}`;
+  return `${m}:${ss}`;
 }
 
 function fmtSubDelayLabel(sec: number): string {
@@ -160,6 +173,59 @@ type PlayerSubtitlePrefs = {
   position: number;
   fontFamily: string;
 };
+
+/** Renders one playlist row with a thumbnail poster (lazy-fetched via Tauri). */
+function PlaylistTile({
+  entry,
+  active,
+  onSelect,
+}: {
+  entry: DeviceFsEntry;
+  active: boolean;
+  onSelect: () => void;
+}) {
+  const [thumbUrl, setThumbUrl] = useState<string | null>(null);
+  useEffect(() => {
+    if (!isTauri()) return;
+    let cancelled = false;
+    let url: string | null = null;
+    void invoke<number[]>("thumb_poster", { filePath: entry.path, atSeconds: 60.0 })
+      .then((bytes) => {
+        if (cancelled) return;
+        const blob = new Blob([new Uint8Array(bytes)], { type: "image/jpeg" });
+        url = URL.createObjectURL(blob);
+        setThumbUrl(url);
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+      if (url) URL.revokeObjectURL(url);
+    };
+  }, [entry.path]);
+  return (
+    <button
+      type="button"
+      disabled={active}
+      onClick={onSelect}
+      className={cn(
+        "flex w-full items-center gap-3 rounded-lg border px-2 py-2 text-left text-[12px] transition-colors",
+        active
+          ? "border-pitflix-primary/60 bg-pitflix-primary/15 text-white"
+          : "border-white/10 bg-white/5 text-white/90 hover:bg-white/10",
+        "disabled:cursor-not-allowed disabled:opacity-60",
+      )}
+      title={entry.path}
+    >
+      <span className="block h-[80px] w-[140px] shrink-0 overflow-hidden rounded-md bg-black/50">
+        {thumbUrl ? (
+          <img src={thumbUrl} alt="" className="h-full w-full object-cover" />
+        ) : null}
+      </span>
+      <span className="min-w-0 flex-1 truncate">{fileDisplayTitle(entry.name)}</span>
+      {active ? <span className="shrink-0 text-[10px] text-pitflix-light">Now</span> : null}
+    </button>
+  );
+}
 
 const SUBTITLE_PREFS_STORAGE_KEY = "pitflix.player.subtitlePrefs.v1";
 const DEFAULT_SUBTITLE_PREFS: PlayerSubtitlePrefs = {
@@ -233,9 +299,16 @@ function persistEpSubPick(epKey: string, subVal: string) {
   localStorage.setItem(EPISODE_SUB_PICK_STORAGE_KEY, JSON.stringify(trimmed));
 }
 
+/** Kill switch for the intro/outro skip button — fingerprint-sourced segments have shown
+ *  wrong skip windows even at confidence >= 0.75 (energy-envelope correlation getting fooled
+ *  by similar speech rhythm across unrelated scenes, not just low-confidence heuristic
+ *  guesses). Fetch/derivation logic stays active (cheap, useful for diagnosis); only the UI is
+ *  suppressed. Flip back to false once fingerprinting is more discriminating. */
+const SKIP_OVERLAY_DISABLED = true;
+
 /** Fullscreen auto-hide: idle before fading chrome (ms). Slightly longer while paused. */
-const FS_HIDE_IDLE_MS = 1750;
-const FS_HIDE_PAUSED_MS = 2500;
+const FS_HIDE_IDLE_MS = 800;
+const FS_HIDE_PAUSED_MS = 1500;
 
 /** Watch-history API heartbeat (playback tracking). */
 const HISTORY_PROGRESS_HEARTBEAT_MS = 5000;
@@ -268,10 +341,85 @@ export function PlayerPage() {
   const qc = useQueryClient();
   const state = location.state as PlaybackLaunchState | undefined;
   const currentEpisodeKey = state ? playbackEpisodeKey(state) : "none";
+  // When the user picked the "libmpv-embedded" engine in Settings, route every
+  // player2_* invoke through the libmpv-backed Tauri commands. Same payloads.
+  const useLibMpv = state?.useLibMpv === true;
+  /** Map external-mpv command names to their libmpv equivalents when libmpv engine is selected. */
+  const p2cmd = (name: string): string => {
+    if (!useLibMpv) return name;
+    switch (name) {
+      case "player2_open": return "player2_libmpv_open";
+      case "player2_close": return "player2_libmpv_close";
+      case "player2_send": return "player2_libmpv_send";
+      case "player2_set_video_bounds": return "player2_libmpv_set_bounds";
+      default: return name;
+    }
+  };
+  // Kick off the one-off ffmpeg keyframe scan for hover/poster previews.
+  // Disk-cached on the first visit; subsequent opens are instant.
+  useEffect(() => {
+    if (!isTauri() || !state?.filePath) return;
+    invoke("thumb_note_current", { filePath: state.filePath }).catch(() => {});
+  }, [state?.filePath]);
+
+  // While libmpv is the active engine, force <html>/<body> transparent so WebView2
+  // composites the mpv child HWND behind it. Restore on unmount.
+  useEffect(() => {
+    if (!useLibMpv) return;
+    const prevHtmlBg = document.documentElement.style.background;
+    const prevBodyBg = document.body.style.background;
+    document.documentElement.style.background = "transparent";
+    document.body.style.background = "transparent";
+    return () => {
+      document.documentElement.style.background = prevHtmlBg;
+      document.body.style.background = prevBodyBg;
+    };
+  }, [useLibMpv]);
+
+  /** `player2_get_state` doesn't exist for libmpv. Return a synthetic snapshot so
+   *  the page renders the embedded layout (video frame div, no "Bring to front"). */
+  const getNativeState = async (): Promise<Player2NativeState> => {
+    if (useLibMpv) {
+      return {
+        session_active: true,
+        ipc_dead: false,
+        backend: "libmpv",
+        session_id: 1,
+        video_hwnd: null,
+        ipc_mirror: null,
+        libmpv_pause_property: null,
+        libmpv_property_error: null,
+        pause_verification: null,
+        render_frame_count: 0,
+        last_render_error: null,
+        window_thread_id: null,
+      } as unknown as Player2NativeState;
+    }
+    return getNativeState();
+  };
+  /** Pause/resume go through the generic PlayerCommand channel for libmpv. */
+  const p2pause = async (): Promise<void> => {
+    if (useLibMpv) {
+      await invoke("player2_libmpv_send", { cmd: { type: "SetPaused", payload: true } });
+    } else {
+      await p2pause();
+    }
+  };
+  const p2resume = async (): Promise<void> => {
+    if (useLibMpv) {
+      await invoke("player2_libmpv_send", { cmd: { type: "SetPaused", payload: false } });
+    } else {
+      await p2resume();
+    }
+  };
 
   const [resumeChoice, setResumeChoice] = useState<"pending" | "fromStart" | "resume" | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
+  /** True for a brief grace period after `loading` flips false, bridging the gap
+   *  between player2_open resolving and mpv actually painting its first frame into
+   *  the (transparent, OS-desktop-revealing) video surface. */
+  const [videoSettling, setVideoSettling] = useState(true);
   const [timePos, setTimePos] = useState(0);
   const [duration, setDuration] = useState(0);
   const [paused, setPaused] = useState(false);
@@ -281,6 +429,10 @@ export function PlayerPage() {
   const [subVisible, setSubVisible] = useState(true);
   const [nextEp, setNextEp] = useState<NextLibraryEpisode | null | undefined>(undefined);
   const [prevEp, setPrevEp] = useState<NextLibraryEpisode | null | undefined>(undefined);
+  const [skipData, setSkipData] = useState<EpisodeSkipResult | null>(null);
+  /** Once dismissed (manually or via auto-hide timeout), a segment stays hidden for the rest
+   *  of this viewing of this episode — reset whenever skipData is refetched for a new episode. */
+  const skipDismissedRef = useRef<{ intro: boolean; outro: boolean }>({ intro: false, outro: false });
   const canonicalTargetsRef = useRef<{ episodeId: number | null; next: NextLibraryEpisode | null; prev: NextLibraryEpisode | null }>({
     episodeId: null,
     next: null,
@@ -315,9 +467,89 @@ export function PlayerPage() {
   const [folderPlaylistBusy, setFolderPlaylistBusy] = useState(false);
   /** True after failed `player2_send` / dead IPC — Play must reopen the session. */
   const [sessionDead, setSessionDead] = useState(false);
+  // Seek-bar hover preview state. `dataUrl` is the JPEG payload returned by
+  // the Tauri `thumb_at` command (cached on disk after the first scan).
+  const [seekHover, setSeekHover] = useState<{
+    pixelX: number;
+    seconds: number;
+    dataUrl: string | null;
+    /** True while a new bucket's frame is still loading — keeps the last
+     *  frame on screen (dimmed) instead of flashing to a blank box. */
+    loading: boolean;
+  } | null>(null);
+  const seekHoverFetchSeqRef = useRef(0);
+  const seekHoverDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  /**
+   * Track the most recent blob URL we minted so we can revoke it when a new
+   * one replaces it. Avoids slow memory growth without keeping a JS-side cache
+   * (the Rust disk cache + bulk scan already handle persistence — same as
+   * PitflixPlayer's ThumbWorker).
+   */
+  const lastSeekHoverUrlRef = useRef<string | null>(null);
+  const scheduleHoverThumb = useCallback((filePath: string, seconds: number) => {
+    if (!isTauri()) return;
+    if (seekHoverDebounceRef.current) clearTimeout(seekHoverDebounceRef.current);
+    seekHoverDebounceRef.current = setTimeout(() => {
+      const seq = ++seekHoverFetchSeqRef.current;
+      void invoke<number[]>("thumb_at", { filePath, seconds })
+        .then((bytes) => {
+          if (seq !== seekHoverFetchSeqRef.current) return;
+          const blob = new Blob([new Uint8Array(bytes)], { type: "image/jpeg" });
+          const url = URL.createObjectURL(blob);
+          const prevUrl = lastSeekHoverUrlRef.current;
+          lastSeekHoverUrlRef.current = url;
+          if (prevUrl) URL.revokeObjectURL(prevUrl);
+          setSeekHover((prev) => (prev ? { ...prev, dataUrl: url, loading: false } : prev));
+        })
+        .catch(() => {});
+    }, 15);
+  }, []);
+  useEffect(() => {
+    return () => {
+      const u = lastSeekHoverUrlRef.current;
+      if (u) URL.revokeObjectURL(u);
+      lastSeekHoverUrlRef.current = null;
+    };
+  }, []);
+  const [episodeInfoOpen, setEpisodeInfoOpen] = useState(false);
+  /** When true, the subtitles popup shows font/color/border controls; when false,
+   *  it shows just the track selector + actions. Toggled by the settings button. */
+  const [subAppearanceOpen, setSubAppearanceOpen] = useState(false);
+  // Click-outside dismissal for every <details> popup in the player chrome.
+  useEffect(() => {
+    const handler = (e: MouseEvent) => {
+      const target = e.target as Node | null;
+      const opens = document.querySelectorAll<HTMLDetailsElement>("details[open]");
+      opens.forEach((d) => {
+        if (target && !d.contains(target)) d.open = false;
+      });
+    };
+    document.addEventListener("pointerdown", handler);
+    return () => document.removeEventListener("pointerdown", handler);
+  }, []);
   const [isFullscreen, setIsFullscreen] = useState(false);
+  /** Mirror for syncVideoBounds (a memoized callback that doesn't re-run on state changes). */
+  const isFullscreenRef = useRef(false);
+  useEffect(() => { isFullscreenRef.current = isFullscreen; }, [isFullscreen]);
+  // Re-sync mpv child bounds whenever fullscreen or chrome visibility changes —
+  // bounds rule differs (full viewport vs clipped between header/footer).
+  useEffect(() => {
+    const id = window.setTimeout(() => {
+      // syncVideoBounds is defined below; access by ref pattern via callback.
+      window.dispatchEvent(new Event("__pitflix_resync_bounds"));
+    }, 16);
+    return () => window.clearTimeout(id);
+  }, [isFullscreen]);
   /** Fullscreen-only: when false, chrome is hidden (auto-hide). Windowed mode ignores this (see `controlsVisible`). */
   const [fsControlsVisible, setFsControlsVisible] = useState(true);
+  const fsControlsVisibleRef = useRef(true);
+  useEffect(() => {
+    fsControlsVisibleRef.current = fsControlsVisible;
+    window.dispatchEvent(new Event("__pitflix_resync_bounds"));
+  }, [fsControlsVisible]);
+  // Tracked separately because syncVideoBounds (a memoized callback) reads via ref.
+  // The update effect lives below `currentFolderForPlaylist`'s declaration.
+  const playlistVisibleRef = useRef(false);
   /** Single centralized fullscreen idle timer (do not duplicate hide logic elsewhere). */
   const fsHideControlsTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   /** True after user requests resume until backend `State` confirms `paused===false`. */
@@ -390,6 +622,24 @@ export function PlayerPage() {
     if (!folderPlaylistPinned) return;
     setFolderPlaylistOpen(true);
   }, [folderPlaylistPinned]);
+  // Mirror playlist visibility to a ref + force a video bounds resync so mpv
+  // child shrinks to make space for the in-app aside (libmpv embed mode).
+  useEffect(() => {
+    const next = Boolean(currentFolderForPlaylist && (folderPlaylistOpen || folderPlaylistPinned));
+    playlistVisibleRef.current = next;
+    // Burst-fire over ~12 frames — the layout reflow when the <aside> appears
+    // or disappears doesn't always settle in a single tick, and a stale
+    // bounds rect leaves a black strip where the playlist used to be.
+    let n = 0;
+    const fire = () => {
+      window.dispatchEvent(new Event("__pitflix_resync_bounds"));
+      n += 1;
+      if (n < 12) requestAnimationFrame(fire);
+    };
+    requestAnimationFrame(fire);
+    // Close the (deprecated) popout window if it was opened by a previous version.
+    if (isTauri()) void invoke("playlist_window_close").catch(() => {});
+  }, [currentFolderForPlaylist, folderPlaylistOpen, folderPlaylistPinned]);
   /** Throttle state updates in external mode to reduce rerender churn */
   const lastStateUpdateTimeRef = useRef<number>(0);
   const STATE_UPDATE_THROTTLE_MS = 1000; // Only update UI once per second in external mode
@@ -538,9 +788,14 @@ export function PlayerPage() {
   /** Snap `timePosRef` / `durationRef` from native host mirror or POL before persisting (avoids stale UI-throttled values). */
   const refreshPlayheadIntoRefs = useCallback(async () => {
     if (!isTauri()) return;
+    // libmpv path: the State event handler already keeps timePosRef/durationRef
+    // current. Neither `player2_get_state` (external IPC mirror) nor the POL
+    // snapshot has real data for this backend, and they would clobber the real
+    // position with 0 → the close path then persists position 0 to the server.
+    if (useLibMpv) return;
     let mirrorTimeSet = false;
     try {
-      const ns = await invoke<Player2NativeState>("player2_get_state");
+      const ns = await getNativeState();
       if (ns.session_active && ns.ipc_mirror) {
         const m = ns.ipc_mirror;
         const tf = typeof m.time_pos_full === "number" && Number.isFinite(m.time_pos_full) ? m.time_pos_full : Number.NaN;
@@ -561,7 +816,9 @@ export function PlayerPage() {
     if (mirrorTimeSet) return;
     try {
       const snap = await playbackGetSnapshot();
-      if (Number.isFinite(snap.currentTime) && snap.currentTime >= 0) {
+      // Don't overwrite a known-good position with a 0 from an idle POL — that
+      // poisons `flushProgressAndStop` and persists position 0 to the server.
+      if (Number.isFinite(snap.currentTime) && snap.currentTime > 0) {
         timePosRef.current = snap.currentTime;
       }
       if (Number.isFinite(snap.duration) && snap.duration > 0) {
@@ -570,7 +827,7 @@ export function PlayerPage() {
     } catch {
       /* POL optional when idle. */
     }
-  }, []);
+  }, [useLibMpv]);
 
   const flushHistoryProgressNow = useCallback(async () => {
     const hid = historyIdRef.current;
@@ -690,20 +947,40 @@ export function PlayerPage() {
         const headerRect = playerHeaderChromeRef.current?.getBoundingClientRect();
         const footerRect = playerFooterChromeRef.current?.getBoundingClientRect();
 
+        // Fullscreen: ALWAYS stretch mpv to the full window viewport. Controls overlay
+        // on top via WebView2 (Harbor pattern). Windowed mode keeps the clip to chromes
+        // so the video doesn't slide under the title/control strips.
+        const isFullscreenNow = isFullscreenRef.current;
         let top = Math.round(videoRect.top);
         let bottom = Math.round(videoRect.bottom);
-        if (headerRect && headerRect.height > 0) {
-          top = Math.max(top, Math.round(headerRect.bottom));
+        let left = Math.round(videoRect.left);
+        let right = Math.round(videoRect.right);
+        if (isFullscreenNow) {
+          top = 0;
+          left = 0;
+          right = window.innerWidth;
+          bottom = window.innerHeight;
+        } else {
+          if (headerRect && headerRect.height > 0) {
+            top = Math.max(top, Math.round(headerRect.bottom));
+          }
+          if (footerRect && footerRect.height > 0) {
+            bottom = Math.min(bottom, Math.round(footerRect.top));
+          }
         }
-        if (footerRect && footerRect.height > 0) {
-          bottom = Math.min(bottom, Math.round(footerRect.top));
+        // Push the video to the left of the playlist instead of overlaying it.
+        if (playlistVisibleRef.current) {
+          // Match aside width: `w-[min(26rem,90vw)]` → 26rem (416px) or 90vw.
+          const playlistWidth = Math.min(416, Math.round(window.innerWidth * 0.9));
+          right = Math.max(left + 16, right - playlistWidth);
         }
 
         const height = Math.max(1, bottom - top);
+        const width = Math.max(1, right - left);
         const logicalBounds = {
-          x: Math.round(videoRect.left),
+          x: left,
           y: top,
-          width: Math.round(videoRect.width),
+          width,
           height,
         };
         if (logicalBounds.width <= 0 || logicalBounds.height <= 0) {
@@ -722,7 +999,7 @@ export function PlayerPage() {
           });
         }
         // Logical CSS px; Rust converts with GetDpiForWindow(parent) to match WebView2.
-        await invoke("player2_set_video_bounds", {
+        await invoke(p2cmd("player2_set_video_bounds"), {
           x: logicalBounds.x,
           y: logicalBounds.y,
           width: logicalBounds.width,
@@ -757,6 +1034,7 @@ export function PlayerPage() {
     vv?.addEventListener("resize", run);
     vv?.addEventListener("scroll", run);
     document.addEventListener("fullscreenchange", run);
+    window.addEventListener("__pitflix_resync_bounds", run);
     // Reduced polling for external mode - only poll every 2 seconds instead of 400ms
     const poll = window.setInterval(() => {
       trackPoll();
@@ -784,6 +1062,7 @@ export function PlayerPage() {
       vv?.removeEventListener("resize", run);
       vv?.removeEventListener("scroll", run);
       document.removeEventListener("fullscreenchange", run);
+      window.removeEventListener("__pitflix_resync_bounds", run);
       clearInterval(poll);
       void unlistenResize?.();
       void unlistenScale?.();
@@ -803,7 +1082,7 @@ export function PlayerPage() {
     if (!state || !isTauri() || resumeChoice === "pending" || resumeChoice === null) return;
     console.log("[lifecycle] backend detector effect triggered - resumeChoice:", resumeChoice);
     let alive = true;
-    void invoke<Player2NativeState>("player2_get_state")
+    void getNativeState()
       .then((s) => {
         if (!alive) return;
         console.log("[lifecycle] backend state detected:", s.backend);
@@ -824,7 +1103,7 @@ export function PlayerPage() {
       // In external mode, unmount/remount churn during route-state replacements can happen in dev/runtime transitions.
       // Closing external mpv here causes launch/kill loops. Let explicit close paths own external shutdown.
       if (!isNativeBackendEmbeddedLibmpv(nativeStateRef.current?.backend)) return;
-      void invoke("player2_close").catch((e) => logPlayer2InvokeFailure("player2_close", e));
+      void invoke(p2cmd("player2_close")).catch((e) => logPlayer2InvokeFailure("player2_close", e));
     };
   }, []);
 
@@ -837,6 +1116,15 @@ export function PlayerPage() {
   useEffect(() => {
     pausedRef.current = paused;
   }, [paused]);
+
+  useEffect(() => {
+    if (loading) {
+      setVideoSettling(true);
+      return;
+    }
+    const t = window.setTimeout(() => setVideoSettling(false), 450);
+    return () => window.clearTimeout(t);
+  }, [loading]);
 
   const resumeSeconds = state?.resumeSeconds;
   const showResumePrompt = resumeSeconds != null && resumeSeconds > 60;
@@ -875,13 +1163,13 @@ export function PlayerPage() {
       setEnded(false);
       setSessionDead(false);
       try {
-        await invoke("player2_open", {
+        await invoke(p2cmd("player2_open"), {
           payload: {
             path: state.filePath,
             start_seconds: startSeconds,
           },
         });
-        const ns = await invoke<Player2NativeState>("player2_get_state");
+        const ns = await getNativeState();
         setNativeState(ns);
         setLoading(false);
         const ext = isNativeBackendExternal(ns.backend);
@@ -1258,6 +1546,13 @@ export function PlayerPage() {
     const dur = durationRef.current;
     const launch = launchStateRef.current;
     const key = launch ? playbackEpisodeKey(launch) : "none";
+    // Stray cleanup flush before playback started would otherwise persist t=0
+    // AND set historyServerFinalizedRef=true, which then blocks the real close
+    // flush. Bail out when nothing meaningful has been observed yet.
+    if (tPos <= 0 && dur <= 0) {
+      playerDebugLog(`persist_target skipped key=${key} historyId=${historyId} (no playback observed yet)`);
+      return;
+    }
     playerDebugLog(`persist_target start key=${key} historyId=${historyId} t=${Math.floor(tPos)} d=${Math.floor(dur)}`);
     const flushStart = performance.now();
     console.log("[close-lag] progress save start");
@@ -1316,7 +1611,7 @@ export function PlayerPage() {
   useEffect(() => {
     if (!externalReady || loading) return;
     const id = window.setInterval(() => {
-      void invoke<Player2NativeState>("player2_get_state")
+      void getNativeState()
         .then((s) => {
           setNativeState(s);
           // Fallback: if no explicit IPC-close event arrives but external session is gone,
@@ -1347,7 +1642,7 @@ export function PlayerPage() {
     void playbackPersistProgress({ historyId: launch?.historyId ?? undefined }).catch(() => {});
     void playbackCancelNextCountdown().catch(() => {});
     navigateFromPlayer(navigate, launch?.returnTo, true);
-    void invoke("player2_close").catch((e) => logPlayer2InvokeFailure("player2_close", e));
+    void invoke(p2cmd("player2_close")).catch((e) => logPlayer2InvokeFailure("player2_close", e));
   }, [navigate, flushProgressAndStop]);
 
   useEffect(() => {
@@ -1402,6 +1697,44 @@ export function PlayerPage() {
   }, [state?.libraryShowId, state?.libraryEpisodeId]);
 
   useEffect(() => {
+    skipDismissedRef.current = { intro: false, outro: false };
+    if (state?.libraryEpisodeId == null) {
+      setSkipData(null);
+      return;
+    }
+    let cancelled = false;
+    void getEpisodeSkip(state.libraryEpisodeId)
+      .then((res) => {
+        if (!cancelled) setSkipData(res);
+      })
+      .catch(() => {
+        if (!cancelled) setSkipData(null);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [state?.libraryEpisodeId]);
+
+  const activeSkipSegment: ActiveSkipSegment | null = (() => {
+    if (!skipData) return null;
+    const { intro, outro } = skipData;
+    // Heuristic-sourced segments (confidence 0.3, a fixed-offset guess with no real signal
+    // from this file) are too unreliable to surface — especially for unscripted/documentary
+    // content where intro/outro placement varies episode to episode. False positives (skipping
+    // into real content) are worse than false negatives, so these stay computed/stored but
+    // hidden from the UI until a higher-confidence source (chapter/AniSkip/fingerprint) exists.
+    if (outro && outro.source !== "heuristic" && !skipDismissedRef.current.outro &&
+        timePos >= outro.start && timePos < outro.end) {
+      return { kind: "outro", segment: outro };
+    }
+    if (intro && intro.source !== "heuristic" && !skipDismissedRef.current.intro &&
+        timePos >= intro.start && timePos < intro.end) {
+      return { kind: "intro", segment: intro };
+    }
+    return null;
+  })();
+
+  useEffect(() => {
     const hid = state?.historyId;
     return () => {
       if (hid == null || historyStopHandledRef.current) return;
@@ -1427,7 +1760,7 @@ export function PlayerPage() {
 
   const send = useCallback(async (cmd: unknown) => {
     try {
-      await invoke("player2_send", { cmd });
+      await invoke(p2cmd("player2_send"), { cmd });
     } catch (e) {
       logPlayer2InvokeFailure("player2_send", e);
       console.warn("player_send failed", e);
@@ -1437,6 +1770,17 @@ export function PlayerPage() {
       throw e;
     }
   }, []);
+
+  const dismissActiveSkipSegment = useCallback(() => {
+    if (!activeSkipSegment) return;
+    skipDismissedRef.current[activeSkipSegment.kind] = true;
+  }, [activeSkipSegment]);
+
+  const skipActiveSegment = useCallback(() => {
+    if (!activeSkipSegment) return;
+    skipDismissedRef.current[activeSkipSegment.kind] = true;
+    void send({ type: "SeekAbsolute", payload: activeSkipSegment.segment.end });
+  }, [activeSkipSegment, send]);
 
   const setSubtitlePref = useCallback(
     <K extends keyof PlayerSubtitlePrefs>(key: K, value: PlayerSubtitlePrefs[K]) => {
@@ -1497,7 +1841,7 @@ export function PlayerPage() {
       playerDebugLog(`transport: ${kind} invoke (UI paused=${paused} ended=${ended})`);
       const t0 = performance.now();
       if (kind === "resume") {
-        void invoke("player2_resume")
+        void p2resume()
           .then(() => {
             playerDebugLog(
               `transport: resume invoke_returned_ms=${Math.round(performance.now() - t0)} (enqueued; confirm via player2-event)`,
@@ -1519,7 +1863,7 @@ export function PlayerPage() {
         return;
       }
       try {
-        await invoke("player2_pause");
+        await p2pause();
         playerDebugLog(
           `transport: pause invoke_returned_ms=${Math.round(performance.now() - t0)} total_since_sent=${Math.round(performance.now() - t0)}`,
         );
@@ -1756,7 +2100,6 @@ export function PlayerPage() {
 
   const pct = duration > 0 ? Math.min(100, (timePos / duration) * 100) : 0;
   const remaining = Math.max(0, duration - timePos);
-  const nearEnd = duration > 60 && timePos > 0 && timePos >= duration * 0.92;
 
   const isExternalMode = isNativeBackendExternal(nativeState?.backend);
   // External session UX must remain on a single companion route/layout.
@@ -1784,7 +2127,7 @@ export function PlayerPage() {
         playerDebugLog(switchMsg);
         await flushProgressAndStop(state.historyId);
         if (isTauri()) {
-          await invoke("player2_close").catch((e) => logPlayer2InvokeFailure("player2_close", e));
+          await invoke(p2cmd("player2_close")).catch((e) => logPlayer2InvokeFailure("player2_close", e));
         }
         const { id: newId } = (await addHistory({
           filePath: ep.filePath,
@@ -1793,7 +2136,24 @@ export function PlayerPage() {
           mediaType: "Series",
           durationSeconds: 0,
         })) as { id: number };
-        const resolvedMsg = `episode_switch resolved newHistoryId=${newId} newKey=${toKey} title=${title}`;
+        // Resume from the trusted head of the most recent matching history row, so that
+        // jumping back to an already-watched episode picks up where it was stopped.
+        let resumeForTarget: number | undefined;
+        try {
+          const rows = (await getHistory(200, { includeSuppressed: true, lite: true })) as HistoryResumeFields[];
+          const norm = (p: string) => p.trim().replace(/\\/g, "/").toLowerCase();
+          const target = norm(ep.filePath);
+          let best = 0;
+          for (const row of rows) {
+            if (norm(row.filePath ?? "") !== target) continue;
+            const head = trustedResumeHeadFromRow(row);
+            if (head > best) best = head;
+          }
+          if (best > 10) resumeForTarget = best;
+        } catch {
+          /* resume lookup optional */
+        }
+        const resolvedMsg = `episode_switch resolved newHistoryId=${newId} newKey=${toKey} title=${title} resumeSeconds=${resumeForTarget ?? 0}`;
         console.info("[pitflix-player]", resolvedMsg);
         playerDebugLog(resolvedMsg);
         navigate("/player", {
@@ -1801,6 +2161,7 @@ export function PlayerPage() {
           state: {
             historyId: newId,
             filePath: ep.filePath,
+            resumeSeconds: resumeForTarget,
             title,
             posterPath: state.posterPath,
             mediaType: "Series",
@@ -1809,6 +2170,7 @@ export function PlayerPage() {
             libraryEpisodeId: ep.id,
             season: ep.season,
             episodeNumber: ep.episodeNumber,
+            seriesName: state.seriesName ?? state.title.split(" · ")[0],
             returnTo: pickReturnToAfterLibraryNavigation(
               state.returnTo,
               "Series",
@@ -1816,6 +2178,7 @@ export function PlayerPage() {
               state.libraryShowId,
               ep.season,
             ),
+            ...(state.useLibMpv ? { useLibMpv: true } : {}),
           },
         });
       } catch (err) {
@@ -1839,7 +2202,7 @@ export function PlayerPage() {
         playerDebugLog(switchMsg);
         await flushProgressAndStop(state.historyId);
         if (isTauri()) {
-          await invoke("player2_close").catch((e) => logPlayer2InvokeFailure("player2_close", e));
+          await invoke(p2cmd("player2_close")).catch((e) => logPlayer2InvokeFailure("player2_close", e));
         }
         const title = fileDisplayTitle(entry.name);
         const { id: newId } = (await addHistory({
@@ -1859,6 +2222,7 @@ export function PlayerPage() {
             mediaType: state.mediaType,
             durationSeconds: 0,
             returnTo: state.returnTo,
+            ...(state.useLibMpv ? { useLibMpv: true } : {}),
           },
         });
         if (!folderPlaylistPinned) {
@@ -2270,33 +2634,59 @@ export function PlayerPage() {
   }
 
   if (resumeChoice === "pending" && showResumePrompt) {
+    const resumeMmss = fmtTime(resumeSeconds ?? 0);
+    const watchedSec = resumeSeconds ?? 0;
+    const durSec = state.durationSeconds || 0;
+    const pctWatched = durSec > 0 ? Math.min(100, Math.round((watchedSec / durSec) * 100)) : null;
     return (
-      <div className="flex min-h-screen flex-col items-center justify-center gap-6 bg-pitflix-bg px-6">
-        <h1 className="text-xl font-semibold text-white">{state.title}</h1>
-        <p className="max-w-md text-center text-sm text-pitflix-muted">
-          You stopped at {Math.floor((resumeSeconds ?? 0) / 60)}m — resume or start from the beginning?
-        </p>
-        <div className="flex flex-wrap justify-center gap-3">
+      <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/85 px-6">
+        <div className="w-[min(640px,92vw)] rounded-2xl border border-white/10 bg-[#0f0f12]/95 p-8 shadow-2xl">
+          <p className="mb-2 text-[11px] font-semibold uppercase tracking-[0.18em] text-white/55">
+            Pick up where you left off
+          </p>
+          <h1 className="mb-2 text-3xl font-bold text-white">{state.title}</h1>
+          {pctWatched != null ? (
+            <>
+              <p className="mb-3 text-sm text-pitflix-muted">
+                {resumeMmss} of {fmtTime(durSec)} watched ({pctWatched}%).
+              </p>
+              <div className="mb-6 h-1.5 w-full overflow-hidden rounded-full bg-white/10">
+                <div
+                  className="h-full rounded-full bg-pitflix-primary"
+                  style={{ width: `${pctWatched}%` }}
+                />
+              </div>
+            </>
+          ) : (
+            <p className="mb-6 text-sm text-pitflix-muted">
+              You stopped at {resumeMmss}.
+            </p>
+          )}
+          <div className="flex flex-wrap items-center gap-3">
+            <button
+              type="button"
+              className="flex flex-1 items-center justify-center gap-2 rounded-full bg-gradient-to-r from-amber-300 to-orange-400 px-6 py-3 text-base font-semibold text-black shadow-lg transition-colors hover:from-amber-200 hover:to-orange-300"
+              onClick={() => setResumeChoice("resume")}
+              autoFocus
+            >
+              <Play className="h-4 w-4" fill="currentColor" />
+              Resume from {resumeMmss}
+            </button>
+            <button
+              type="button"
+              className="flex items-center justify-center gap-2 rounded-full border border-white/15 bg-white/[0.04] px-6 py-3 text-base font-semibold text-white transition-colors hover:bg-white/[0.08]"
+              onClick={() => setResumeChoice("fromStart")}
+            >
+              <RotateCcw className="h-4 w-4" />
+              Start Over
+            </button>
+          </div>
           <button
             type="button"
-            className="rounded-lg bg-pitflix-primary px-6 py-2.5 text-sm font-semibold text-white"
-            onClick={() => setResumeChoice("resume")}
-          >
-            Resume
-          </button>
-          <button
-            type="button"
-            className="rounded-lg border border-pitflix-card px-6 py-2.5 text-sm text-white"
-            onClick={() => setResumeChoice("fromStart")}
-          >
-            Start over
-          </button>
-          <button
-            type="button"
-            className="rounded-lg border border-white/20 px-4 py-2.5 text-sm text-pitflix-muted"
+            className="mx-auto mt-4 block text-[11px] text-pitflix-muted hover:text-white"
             onClick={() => navigateFromPlayer(navigate, state.returnTo, true)}
           >
-            Cancel
+            ✕ Cancel
           </button>
         </div>
       </div>
@@ -2327,7 +2717,7 @@ export function PlayerPage() {
       data-pitflix-native-backend={nativeState?.backend ?? ""}
       data-pitflix-pol-seq={String(polSeq)}
       data-pitflix-external-shell={String(isCompanionOnlyMode)}
-      className="flex min-h-screen flex-col bg-pitflix-bg outline-none"
+      className={`flex min-h-screen flex-col outline-none ${useLibMpv && !videoSettling ? "bg-transparent" : "bg-pitflix-bg"}`}
     >
       {/* External Player Mode: Cinematic companion layout */}
       {isCompanionOnlyMode ? (
@@ -2454,7 +2844,10 @@ export function PlayerPage() {
       ) : (
         /* Legacy Embedded Mode: Original full-screen video layout */
         <div 
-          className="relative w-full flex-1 min-h-[35vh]"
+          className={cn(
+            "relative w-full flex-1 min-h-[35vh]",
+            isFullscreen && !fsControlsVisible ? "cursor-none" : "cursor-default",
+          )}
           onPointerMove={() => onFullscreenPointerActivity()}
           onPointerDownCapture={() => onFullscreenPointerActivity()}
           onPointerDown={(e) => {
@@ -2473,26 +2866,34 @@ export function PlayerPage() {
               void onFullscreen();
             }}
           >
-            {loading ? (
-              <div className="pointer-events-none absolute inset-0 z-10 flex items-center justify-center bg-black/30">
-                <span className="text-sm text-pitflix-muted">Loading…</span>
+            {videoSettling ? (
+              <div className="pointer-events-none absolute inset-0 z-10 flex items-center justify-center bg-pitflix-bg">
+                {loading ? <span className="text-sm text-pitflix-muted">Loading…</span> : null}
               </div>
             ) : null}
             
-            {/* Episode Navigation Overlay - visible over the player */}
-            <EpisodeNavigationOverlay
-              prevEpisode={prevEp}
-              nextEpisode={nextEp}
-              onPrevious={playPrevious}
-              onNext={playNext}
-              visible={!isFullscreen || fsControlsVisible}
+            {/* Episode Navigation Overlay - hidden in libmpv mode (duplicates the bottom buttons). */}
+            {!useLibMpv && (
+              <EpisodeNavigationOverlay
+                prevEpisode={prevEp}
+                nextEpisode={nextEp}
+                onPrevious={playPrevious}
+                onNext={playNext}
+                visible={!isFullscreen || fsControlsVisible}
+              />
+            )}
+
+            <SkipSegmentOverlay
+              active={SKIP_OVERLAY_DISABLED ? null : activeSkipSegment}
+              onSkip={skipActiveSegment}
+              onDismiss={dismissActiveSkipSegment}
             />
           </div>
 
           {currentFolderForPlaylist && (folderPlaylistOpen || folderPlaylistPinned) ? (
             <aside
               className={cn(
-                "absolute bottom-0 right-0 top-0 z-[55] w-[min(22rem,85vw)] border-l border-white/10 bg-black/80 backdrop-blur-md",
+                "absolute bottom-0 right-0 top-0 z-[55] w-[min(26rem,90vw)] border-l border-white/10 bg-black/80 backdrop-blur-md",
                 !isFullscreen || fsControlsVisible ? "opacity-100" : "pointer-events-none opacity-0",
               )}
               aria-label="Folder playlist"
@@ -2551,23 +2952,12 @@ export function PlayerPage() {
                     {folderPlaylistEntries.map((e) => {
                       const active = e.path === state.filePath;
                       return (
-                        <button
+                        <PlaylistTile
                           key={e.path}
-                          type="button"
-                          disabled={active}
-                          onClick={() => void navigateToSiblingFile(e)}
-                          className={cn(
-                            "flex w-full items-center justify-between gap-2 rounded-lg border px-2.5 py-2 text-left text-xs transition-colors",
-                            active
-                              ? "border-pitflix-primary/60 bg-pitflix-primary/15 text-white"
-                              : "border-white/10 bg-white/5 text-white/90 hover:bg-white/10",
-                            "disabled:cursor-not-allowed disabled:opacity-60",
-                          )}
-                          title={e.path}
-                        >
-                          <span className="min-w-0 flex-1 truncate">{fileDisplayTitle(e.name)}</span>
-                          {active ? <span className="shrink-0 text-[10px] text-pitflix-light">Now</span> : null}
-                        </button>
+                          entry={e}
+                          active={active}
+                          onSelect={() => void navigateToSiblingFile(e)}
+                        />
                       );
                     })}
                   </div>
@@ -2578,6 +2968,7 @@ export function PlayerPage() {
 
           <header
             ref={playerHeaderChromeRef}
+            data-tauri-drag-region
             className={cn(
               "absolute left-0 right-0 top-0 z-40 flex items-center justify-between gap-3 border-b border-white/10 bg-black/90 px-3 py-2 backdrop-blur-md transition-opacity duration-300 ease-out",
               !isFullscreen || fsControlsVisible
@@ -2594,9 +2985,26 @@ export function PlayerPage() {
             >
               ← Close
             </button>
-            <div className="min-w-0 flex-1 text-center">
-              <p className="truncate text-sm font-semibold text-white">{state.title}</p>
-              <p className="truncate text-[11px] text-pitflix-muted">{ctxLabel}</p>
+            {/* Title area: drag-region for moving the window; small button on
+                the right opens the episode details popup. */}
+            <div
+              data-tauri-drag-region
+              className="min-w-0 flex-1 text-center"
+            >
+              <span
+                data-tauri-drag-region
+                className="block max-w-[60vw] truncate text-sm font-semibold text-white mx-auto"
+              >
+                {state.title}
+              </span>
+              <button
+                type="button"
+                onClick={() => setEpisodeInfoOpen(true)}
+                title="Episode details"
+                className="mx-auto mt-0.5 inline-flex h-4 items-center gap-1 rounded px-1.5 text-[9px] font-medium uppercase tracking-wide text-pitflix-muted transition-colors hover:bg-white/5 hover:text-pitflix-primary"
+              >
+                Details
+              </button>
             </div>
             <div className="flex w-[8.5rem] shrink-0 items-center justify-end gap-2">
               {currentFolderForPlaylist ? (
@@ -2615,16 +3023,29 @@ export function PlayerPage() {
                   List
                 </button>
               ) : null}
-              <span className="shrink-0 text-right text-[10px] text-pitflix-muted">
-                {getStatusInfo(playbackStatusMapped).label}
-              </span>
             </div>
           </header>
+
+          {/* Mini progress bar — only visible while the chrome is auto-hidden in fullscreen
+              so the user can still see how much of the video has played. */}
+          {isFullscreen && !fsControlsVisible && (
+            <div
+              className="pointer-events-none absolute bottom-0 left-0 right-0 z-40 h-1 bg-white/10"
+              aria-hidden
+            >
+              <div
+                className="h-full bg-pitflix-primary"
+                style={{
+                  width: `${Math.min(100, Math.max(0, uiDuration > 0 ? (uiTimePos / uiDuration) * 100 : 0))}%`,
+                }}
+              />
+            </div>
+          )}
 
           <div
             ref={playerFooterChromeRef}
             className={cn(
-              "absolute bottom-0 left-0 right-0 z-50 border-t border-white/10 bg-black/95 px-2 py-1.5 backdrop-blur-md transition-opacity duration-300 ease-out",
+              "absolute bottom-0 left-0 right-0 z-50 overflow-x-clip border-t border-white/10 bg-black/95 px-2 py-1.5 backdrop-blur-md transition-opacity duration-300 ease-out",
               !isFullscreen || fsControlsVisible
                 ? "opacity-100"
                 : "pointer-events-none opacity-0 [&_*]:pointer-events-none",
@@ -2632,36 +3053,110 @@ export function PlayerPage() {
             inert={!isFullscreen || fsControlsVisible ? undefined : true}
             aria-hidden={!isFullscreen || fsControlsVisible ? undefined : true}
           >
-          <div className="mx-auto w-full max-w-4xl space-y-1.5">
+          <div className="w-full space-y-1.5">
             <div className="flex items-center gap-2 text-[10px] tabular-nums text-pitflix-muted">
-              <span className="w-9 shrink-0">{fmtTime(timePos)}</span>
-              <input
-                type="range"
-                min={0}
-                max={100}
-                step={0.1}
-                value={pct}
-                disabled={sessionBlocksTransport || duration <= 0}
-                onPointerDown={() => {
-                  seekDraggingRef.current = true;
-                }}
-                onInput={(e) => {
-                  if (sessionBlocksTransport || duration <= 0) return;
-                  const v = Number(e.currentTarget.value);
-                  const t = (v / 100) * duration;
-                  setTimePos(t);
-                  void send({ type: "SeekAbsolute", payload: t });
-                }}
-                onChange={(e) => {
-                  if (sessionBlocksTransport || duration <= 0) return;
-                  const v = Number(e.currentTarget.value);
-                  const t = (v / 100) * duration;
-                  setTimePos(t);
-                  void send({ type: "SeekAbsolute", payload: t });
-                }}
-                className="h-1 flex-1 cursor-pointer accent-pitflix-primary disabled:cursor-not-allowed disabled:opacity-40"
-              />
-              <span className="w-9 shrink-0 text-right">-{fmtTime(remaining)}</span>
+              <span className="shrink-0 tabular-nums">{fmtTime(timePos)}</span>
+              <div className="relative flex flex-1 items-center">
+                <input
+                  type="range"
+                  min={0}
+                  max={100}
+                  step={0.1}
+                  value={pct}
+                  disabled={sessionBlocksTransport || duration <= 0}
+                  onPointerDown={() => {
+                    seekDraggingRef.current = true;
+                  }}
+                  onInput={(e) => {
+                    if (sessionBlocksTransport || duration <= 0) return;
+                    const v = Number(e.currentTarget.value);
+                    const t = (v / 100) * duration;
+                    setTimePos(t);
+                    void send({ type: "SeekAbsolute", payload: t });
+                  }}
+                  onChange={(e) => {
+                    if (sessionBlocksTransport || duration <= 0) return;
+                    const v = Number(e.currentTarget.value);
+                    const t = (v / 100) * duration;
+                    setTimePos(t);
+                    void send({ type: "SeekAbsolute", payload: t });
+                  }}
+                  onMouseMove={(e) => {
+                    if (!state?.filePath || duration <= 0) return;
+                    const rect = e.currentTarget.getBoundingClientRect();
+                    const x = Math.max(0, Math.min(rect.width, e.clientX - rect.left));
+                    const ratio = rect.width > 0 ? x / rect.width : 0;
+                    const seconds = ratio * duration;
+                    // When the bucket changes, keep the last frame on screen
+                    // (dimmed via `loading`) instead of flashing to a blank
+                    // box — the new frame crossfades in once it arrives.
+                    const bucket = Math.round(seconds / 10) * 10;
+                    setSeekHover((prev) => {
+                      const prevBucket = prev ? Math.round(prev.seconds / 10) * 10 : null;
+                      const keepImg = prevBucket === bucket;
+                      return {
+                        pixelX: x,
+                        seconds,
+                        dataUrl: prev?.dataUrl ?? null,
+                        loading: !keepImg,
+                      };
+                    });
+                    scheduleHoverThumb(state.filePath, seconds);
+                  }}
+                  onMouseLeave={() => {
+                    if (seekHoverDebounceRef.current) {
+                      clearTimeout(seekHoverDebounceRef.current);
+                      seekHoverDebounceRef.current = null;
+                    }
+                    setSeekHover(null);
+                  }}
+                  onWheel={(e) => {
+                    if (sessionBlocksTransport || duration <= 0) return;
+                    e.preventDefault();
+                    // Wheel up (negative deltaY) = forward; mirror typical YouTube/VLC.
+                    const step = e.deltaY < 0 ? 5 : -5;
+                    void send({ type: "SeekRelative", payload: step });
+                  }}
+                  className="h-1 w-full cursor-pointer accent-pitflix-primary disabled:cursor-not-allowed disabled:opacity-40"
+                />
+                {seekHover && (() => {
+                  // Clamp the tooltip so its 160px-wide box stays inside the seek
+                  // bar's bounding box — keeps the right edge of the bar from
+                  // pushing the preview off-screen (which used to introduce a
+                  // horizontal scrollbar on the controls strip).
+                  const TOOLTIP_HALF = 80;
+                  const rectW =
+                    typeof window !== "undefined"
+                      ? Math.max(0, Math.min(window.innerWidth, document.documentElement.clientWidth || 0))
+                      : 1920;
+                  // We don't have direct access to the slider rect here, so use the
+                  // viewport-relative `pixelX` plus a guard against window overflow.
+                  const left = Math.max(TOOLTIP_HALF, Math.min(rectW - TOOLTIP_HALF, seekHover.pixelX));
+                  return (
+                  <div
+                    className="pointer-events-none absolute -top-2 z-[70] flex -translate-x-1/2 -translate-y-full flex-col items-center transition-transform duration-150 ease-out"
+                    style={{ left: `${left}px` }}
+                  >
+                    <div className="relative h-[90px] w-[160px] overflow-hidden rounded border border-white/30 bg-black shadow-xl">
+                      {seekHover.dataUrl ? (
+                        <img
+                          key={seekHover.dataUrl}
+                          src={seekHover.dataUrl}
+                          alt=""
+                          className={`absolute inset-0 h-full w-full animate-fade-in object-cover transition-[filter,opacity] duration-150 ease-out ${
+                            seekHover.loading ? "opacity-60 blur-[1px]" : "opacity-100"
+                          }`}
+                        />
+                      ) : null}
+                    </div>
+                    <span className="mt-1 rounded bg-black/80 px-1.5 py-0.5 text-[10px] tabular-nums text-white transition-opacity duration-150">
+                      {fmtTime(seekHover.seconds)}
+                    </span>
+                  </div>
+                  );
+                })()}
+              </div>
+              <span className="shrink-0 tabular-nums text-right">-{fmtTime(remaining)}</span>
             </div>
 
             {transportError ? (
@@ -2703,53 +3198,58 @@ export function PlayerPage() {
                 </div>
               </div>
             ) : null}
-            <div className="flex flex-wrap items-center justify-center gap-1">
-              {state.libraryShowId && prevEp !== undefined ? (
+            <div className="flex items-center gap-1">
+              {/* Left spacer — keeps the transport buttons truly centered. */}
+              <div className="flex flex-1 items-center" />
+              {/* Center: previous / play-pause / next */}
+              <div className="flex items-center gap-1">
+                {state.libraryShowId && prevEp !== undefined ? (
+                  <button
+                    type="button"
+                    title="Previous episode"
+                    disabled={!prevEp}
+                    className="flex h-8 w-8 items-center justify-center rounded-md bg-white/10 text-white enabled:hover:bg-white/20 disabled:opacity-40"
+                    onClick={() => void playPrevious()}
+                  >
+                    <ChevronLeft className="h-4 w-4" strokeWidth={2} />
+                  </button>
+                ) : null}
                 <button
                   type="button"
-                  title="Previous episode"
-                  disabled={!prevEp}
-                  className="flex h-8 w-8 items-center justify-center rounded-md bg-white/10 text-white enabled:hover:bg-white/20 disabled:opacity-40"
-                  onClick={() => void playPrevious()}
+                  title={ended || sessionDead ? "Replay" : displayPaused ? "Play" : "Pause"}
+                  disabled={playbackTransportPending && !ended && !sessionDead}
+                  className="flex h-9 w-9 items-center justify-center rounded-full bg-pitflix-primary text-white shadow-lg hover:bg-pitflix-primary/90 disabled:opacity-50"
+                  onClick={() => void handlePrimaryTransport()}
                 >
-                  <ChevronLeft className="h-4 w-4" strokeWidth={2} />
+                  {ended || sessionDead ? (
+                    <Play className="ml-0.5 h-4 w-4" fill="currentColor" />
+                  ) : displayPaused ? (
+                    <Play className="ml-0.5 h-4 w-4" fill="currentColor" />
+                  ) : (
+                    <PauseIcon className="h-4 w-4" fill="currentColor" />
+                  )}
                 </button>
-              ) : null}
-              <button
-                type="button"
-                title={ended || sessionDead ? "Replay" : displayPaused ? "Play" : "Pause"}
-                disabled={playbackTransportPending && !ended && !sessionDead}
-                className="flex h-9 w-9 items-center justify-center rounded-full bg-pitflix-primary text-white shadow-lg hover:bg-pitflix-primary/90 disabled:opacity-50"
-                onClick={() => void handlePrimaryTransport()}
-              >
-                {ended || sessionDead ? (
-                  <Play className="ml-0.5 h-4 w-4" fill="currentColor" />
-                ) : displayPaused ? (
-                  <Play className="ml-0.5 h-4 w-4" fill="currentColor" />
-                ) : (
-                  <PauseIcon className="h-4 w-4" fill="currentColor" />
-                )}
-              </button>
-              {state.libraryShowId && nextEp !== undefined ? (
-                <button
-                  type="button"
-                  title="Next episode"
-                  disabled={!nextEp}
-                  className="flex h-8 w-8 items-center justify-center rounded-md bg-white/10 text-white enabled:hover:bg-white/20 disabled:opacity-40"
-                  onClick={() => void playNext()}
-                >
-                  <ChevronRight className="h-4 w-4" strokeWidth={2} />
-                </button>
-              ) : null}
-
+                {state.libraryShowId && nextEp !== undefined ? (
+                  <button
+                    type="button"
+                    title="Next episode"
+                    disabled={!nextEp}
+                    className="flex h-8 w-8 items-center justify-center rounded-md bg-white/10 text-white enabled:hover:bg-white/20 disabled:opacity-40"
+                    onClick={() => void playNext()}
+                  >
+                    <ChevronRight className="h-4 w-4" strokeWidth={2} />
+                  </button>
+                ) : null}
+              </div>
+              {/* Right: subtitles / volume / sub delay / sub position / fullscreen */}
+              <div className="flex flex-1 items-center justify-end gap-1">
 
               <details className="group relative">
                 <summary
-                  className="flex cursor-pointer list-none flex-col items-center gap-0.5 marker:content-none outline-none [&::-webkit-details-marker]:hidden"
+                  className="flex cursor-pointer list-none items-center marker:content-none outline-none [&::-webkit-details-marker]:hidden"
                   title="Subtitles"
                   onClick={() => onFullscreenPointerActivity()}
                 >
-                  <span className="select-none text-[10px] font-medium leading-none text-sky-100/95">Subtitles</span>
                   <span className="relative inline-flex h-9 w-9 items-center justify-center rounded-lg bg-[#c4b5fd]/40 text-white shadow-[inset_0_1px_0_rgba(255,255,255,0.14)] ring-1 ring-white/25">
                     <Captions className={`h-4 w-4 ${subVisible ? "text-white" : "text-white/75"}`} strokeWidth={2} />
                     {subTracks.length + externalSubFiles.length > 0 ? (
@@ -2761,8 +3261,37 @@ export function PlayerPage() {
                     ) : null}
                   </span>
                 </summary>
-                <div className="absolute bottom-0 left-1/2 z-[60] min-w-[240px] -translate-x-1/2 rounded-lg border border-white/10 bg-black/95 p-2 shadow-xl backdrop-blur">
-                  <label className="mb-2 flex cursor-pointer items-center gap-2 text-[10px] text-pitflix-muted">
+                <div className="absolute bottom-full mb-2 left-1/2 z-[60] max-h-[70vh] min-w-[260px] -translate-x-1/2 overflow-y-auto rounded-lg border border-white/10 bg-black/95 p-2 shadow-xl backdrop-blur">
+                  <div className="absolute right-1 top-1 flex items-center gap-1">
+                    <button
+                      type="button"
+                      aria-label="Subtitle appearance"
+                      title="Subtitle appearance"
+                      className={cn(
+                        "flex h-6 w-6 items-center justify-center rounded hover:bg-white/10 hover:text-white",
+                        subAppearanceOpen ? "bg-white/15 text-white" : "text-pitflix-muted",
+                      )}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setSubAppearanceOpen((v) => !v);
+                      }}
+                    >
+                      <SlidersHorizontal className="h-3 w-3" />
+                    </button>
+                    <button
+                      type="button"
+                      aria-label="Close subtitles panel"
+                      className="flex h-6 w-6 items-center justify-center rounded text-pitflix-muted hover:bg-white/10 hover:text-white"
+                      onClick={(e) => {
+                        const details = (e.currentTarget.closest("details") as HTMLDetailsElement | null);
+                        if (details) details.open = false;
+                        setSubAppearanceOpen(false);
+                      }}
+                    >
+                      ✕
+                    </button>
+                  </div>
+                  <label className="mb-2 flex cursor-pointer items-center gap-2 pr-14 text-[10px] text-pitflix-muted">
                     <input
                       type="checkbox"
                       className="rounded border-white/20"
@@ -2810,6 +3339,7 @@ export function PlayerPage() {
                       })}
                     </select>
                   </label>
+                    {subAppearanceOpen ? (
                     <div className="mt-2 space-y-2 border-t border-white/10 pt-2">
                     <p className="text-[9px] uppercase tracking-wide text-pitflix-muted">Appearance (live)</p>
                     <button
@@ -2962,40 +3492,51 @@ export function PlayerPage() {
                       Reset subtitle appearance
                     </button>
                   </div>
+                  ) : null}
                 </div>
               </details>
 
-              <button
-                type="button"
-                title={mute ? "Unmute" : "Mute"}
-                className="flex h-8 w-8 items-center justify-center rounded-md bg-white/10 text-white hover:bg-white/20 disabled:opacity-40"
-                disabled={sessionBlocksTransport}
-                onClick={() => toggleMute()}
-              >
-                {mute ? <VolumeX className="h-4 w-4" /> : <Volume2 className="h-4 w-4" />}
-              </button>
-              <div
-                ref={volumeWheelRef}
-                className="flex min-w-[100px] max-w-[160px] flex-1 items-center gap-1.5 px-1"
-                title="Volume — scroll to adjust"
-              >
-                <input
-                  type="range"
-                  min={0}
-                  max={200}
-                  step={1}
-                  value={Math.round(volume)}
-                  disabled={sessionBlocksTransport}
-                  onPointerDown={() => {
-                    volumeDraggingRef.current = true;
-                  }}
-                  onInput={(e) => setVolumePct(Number(e.currentTarget.value))}
-                  onChange={(e) => setVolumePct(Number(e.currentTarget.value))}
-                  className="h-1.5 w-full cursor-pointer accent-pitflix-primary disabled:opacity-40"
-                />
-              </div>
+              {/* Volume — icon button (click = toggle mute) with a slider popup
+                  (click the volume number to open). Mouse-wheel still scrubs. */}
+              <details className="group relative">
+                <summary
+                  ref={volumeWheelRef}
+                  className="flex h-8 w-8 cursor-pointer list-none items-center justify-center rounded-md bg-white/10 text-white marker:content-none hover:bg-white/20 [&::-webkit-details-marker]:hidden"
+                  title={`Volume ${Math.round(volume)} — scroll to adjust`}
+                  onClick={() => onFullscreenPointerActivity()}
+                >
+                  {mute ? <VolumeX className="h-4 w-4" /> : <Volume2 className="h-4 w-4" />}
+                </summary>
+                <div className="absolute bottom-full mb-2 right-0 z-[60] flex items-center gap-2 rounded-lg border border-white/10 bg-black/95 p-2 shadow-xl backdrop-blur">
+                  <button
+                    type="button"
+                    title={mute ? "Unmute" : "Mute"}
+                    className="flex h-7 w-7 items-center justify-center rounded text-white hover:bg-white/15"
+                    onClick={() => toggleMute()}
+                  >
+                    {mute ? <VolumeX className="h-3.5 w-3.5" /> : <Volume2 className="h-3.5 w-3.5" />}
+                  </button>
+                  <input
+                    type="range"
+                    min={0}
+                    max={200}
+                    step={1}
+                    value={Math.round(volume)}
+                    disabled={sessionBlocksTransport}
+                    onPointerDown={() => {
+                      volumeDraggingRef.current = true;
+                    }}
+                    onInput={(e) => setVolumePct(Number(e.currentTarget.value))}
+                    onChange={(e) => setVolumePct(Number(e.currentTarget.value))}
+                    className="h-1.5 w-40 cursor-pointer accent-pitflix-primary disabled:opacity-40"
+                  />
+                  <span className="min-w-[2.5rem] select-none text-center text-[10px] tabular-nums text-pitflix-muted">
+                    {Math.round(volume)}
+                  </span>
+                </div>
+              </details>
 
-              {import.meta.env.DEV && embedReady ? (
+              {import.meta.env.DEV && embedReady && !useLibMpv ? (
                 <details className="group relative">
                   <summary
                     className="flex h-8 cursor-pointer list-none items-center justify-center rounded-md bg-white/10 px-2 text-white marker:content-none hover:bg-white/20 [&::-webkit-details-marker]:hidden"
@@ -3004,7 +3545,7 @@ export function PlayerPage() {
                   >
                     <span className="text-[10px] font-semibold tracking-wide text-white/90">IPC</span>
                   </summary>
-                  <div className="absolute bottom-0 left-1/2 z-[60] min-w-[220px] -translate-x-1/2 rounded-lg border border-white/10 bg-black/95 p-2 shadow-xl backdrop-blur">
+                  <div className="absolute bottom-full mb-2 left-1/2 z-[60] max-h-[70vh] min-w-[220px] -translate-x-1/2 overflow-y-auto rounded-lg border border-white/10 bg-black/95 p-2 shadow-xl backdrop-blur">
                     <p className="mb-2 text-[10px] text-pitflix-muted">
                       Diagnostics: prove commands reach the live mpv IPC session.
                     </p>
@@ -3202,7 +3743,7 @@ export function PlayerPage() {
                 >
                   <ListMusic className="h-4 w-4" />
                 </summary>
-                <div className="absolute bottom-0 right-0 z-[60] min-w-[220px] rounded-lg border border-white/10 bg-black/95 p-2 shadow-xl backdrop-blur">
+                <div className="absolute bottom-full mb-2 right-0 z-[60] max-h-[70vh] min-w-[220px] overflow-y-auto rounded-lg border border-white/10 bg-black/95 p-2 shadow-xl backdrop-blur">
                   <label className="block text-[9px] uppercase tracking-wide text-pitflix-muted">
                     Audio
                     <select
@@ -3225,32 +3766,83 @@ export function PlayerPage() {
                 </div>
               </details>
 
-              <div className="flex items-center gap-0.5 rounded-md bg-white/5 px-1 py-0.5">
-                <button
-                  type="button"
-                  title="Subtitle delay −0.5s"
-                  disabled={sessionBlocksTransport}
-                  className="flex h-7 w-7 items-center justify-center rounded text-white hover:bg-white/15 disabled:opacity-40"
-                  onClick={() => void send({ type: "AddSubDelay", payload: -0.5 })}
+              {/* Subtitle delay — single icon button, +/- inside the popup. */}
+              <details className="group relative">
+                <summary
+                  className="flex h-8 w-8 cursor-pointer list-none items-center justify-center rounded-md bg-white/10 text-white marker:content-none hover:bg-white/20 [&::-webkit-details-marker]:hidden"
+                  title={`Subtitle delay (${fmtSubDelayLabel(subDelay)})`}
+                  onClick={() => onFullscreenPointerActivity()}
                 >
-                  <Minus className="h-3.5 w-3.5" />
-                </button>
-                <span
-                  className="min-w-[7.5rem] select-none text-center text-[10px] tabular-nums text-pitflix-muted"
-                  title="Subtitle delay"
+                  <Clock className="h-4 w-4" />
+                </summary>
+                <div className="absolute bottom-full mb-2 left-1/2 z-[60] flex -translate-x-1/2 items-center gap-1 rounded-lg border border-white/10 bg-black/95 p-1.5 shadow-xl backdrop-blur">
+                  <button
+                    type="button"
+                    title="−0.5s"
+                    disabled={sessionBlocksTransport}
+                    className="flex h-7 w-7 items-center justify-center rounded text-white hover:bg-white/15 disabled:opacity-40"
+                    onClick={() => void send({ type: "AddSubDelay", payload: -0.5 })}
+                  >
+                    <Minus className="h-3.5 w-3.5" />
+                  </button>
+                  <span className="min-w-[5.5rem] select-none text-center text-[10px] tabular-nums text-pitflix-muted">
+                    {fmtSubDelayLabel(subDelay)}
+                  </span>
+                  <button
+                    type="button"
+                    title="+0.5s"
+                    disabled={sessionBlocksTransport}
+                    className="flex h-7 w-7 items-center justify-center rounded text-white hover:bg-white/15 disabled:opacity-40"
+                    onClick={() => void send({ type: "AddSubDelay", payload: 0.5 })}
+                  >
+                    <Plus className="h-3.5 w-3.5" />
+                  </button>
+                </div>
+              </details>
+
+              {/* Subtitle vertical position — single icon button, ⇧/⇩ inside. */}
+              <details className="group relative">
+                <summary
+                  className="flex h-8 w-8 cursor-pointer list-none items-center justify-center rounded-md bg-white/10 text-white marker:content-none hover:bg-white/20 [&::-webkit-details-marker]:hidden"
+                  title={`Subtitle vertical position (${Math.round(subtitlePrefs.position)})`}
+                  onClick={() => onFullscreenPointerActivity()}
                 >
-                  {fmtSubDelayLabel(subDelay)}
-                </span>
-                <button
-                  type="button"
-                  title="Subtitle delay +0.5s"
-                  disabled={sessionBlocksTransport}
-                  className="flex h-7 w-7 items-center justify-center rounded text-white hover:bg-white/15 disabled:opacity-40"
-                  onClick={() => void send({ type: "AddSubDelay", payload: 0.5 })}
-                >
-                  <Plus className="h-3.5 w-3.5" />
-                </button>
-              </div>
+                  <ArrowUpDown className="h-4 w-4" />
+                </summary>
+                <div className="absolute bottom-full mb-2 left-1/2 z-[60] flex -translate-x-1/2 items-center gap-1 rounded-lg border border-white/10 bg-black/95 p-1.5 shadow-xl backdrop-blur">
+                  <button
+                    type="button"
+                    title="Up"
+                    disabled={sessionBlocksTransport}
+                    className="flex h-7 w-7 items-center justify-center rounded text-white hover:bg-white/15 disabled:opacity-40"
+                    onClick={() =>
+                      setSubtitlePref(
+                        "position",
+                        Math.max(0, Math.min(100, subtitlePrefs.position - 2)),
+                      )
+                    }
+                  >
+                    <ChevronUp className="h-3.5 w-3.5" />
+                  </button>
+                  <span className="min-w-[2.5rem] select-none text-center text-[10px] tabular-nums text-pitflix-muted">
+                    {Math.round(subtitlePrefs.position)}
+                  </span>
+                  <button
+                    type="button"
+                    title="Down"
+                    disabled={sessionBlocksTransport}
+                    className="flex h-7 w-7 items-center justify-center rounded text-white hover:bg-white/15 disabled:opacity-40"
+                    onClick={() =>
+                      setSubtitlePref(
+                        "position",
+                        Math.max(0, Math.min(100, subtitlePrefs.position + 2)),
+                      )
+                    }
+                  >
+                    <ChevronDown className="h-3.5 w-3.5" />
+                  </button>
+                </div>
+              </details>
 
               <button
                 type="button"
@@ -3263,41 +3855,112 @@ export function PlayerPage() {
               >
                 {isFullscreen ? <Minimize2 className="h-4 w-4" /> : <Maximize2 className="h-4 w-4" />}
               </button>
+              </div>{/* end right group */}
             </div>
 
-            <p className="text-center text-[9px] text-pitflix-muted/90">
-              Space · ← → seek · F fullscreen · M mute · S subs visibility · Shift+N / Shift+P episodes · Esc
-            </p>
           </div>
         </div>
         </div>
       )}
 
-      {/* Next Episode Prompt */}
-      {embedReady && nearEnd && nextEp ? (
-        <div className="pointer-events-none fixed inset-0 z-[60] flex items-center justify-center bg-black/50 p-6">
-          <div className="pointer-events-auto max-w-md rounded-2xl border border-white/15 bg-pitflix-card/95 p-5 text-center shadow-2xl backdrop-blur">
-            <p className="text-sm font-medium text-white">Almost finished</p>
-            <p className="mt-2 text-xs text-pitflix-muted">
-              Up next: S{nextEp.season}E{nextEp.episodeNumber}
-              {nextEp.title ? ` — ${nextEp.title}` : ""}
-            </p>
-            <div className="mt-4 flex flex-wrap justify-center gap-2">
+      {/* Episode info popup — opens when the user clicks the title in the header. */}
+      {episodeInfoOpen && state ? (
+        <div
+          className="fixed inset-0 z-[70] flex items-center justify-center bg-black/80 p-6"
+          onClick={() => setEpisodeInfoOpen(false)}
+        >
+          <div
+            className="w-[min(560px,92vw)] rounded-2xl border border-white/10 bg-[#0f0f12]/95 p-6 shadow-2xl"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-start justify-between gap-4">
+              <div className="min-w-0">
+                <p className="mb-1 text-[10px] font-semibold uppercase tracking-[0.18em] text-white/55">
+                  {state.mediaType || "Now playing"}
+                </p>
+                {(() => {
+                  // Prefer the explicit launch-state seriesName; fall back to the
+                  // parent folder of the file (e.g. "The Pitt" from `…\The Pitt\…`).
+                  const explicit = state.seriesName?.trim();
+                  const dir = parentDirectory(state.filePath);
+                  const fromDir = dir
+                    ? dir.split(/[\\/]/).filter(Boolean).pop() ?? ""
+                    : "";
+                  const seriesName = explicit || fromDir;
+                  return seriesName ? (
+                    <p className="mb-0.5 text-[13px] font-semibold uppercase tracking-wide text-pitflix-primary">
+                      {seriesName}
+                    </p>
+                  ) : null;
+                })()}
+                <h2 className="text-xl font-bold text-white">{state.title}</h2>
+                {state.season != null && state.episodeNumber != null ? (
+                  <p className="mt-1 text-sm text-pitflix-muted">
+                    Season {state.season} · Episode {state.episodeNumber}
+                  </p>
+                ) : null}
+              </div>
               <button
                 type="button"
-                className="rounded-lg bg-pitflix-primary px-4 py-2 text-sm font-semibold text-white"
-                onClick={() => void playNext()}
+                aria-label="Close"
+                className="flex h-7 w-7 shrink-0 items-center justify-center rounded text-pitflix-muted hover:bg-white/10 hover:text-white"
+                onClick={() => setEpisodeInfoOpen(false)}
               >
-                Play next
+                ✕
               </button>
-              <button
-                type="button"
-                className="rounded-lg border border-white/20 px-4 py-2 text-sm text-white"
-                disabled={playbackTransportPending && !ended && !sessionDead}
-                onClick={() => void handlePrimaryTransport()}
-              >
-                {ended || sessionDead ? "Play" : displayPaused ? "Resume" : "Pause"}
-              </button>
+            </div>
+            <dl className="mt-5 grid grid-cols-[120px_1fr] gap-x-3 gap-y-2 text-[12px]">
+              {state.durationSeconds > 0 ? (
+                <>
+                  <dt className="text-pitflix-muted">Duration</dt>
+                  <dd className="text-white">{fmtTime(state.durationSeconds)}</dd>
+                </>
+              ) : null}
+              {duration > 0 ? (
+                <>
+                  <dt className="text-pitflix-muted">Position</dt>
+                  <dd className="text-white">
+                    {fmtTime(timePos)} / {fmtTime(duration)}
+                  </dd>
+                </>
+              ) : null}
+              <dt className="text-pitflix-muted">File</dt>
+              <dd className="break-all text-white/85">{state.filePath}</dd>
+            </dl>
+            <div className="mt-5 border-t border-white/10 pt-4">
+              <p className="mb-2 text-[10px] font-semibold uppercase tracking-[0.18em] text-white/55">
+                Shortcuts
+              </p>
+              <div className="grid grid-cols-2 gap-x-4 gap-y-1.5 text-[11px] text-pitflix-muted">
+                <div className="flex items-center justify-between">
+                  <span>Play / Pause</span>
+                  <kbd className="rounded bg-white/10 px-1.5 py-0.5 text-[10px] text-white">Space</kbd>
+                </div>
+                <div className="flex items-center justify-between">
+                  <span>Seek ±5s</span>
+                  <kbd className="rounded bg-white/10 px-1.5 py-0.5 text-[10px] text-white">← →</kbd>
+                </div>
+                <div className="flex items-center justify-between">
+                  <span>Fullscreen</span>
+                  <kbd className="rounded bg-white/10 px-1.5 py-0.5 text-[10px] text-white">F</kbd>
+                </div>
+                <div className="flex items-center justify-between">
+                  <span>Mute</span>
+                  <kbd className="rounded bg-white/10 px-1.5 py-0.5 text-[10px] text-white">M</kbd>
+                </div>
+                <div className="flex items-center justify-between">
+                  <span>Subtitles visibility</span>
+                  <kbd className="rounded bg-white/10 px-1.5 py-0.5 text-[10px] text-white">S</kbd>
+                </div>
+                <div className="flex items-center justify-between">
+                  <span>Next / Prev episode</span>
+                  <kbd className="rounded bg-white/10 px-1.5 py-0.5 text-[10px] text-white">⇧N / ⇧P</kbd>
+                </div>
+                <div className="flex items-center justify-between">
+                  <span>Exit fullscreen / close</span>
+                  <kbd className="rounded bg-white/10 px-1.5 py-0.5 text-[10px] text-white">Esc</kbd>
+                </div>
+              </div>
             </div>
           </div>
         </div>

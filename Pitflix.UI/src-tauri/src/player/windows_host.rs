@@ -1,4 +1,4 @@
-//! Windows player: **single main window** — native video `HWND` is a **child** of the Tauri main window.
+﻿//! Windows player: **single main window** â€” native video `HWND` is a **child** of the Tauri main window.
 //! React owns all controls; **external `mpv.exe`** embeds via `--wid` and JSON IPC (in-process libmpv disabled).
 
 use std::{
@@ -8,7 +8,7 @@ use std::{
   process::{Child, Command, Stdio},
   sync::{
     atomic::{AtomicBool, AtomicU64, Ordering},
-    mpsc, Arc, Mutex, Once,
+    mpsc, Arc, Mutex,
   },
   thread,
   time::{Duration, Instant},
@@ -19,29 +19,29 @@ use serde::Serialize;
 use tauri::{AppHandle, Emitter, Manager};
 
 use windows::Win32::{
-  Foundation::{HWND, LPARAM, LRESULT, POINT, RECT, WPARAM},
+  Foundation::{HWND, LPARAM, POINT, RECT, WPARAM},
   Graphics::Gdi::{InvalidateRect, MapWindowPoints},
   System::Threading::{OpenProcess, GetExitCodeProcess, PROCESS_QUERY_LIMITED_INFORMATION},
-  System::LibraryLoader::GetModuleHandleW,
+
   UI::HiDpi::GetDpiForWindow,
-  UI::Input::KeyboardAndMouse::GetAsyncKeyState,
   UI::WindowsAndMessaging::{
-    CreateWindowExW, DefWindowProcW, DestroyWindow, EnumChildWindows, GetClassNameW, GetClientRect,
-    GetCursorPos, GetParent, GetWindow, GetWindowLongPtrW, GetWindowRect, RegisterClassW,
-    SetParent, SetWindowLongPtrW, SetWindowPos, ShowWindow, PostMessageW, CS_OWNDC, GW_CHILD,
-    GW_HWNDNEXT, GWL_EXSTYLE, GWL_STYLE, HTTRANSPARENT, HWND_BOTTOM, HWND_TOP, IsWindow,
-    MA_NOACTIVATE, SWP_NOACTIVATE, SWP_SHOWWINDOW, WM_MOUSEACTIVATE, WM_NCHITTEST, WNDCLASSW,
-    WS_CHILD, WS_DISABLED, WS_EX_NOACTIVATE, WS_EX_TRANSPARENT, WS_VISIBLE,
+    DestroyWindow, EnumChildWindows, GetClassNameW,
+    GetParent, GetWindow, GetWindowLongPtrW, GetWindowRect,
+    SetWindowLongPtrW, SetWindowPos, PostMessageW, GW_CHILD,
+    GW_HWNDNEXT, GWL_EXSTYLE, GWL_STYLE, HWND_TOP,
+    IsWindow, SWP_ASYNCWINDOWPOS, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE,
+    SWP_NOZORDER, SWP_SHOWWINDOW,
+    WS_DISABLED, WS_EX_NOACTIVATE, WS_EX_TRANSPARENT,
   },
 };
-use windows::core::{w, BOOL};
+use windows::core::BOOL;
 
 use super::commands::{PlayerCommand, PlayerOpen};
 use super::events::{PauseIpcVerifySnapshot, Player2NativeState, PlayerEvent, PlayerState, PlayerTrack, PlayerTracks};
 use super::playback_orchestrator;
-use super::mpv_gl_win::{render_health_snapshot, WM_MPV_RENDER};
+/// Posted to the video HWND when mpv requests a new frame â€” mirrors the constant in the old mpv_gl_win module.
+const WM_MPV_RENDER: u32 = windows::Win32::UI::WindowsAndMessaging::WM_USER + 101;
 use super::tauri_commands::append_player_debug_log;
-use super::windows_libmpv_host::{self, EmbeddedLibMpvSession};
 
 pub struct WindowsPlayerHost {
   app: AppHandle,
@@ -52,20 +52,19 @@ pub struct WindowsPlayerHost {
 
 enum BackendSession {
   External(MpvSession),
-  LibMpv(EmbeddedLibMpvSession),
 }
 
 struct Session {
   session_id: u64,
   video_hwnd: usize,
-  /// Tauri main window — mpv may create HWNDs as **siblings** of the video child; we enumerate this.
+  /// Tauri main window â€” mpv may create HWNDs as **siblings** of the video child; we enumerate this.
   parent_hwnd: usize,
   /// Diagnostic flag: keep `--wid` embedding but skip non-essential window choreography (esp. restack/refresh around pause/resume).
   embedded_safe_mode: bool,
   /// Diagnostic flag: **minimal** embedded `--wid` mode. After launch, avoid *all* non-essential Win32 window ops
   /// (no overlay refresh, no focus juggling, no bounds updates).
   embedded_minimal_mode: bool,
-  /// Last `player2_open` payload — used to recreate external mpv after IPC failure.
+  /// Last `player2_open` payload â€” used to recreate external mpv after IPC failure.
   last_open: PlayerOpen,
   backend: BackendSession,
   state: Arc<Mutex<PlayerState>>,
@@ -89,6 +88,7 @@ pub struct MpvExitReport {
   pub media_path: String,
   pub last_action: String,
   pub time_pos: f64,
+  pub duration: f64,
   pub close_reason: Option<String>,
   pub exe: String,
   pub args: Vec<String>,
@@ -103,9 +103,9 @@ fn backend_label() -> &'static str {
 
 static NEXT_PLAYER_SESSION_ID: AtomicU64 = AtomicU64::new(1);
 
-/// Correlated `request_id` for pause/resume verification — must not overlap `observe_property` ids (1–10).
+/// Correlated `request_id` for pause/resume verification â€” must not overlap `observe_property` ids (1â€“10).
 const IPC_CORRELATED_REQ_ID_START: u64 = 1_000_000;
-/// `get_property time-pos` poll replies (detached / external mode only) — must not overlap observe ids or pause verify ids.
+/// `get_property time-pos` poll replies (detached / external mode only) â€” must not overlap observe ids or pause verify ids.
 const MPV_EXTERNAL_TIME_POLL_REQ_BASE: u64 = 5_000_000;
 
 static EXTERNAL_TIME_POS_POLL_SEQ: AtomicU64 = AtomicU64::new(0);
@@ -235,9 +235,7 @@ impl WindowsPlayerHost {
     let Some(s) = g.as_ref() else {
       return false;
     };
-    let BackendSession::External(backend) = &s.backend else {
-      return false;
-    };
+    let BackendSession::External(backend) = &s.backend;
     // Only suppress re-open when the current external transport/process is healthy.
     if backend.ipc_dead.load(Ordering::SeqCst) || backend.ipc_unrecoverable.load(Ordering::SeqCst) {
       return false;
@@ -273,21 +271,12 @@ impl WindowsPlayerHost {
   }
 
   pub fn open(&self, payload: PlayerOpen) -> Result<(), String> {
-    if self.is_redundant_external_open(&payload) {
-      let msg = format!(
-        "[open-guard] skipping redundant external open for path={}",
-        payload.path
-      );
-      eprintln!("{msg}");
-      append_player_debug_log(Some(&self.app), &msg);
-      return Ok(());
-    }
     self.close_with_reason("open");
     append_player_debug_log(
       Some(&self.app),
-      "[playback-mode] player2_open route=DETACHED function=WindowsPlayerHost::open -> open_detached_impl",
+      "[playback-mode] player2_open route=EXTERNAL",
     );
-    self.open_detached_impl(payload, false)
+    self.open_detached_impl(payload, false, 0)
   }
 
   pub fn open_no_config(&self, payload: PlayerOpen) -> Result<(), String> {
@@ -296,372 +285,25 @@ impl WindowsPlayerHost {
       Some(&self.app),
       "[playback-mode] player2_open_no_config route=DETACHED function=WindowsPlayerHost::open_no_config -> open_detached_impl",
     );
-    self.open_detached_impl(payload, true)
+    self.open_detached_impl(payload, true, 0)
   }
 
   /// Diagnostic: spawn mpv as a normal detached window (no `--wid` embedding).
   pub fn open_detached_no_wid(&self, payload: PlayerOpen) -> Result<(), String> {
     self.close_with_reason("open_detached_no_wid");
-    self.open_detached_impl(payload, true)
+    self.open_detached_impl(payload, true, 0)
   }
 
   /// Supported fallback: spawn mpv as a normal detached window (no `--wid` embedding), using user config.
   pub fn open_detached(&self, payload: PlayerOpen) -> Result<(), String> {
     self.close_with_reason("open_detached");
-    self.open_detached_impl(payload, false)
+    self.open_detached_impl(payload, false, 0)
   }
 
-  /// Diagnostic: minimal embedded `--wid` mode; after launch do not touch window stacking/bounds/focus.
-  pub fn open_embedded_minimal_no_config(&self, payload: PlayerOpen) -> Result<(), String> {
-    self.close_with_reason("open_embedded_minimal_no_config");
-    self.open_embedded_minimal_impl(payload, true)
-  }
 
-  fn open_impl(&self, payload: PlayerOpen, no_config: bool) -> Result<(), String> {
-    log_embedded_path_entered_once(&self.app, "WindowsPlayerHost::open_impl");
 
-    let Some(exe) = find_mpv_exe(&self.app) else {
-      return Err("Bundled mpv not found. Run npm run bundle:prepare.".to_string());
-    };
 
-    let main_win = self
-      .app
-      .get_webview_window("main")
-      .ok_or("Main window not found")?;
-    let parent_hwnd: HWND = main_win.hwnd().map_err(|e| e.to_string())?;
-
-    let video_hwnd = create_embed_video_child(parent_hwnd)?;
-
-    let state = Arc::new(Mutex::new(PlayerState {
-      loading: true,
-      ipc_healthy: true,
-      sub_visible: true,
-      sid: -1,
-      aid: -1,
-      ..Default::default()
-    }));
-
-    let passthrough_stop = Arc::new(AtomicBool::new(false));
-
-    let pause_verify = Arc::new(Mutex::new(PauseIpcVerifySnapshot::default()));
-    let last_action = Arc::new(Mutex::new("open".to_string()));
-    let close_reason = Arc::new(Mutex::new(None));
-
-    let session_id = NEXT_PLAYER_SESSION_ID.fetch_add(1, Ordering::SeqCst);
-    let embedded_safe_mode = self.embedded_safe_mode.load(Ordering::SeqCst);
-    let (backend, reader) = spawn_mpv_embedded(
-      self.app.clone(),
-      session_id,
-      Arc::clone(&state),
-      Arc::clone(&last_action),
-      Arc::clone(&close_reason),
-      Arc::clone(&self.last_mpv_exit_report),
-      &exe,
-      video_hwnd.0 as usize,
-      &payload,
-      no_config,
-      false,
-    )?;
-
-    unsafe {
-      embed_op_log(
-        Some(&self.app),
-        "SetWindowPos(video_hwnd)",
-        "before",
-        session_id,
-        parent_hwnd.0 as usize,
-        video_hwnd.0 as usize,
-      );
-      let _ = SetWindowPos(
-        video_hwnd,
-        Some(HWND_TOP),
-        0,
-        0,
-        0,
-        0,
-        windows::Win32::UI::WindowsAndMessaging::SWP_NOMOVE
-          | windows::Win32::UI::WindowsAndMessaging::SWP_NOSIZE
-          | SWP_NOACTIVATE,
-      );
-      embed_op_log(
-        Some(&self.app),
-        "SetWindowPos(video_hwnd)",
-        "after",
-        session_id,
-        parent_hwnd.0 as usize,
-        video_hwnd.0 as usize,
-      );
-    }
-
-    let app_clone = self.app.clone();
-    let state_clone = Arc::clone(&state);
-    let v = video_hwnd.0 as usize;
-    let ipc_pending_in = Arc::clone(&backend.ipc_pending);
-    let pause_verify_in = Arc::clone(&pause_verify);
-    let pipe_for_read = backend.ipc_client_path.clone();
-    let pid_for_read = backend.mpv_pid;
-    let ipc_dead_for_read = Arc::clone(&backend.ipc_dead);
-    let session_id_for_read = session_id;
-    thread::spawn(move || {
-      read_ipc_loop(
-        app_clone,
-        session_id_for_read,
-        pipe_for_read,
-        pid_for_read,
-        ipc_dead_for_read,
-        state_clone,
-        v,
-        false,
-        reader,
-        ipc_pending_in,
-        pause_verify_in,
-      )
-    });
-
-    // mpv can add HWNDs under the video root **or** as extra main-window children; skip wry's `WRY_WEBVIEW`.
-    // In embedded-safe-mode, skip non-essential restacking after launch.
-    if !embedded_safe_mode {
-      refresh_native_overlay_stack_traced(
-        Some(&self.app),
-        session_id,
-        parent_hwnd,
-        video_hwnd.0 as usize,
-        NativeOverlayRefreshScope::ExternalMpvChildren,
-      );
-    } else {
-      append_player_debug_log(
-        Some(&self.app),
-        &format!(
-          "[embed-op] skip refresh_native_overlay_stack (post-launch) session_id={} embedded_safe_mode=true parent_hwnd=0x{:x} video_hwnd=0x{:x}",
-          session_id,
-          parent_hwnd.0 as usize,
-          video_hwnd.0 as usize
-        ),
-      );
-    }
-
-    *self.state.lock().map_err(|_| "player state poisoned")? = Some(Session {
-      session_id,
-      video_hwnd: video_hwnd.0 as usize,
-      parent_hwnd: parent_hwnd.0 as usize,
-      embedded_safe_mode,
-      embedded_minimal_mode: false,
-      last_open: payload.clone(),
-      backend: BackendSession::External(backend),
-      state,
-      last_action,
-      close_reason,
-      passthrough_stop: Arc::clone(&passthrough_stop),
-      pause_verify,
-    });
-
-    if embedded_safe_mode {
-      append_player_debug_log(
-        Some(&self.app),
-        &format!(
-          "[embed-op] skip background overlay restack thread session_id={} embedded_safe_mode=true parent_hwnd=0x{:x} video_hwnd=0x{:x}",
-          session_id,
-          parent_hwnd.0 as usize,
-          video_hwnd.0 as usize
-        ),
-      );
-      return Ok(());
-    }
-
-    // mpv can create child HWNDs after the first pause; re-apply WS_EX_TRANSPARENT + WS_DISABLED often.
-    // Also poll cursor vs video rect so React can wake controls when the WebView does not receive pointer events.
-    let state_arc = Arc::clone(&self.state);
-    let app_loop = self.app.clone();
-    let stop_flag = Arc::clone(&passthrough_stop);
-    thread::spawn(move || {
-      let mut last_hover_emit = Instant::now() - Duration::from_secs(10);
-      let mut last_lbutton_down = false;
-      let mut tick: u32 = 0;
-      while !stop_flag.load(Ordering::SeqCst) {
-        thread::sleep(Duration::from_millis(40));
-        if stop_flag.load(Ordering::SeqCst) {
-          break;
-        }
-        tick = tick.wrapping_add(1);
-        let hwnd_opt = state_arc.lock().ok().and_then(|g| {
-          g.as_ref().map(|s| (s.parent_hwnd, s.video_hwnd))
-        });
-        let Some((parent, video)) = hwnd_opt else {
-          break;
-        };
-        if tick % 3 == 0 {
-          let app = app_loop.clone();
-          let app_for_closure = app.clone();
-          let _ = app.run_on_main_thread(move || {
-            refresh_native_overlay_stack_traced(
-              Some(&app_for_closure),
-              session_id,
-              HWND(parent as *mut _),
-              video,
-              NativeOverlayRefreshScope::ExternalMpvChildren,
-            );
-          });
-        }
-        unsafe {
-          let mut pt = POINT::default();
-          if GetCursorPos(&mut pt).is_err() {
-            continue;
-          }
-          let mut r = RECT::default();
-          if GetWindowRect(HWND(video as *mut _), &mut r).is_err() {
-            continue;
-          }
-          let inside = pt.x >= r.left && pt.x < r.right && pt.y >= r.top && pt.y < r.bottom;
-          if !inside {
-            last_lbutton_down = false;
-            continue;
-          }
-          if last_hover_emit.elapsed() >= Duration::from_millis(90) {
-            let _ = app_loop.emit("player2-video-hover", ());
-            last_hover_emit = Instant::now();
-          }
-          let lb = GetAsyncKeyState(1);
-          let down = (lb as u16 & 0x8000) != 0;
-          if down && !last_lbutton_down {
-            let _ = app_loop.emit("player2-video-pointerdown", ());
-          }
-          last_lbutton_down = down;
-        }
-      }
-    });
-
-    Ok(())
-  }
-
-  fn open_embedded_minimal_impl(&self, payload: PlayerOpen, no_config: bool) -> Result<(), String> {
-    log_embedded_path_entered_once(&self.app, "WindowsPlayerHost::open_embedded_minimal_impl");
-    let Some(exe) = find_mpv_exe(&self.app) else {
-      return Err("Bundled mpv not found. Run npm run bundle:prepare.".to_string());
-    };
-
-    let main_win = self
-      .app
-      .get_webview_window("main")
-      .ok_or("Main window not found")?;
-    let parent_hwnd: HWND = main_win.hwnd().map_err(|e| e.to_string())?;
-
-    let video_hwnd = create_embed_video_child(parent_hwnd)?;
-
-    let state = Arc::new(Mutex::new(PlayerState {
-      loading: true,
-      ipc_healthy: true,
-      sub_visible: true,
-      sid: -1,
-      aid: -1,
-      ..Default::default()
-    }));
-
-    let passthrough_stop = Arc::new(AtomicBool::new(false));
-    let pause_verify = Arc::new(Mutex::new(PauseIpcVerifySnapshot::default()));
-    let last_action = Arc::new(Mutex::new("open_embedded_minimal".to_string()));
-    let close_reason = Arc::new(Mutex::new(None));
-
-    let session_id = NEXT_PLAYER_SESSION_ID.fetch_add(1, Ordering::SeqCst);
-    let (backend, reader) = spawn_mpv_embedded(
-      self.app.clone(),
-      session_id,
-      Arc::clone(&state),
-      Arc::clone(&last_action),
-      Arc::clone(&close_reason),
-      Arc::clone(&self.last_mpv_exit_report),
-      &exe,
-      video_hwnd.0 as usize,
-      &payload,
-      no_config,
-      true,
-    )?;
-
-    append_player_debug_log(
-      Some(&self.app),
-      &format!(
-        "[mpv-launch-embedded-minimal] session_id={session_id} pid={} no_config={no_config} parent_hwnd=0x{:x} video_hwnd=0x{:x}",
-        backend.mpv_pid,
-        parent_hwnd.0 as usize,
-        video_hwnd.0 as usize
-      ),
-    );
-
-    // Initial placement only (required).
-    unsafe {
-      embed_op_log(
-        Some(&self.app),
-        "SetWindowPos(video_hwnd) minimal initial placement",
-        "before",
-        session_id,
-        parent_hwnd.0 as usize,
-        video_hwnd.0 as usize,
-      );
-      let _ = SetWindowPos(
-        video_hwnd,
-        Some(HWND_TOP),
-        0,
-        0,
-        0,
-        0,
-        windows::Win32::UI::WindowsAndMessaging::SWP_NOMOVE
-          | windows::Win32::UI::WindowsAndMessaging::SWP_NOSIZE
-          | SWP_NOACTIVATE,
-      );
-      embed_op_log(
-        Some(&self.app),
-        "SetWindowPos(video_hwnd) minimal initial placement",
-        "after",
-        session_id,
-        parent_hwnd.0 as usize,
-        video_hwnd.0 as usize,
-      );
-    }
-
-    // IPC reader only. No overlay refresh, no background restack thread, no click-through forcing.
-    let app_clone = self.app.clone();
-    let state_clone = Arc::clone(&state);
-    let ipc_pending_in = Arc::clone(&backend.ipc_pending);
-    let pause_verify_in = Arc::clone(&pause_verify);
-    let pipe_for_read = backend.ipc_client_path.clone();
-    let pid_for_read = backend.mpv_pid;
-    let ipc_dead_for_read = Arc::clone(&backend.ipc_dead);
-    let session_id_for_read = session_id;
-    let v = video_hwnd.0 as usize;
-    thread::spawn(move || {
-      read_ipc_loop(
-        app_clone,
-        session_id_for_read,
-        pipe_for_read,
-        pid_for_read,
-        ipc_dead_for_read,
-        state_clone,
-        v,
-        true,
-        reader,
-        ipc_pending_in,
-        pause_verify_in,
-      )
-    });
-
-    *self.state.lock().map_err(|_| "player state poisoned")? = Some(Session {
-      session_id,
-      video_hwnd: video_hwnd.0 as usize,
-      parent_hwnd: parent_hwnd.0 as usize,
-      embedded_safe_mode: false,
-      embedded_minimal_mode: true,
-      last_open: payload.clone(),
-      backend: BackendSession::External(backend),
-      state,
-      last_action,
-      close_reason,
-      passthrough_stop: Arc::clone(&passthrough_stop),
-      pause_verify,
-    });
-
-    Ok(())
-  }
-
-  fn open_detached_impl(&self, payload: PlayerOpen, no_config: bool) -> Result<(), String> {
+  fn open_detached_impl(&self, payload: PlayerOpen, no_config: bool, video_hwnd: usize) -> Result<(), String> {
     let Some(exe) = find_mpv_exe(&self.app) else {
       return Err("Bundled mpv not found. Run npm run bundle:prepare.".to_string());
     };
@@ -693,7 +335,7 @@ impl WindowsPlayerHost {
       Arc::clone(&close_reason),
       Arc::clone(&self.last_mpv_exit_report),
       &exe,
-      0, // no --wid
+      video_hwnd,
       &payload,
       no_config,
       false,
@@ -718,7 +360,7 @@ impl WindowsPlayerHost {
         pid_for_read,
         ipc_dead_for_read,
         state_clone,
-        0,
+        video_hwnd,
         false,
         reader,
         ipc_pending_in,
@@ -729,9 +371,10 @@ impl WindowsPlayerHost {
     eprintln!("[mpv-diagnostic] Skipping IPC reader thread (PITFLIX_NO_IPC=1)");
   }
 
+
     *self.state.lock().map_err(|_| "player state poisoned")? = Some(Session {
       session_id,
-      video_hwnd: 0,
+      video_hwnd,
       parent_hwnd: parent_hwnd.0 as usize,
       embedded_safe_mode: false,
       embedded_minimal_mode: false,
@@ -743,142 +386,7 @@ impl WindowsPlayerHost {
       passthrough_stop: Arc::clone(&passthrough_stop),
       pause_verify,
     });
-    Ok(())
-  }
 
-  /// Dormant: embedded libmpv + GL path. Not used by `open()` or `recover` by default.
-  /// Kept for diagnostic commands like `player2_open_embedded_minimal_no_config`.
-  fn open_libmpv_impl(&self, payload: PlayerOpen) -> Result<(), String> {
-    log_embedded_path_entered_once(&self.app, "WindowsPlayerHost::open_libmpv_impl");
-    let Some(libmpv) = find_libmpv_dll(&self.app) else {
-      return Err("Embedded libmpv not available: libmpv-2.dll missing or failed to load".to_string());
-    };
-    let main_win = self
-      .app
-      .get_webview_window("main")
-      .ok_or("Main window not found")?;
-    let parent_hwnd: HWND = main_win.hwnd().map_err(|e| e.to_string())?;
-
-    let video_hwnd = create_embed_video_child(parent_hwnd)?;
-    let session_id = NEXT_PLAYER_SESSION_ID.fetch_add(1, Ordering::SeqCst);
-    let parent_hwnd_usize = parent_hwnd.0 as usize;
-    let video_hwnd_usize = video_hwnd.0 as usize;
-
-    let (tx, rx) = mpsc::channel::<Result<EmbeddedLibMpvSession, String>>();
-    let app_main = self.app.clone();
-    let app_for_closure = app_main.clone();
-    let payload_for_closure = payload.clone();
-    app_main
-      .run_on_main_thread(move || {
-        reparent_pitflix_video_into_wry_tree(
-          Some(&app_for_closure),
-          HWND(parent_hwnd_usize as *mut _),
-          HWND(video_hwnd_usize as *mut _),
-        );
-        unsafe {
-          let _ = ShowWindow(
-            HWND(video_hwnd_usize as *mut _),
-            windows::Win32::UI::WindowsAndMessaging::SW_HIDE,
-          );
-        }
-        let r = windows_libmpv_host::create_embedded_libmpv_session(
-          app_for_closure.clone(),
-          session_id,
-          HWND(parent_hwnd_usize as *mut _),
-          HWND(video_hwnd_usize as *mut _),
-          libmpv,
-          payload_for_closure,
-        );
-        let _ = tx.send(r);
-      })
-      .map_err(|e| e.to_string())?;
-    let backend = rx.recv().map_err(|_| "libmpv init thread failed".to_string())??;
-
-    let state = Arc::clone(&backend.state);
-    // libmpv: video is reparented under `WRY_WEBVIEW` and kept at `HWND_BOTTOM`; refresh keeps Z-order
-    // stable. External `--wid` still uses click-through + `HWND_TOP` on the main window.
-    let passthrough_stop = Arc::new(AtomicBool::new(false));
-    let pause_verify = Arc::new(Mutex::new(PauseIpcVerifySnapshot::default()));
-    let last_action = Arc::new(Mutex::new("open(libmpv)".to_string()));
-    let close_reason = Arc::new(Mutex::new(None));
-
-    append_player_debug_log(
-      Some(&self.app),
-      &format!(
-        "[libmpv-render] refresh_native_overlay_stack after open session_id={session_id} parent_hwnd=0x{:x} video_hwnd=0x{:x}",
-        parent_hwnd.0 as usize,
-        video_hwnd.0 as usize
-      ),
-    );
-    refresh_native_overlay_stack_traced(
-      Some(&self.app),
-      session_id,
-      parent_hwnd,
-      video_hwnd.0 as usize,
-      NativeOverlayRefreshScope::LibMpvVideoEmbedOnly,
-    );
-    request_repaint_video_traced(
-      Some(&self.app),
-      video_hwnd.0 as usize,
-      session_id,
-      "open_libmpv(after_overlay_refresh)",
-    );
-
-    *self.state.lock().map_err(|_| "player state poisoned")? = Some(Session {
-      session_id,
-      video_hwnd: video_hwnd.0 as usize,
-      parent_hwnd: parent_hwnd.0 as usize,
-      embedded_safe_mode: false,
-      embedded_minimal_mode: false,
-      last_open: payload,
-      backend: BackendSession::LibMpv(backend),
-      state,
-      last_action,
-      close_reason,
-      passthrough_stop: Arc::clone(&passthrough_stop),
-      pause_verify,
-    });
-
-    append_player_debug_log(
-      Some(&self.app),
-      &format!(
-        "[libmpv-render] spawn overlay restack thread session_id={session_id} parent_hwnd=0x{:x} video_hwnd=0x{:x}",
-        parent_hwnd.0 as usize,
-        video_hwnd.0 as usize
-      ),
-    );
-    let state_arc = Arc::clone(&self.state);
-    let app_loop = self.app.clone();
-    let stop_flag = Arc::clone(&passthrough_stop);
-    thread::spawn(move || {
-      let mut tick: u32 = 0;
-      while !stop_flag.load(Ordering::SeqCst) {
-        thread::sleep(Duration::from_millis(40));
-        if stop_flag.load(Ordering::SeqCst) {
-          break;
-        }
-        tick = tick.wrapping_add(1);
-        let hwnd_opt = state_arc.lock().ok().and_then(|g| {
-          g.as_ref().map(|s| (s.parent_hwnd, s.video_hwnd))
-        });
-        let Some((parent, video)) = hwnd_opt else {
-          break;
-        };
-        if tick % 3 == 0 {
-          let app = app_loop.clone();
-          let app_for_closure = app.clone();
-          let _ = app.run_on_main_thread(move || {
-            refresh_native_overlay_stack_traced(
-              Some(&app_for_closure),
-              session_id,
-              HWND(parent as *mut _),
-              video,
-              NativeOverlayRefreshScope::LibMpvVideoEmbedOnly,
-            );
-          });
-        }
-      }
-    });
 
     Ok(())
   }
@@ -889,7 +397,8 @@ impl WindowsPlayerHost {
       return Err("No active player".to_string());
     };
     if s.video_hwnd == 0 {
-      // Detached mode: no native embedded surface to move.
+      // External/detached mode: mpv is a free-floating window managed entirely by the user.
+      // No bounds sync — mpv opens wherever it was last or wherever the user places it.
       return Ok(());
     }
     if s.embedded_minimal_mode {
@@ -907,7 +416,6 @@ impl WindowsPlayerHost {
     let y = logical_px_to_physical(parent, y);
     let width = logical_px_to_physical(parent, width);
     let height = logical_px_to_physical(parent, height);
-    let is_libmpv = matches!(s.backend, BackendSession::LibMpv(_));
     let vid = HWND(s.video_hwnd as *mut _);
     let mut px = x;
     let mut py = y;
@@ -922,7 +430,7 @@ impl WindowsPlayerHost {
         } else {
           append_player_debug_log(
             Some(&self.app),
-            "[libmpv-render] MapWindowPoints(main->video_parent) failed; using coordinates relative to main HWND",
+            "[embed] MapWindowPoints(main->video_parent) failed; using coordinates relative to main HWND",
           );
         }
       }
@@ -934,12 +442,9 @@ impl WindowsPlayerHost {
         s.parent_hwnd,
         s.video_hwnd,
       );
-      // libmpv: `HWND_BOTTOM` keeps the GL child under WebView2’s Edge HWND after reparent under WRY.
-      let insert = if is_libmpv {
-        Some(HWND_BOTTOM)
-      } else {
-        Some(HWND_TOP)
-      };
+      // External mpv: HWND_TOP so the video surface renders above WebView2.
+      // Click-through is handled by WM_NCHITTESTâ†’HTTRANSPARENT in video_wnd_proc.
+      let insert = Some(HWND_TOP);
       let flags = SWP_SHOWWINDOW | SWP_NOACTIVATE;
       let _ = SetWindowPos(vid, insert, px, py, width, height, flags);
       embed_op_log(
@@ -950,45 +455,15 @@ impl WindowsPlayerHost {
         s.parent_hwnd,
         s.video_hwnd,
       );
-      if is_libmpv {
-        let mut cr = RECT::default();
-        let _ = GetClientRect(vid, &mut cr);
-        let cw = (cr.right - cr.left).max(0);
-        let ch = (cr.bottom - cr.top).max(0);
-        append_player_debug_log(
-          Some(&self.app),
-          &format!(
-            "[libmpv-render] set_video_bounds client_rect after SetWindowPos session_id={} video_hwnd=0x{:x} client=({cw}x{ch}) visible=WS_VISIBLE",
-            s.session_id,
-            s.video_hwnd
-          ),
-        );
-      }
     }
     log_video_bounds("set_video_bounds", parent, HWND(s.video_hwnd as *mut _), logical, DebugBounds { x, y, width, height });
-    if is_libmpv || !s.embedded_safe_mode {
-      if is_libmpv && s.embedded_safe_mode {
-        append_player_debug_log(
-          Some(&self.app),
-          &format!(
-            "[libmpv-render] refresh_native_overlay_stack (set_video_bounds) forced for libmpv despite embedded_safe_mode session_id={} parent_hwnd=0x{:x} video_hwnd=0x{:x}",
-            s.session_id,
-            s.parent_hwnd,
-            s.video_hwnd
-          ),
-        );
-      }
-      let overlay_scope = if is_libmpv {
-        NativeOverlayRefreshScope::LibMpvVideoEmbedOnly
-      } else {
-        NativeOverlayRefreshScope::ExternalMpvChildren
-      };
+    if !s.embedded_safe_mode {
       refresh_native_overlay_stack_traced(
         Some(&self.app),
         s.session_id,
         HWND(s.parent_hwnd as *mut _),
         s.video_hwnd,
-        overlay_scope,
+        NativeOverlayRefreshScope::ExternalMpvChildren,
       );
     } else {
       append_player_debug_log(
@@ -1053,6 +528,7 @@ impl WindowsPlayerHost {
     let Ok(g) = self.state.lock() else {
       return Player2NativeState {
         session_active: false,
+        ipc_dead: false,
         backend: "none".to_string(),
         session_id: None,
         video_hwnd: None,
@@ -1068,6 +544,7 @@ impl WindowsPlayerHost {
     let Some(s) = g.as_ref() else {
       return Player2NativeState {
         session_active: false,
+        ipc_dead: false,
         backend: "none".to_string(),
         session_id: None,
         video_hwnd: None,
@@ -1084,43 +561,31 @@ impl WindowsPlayerHost {
     let video_hwnd = s.video_hwnd;
     let state_arc = Arc::clone(&s.state);
     let pause_verify_arc = Arc::clone(&s.pause_verify);
-    // Stable strings consumed by `PlayerPage` / TS (`isNativeBackendExternal` / embedded checks).
-    let (backend, libmpv_mpvc, libmpv_tid) = match &s.backend {
-      BackendSession::LibMpv(b) => (
-        "libmpv".to_string(),
-        Some(Arc::clone(&b.mpv)),
-        Some(b.window_thread_id),
+    // Stable string consumed by `PlayerPage` / TS (`isNativeBackendExternal`).
+    let (backend, ipc_dead) = match &s.backend {
+      BackendSession::External(b) => (
+        "external_mpv".to_string(),
+        b.ipc_dead.load(Ordering::SeqCst) || b.ipc_unrecoverable.load(Ordering::SeqCst),
       ),
-      BackendSession::External(_) => ("external_mpv".to_string(), None, None),
     };
     drop(g);
 
     let ipc_mirror = state_arc.lock().ok().map(|x| x.clone());
     let pause_verification = pause_verify_arc.lock().ok().map(|x| x.clone());
-    let (libmpv_pause_property, libmpv_property_error) = if let Some(mpv) = &libmpv_mpvc {
-      (mpv.get_property_flag("pause").ok(), None)
-    } else {
-      (None, None)
-    };
-    let (render_frame_count, last_render_error) = render_health_snapshot();
-    let (render_frame_count, last_render_error) = if libmpv_tid.is_some() {
-      (render_frame_count, last_render_error)
-    } else {
-      (0u64, None)
-    };
 
     Player2NativeState {
       session_active: true,
+      ipc_dead,
       backend,
       session_id: Some(session_id),
       video_hwnd: Some(video_hwnd as u64),
       ipc_mirror,
-      libmpv_pause_property,
-      libmpv_property_error,
+      libmpv_pause_property: None,
+      libmpv_property_error: None,
       pause_verification,
-      render_frame_count,
-      last_render_error,
-      window_thread_id: libmpv_tid,
+      render_frame_count: 0,
+      last_render_error: None,
+      window_thread_id: None,
     }
   }
 
@@ -1142,7 +607,7 @@ impl WindowsPlayerHost {
     let mut is_external = false;
     if let Some(mut s) = g.take() {
       was_embedded_minimal = s.embedded_minimal_mode;
-      is_external = matches!(s.backend, BackendSession::External(_));
+      is_external = true; // only External backend exists now
       
       if let Ok(mut cr) = s.close_reason.lock() {
         *cr = Some(reason.to_string());
@@ -1170,7 +635,6 @@ impl WindowsPlayerHost {
       let session_id = s.session_id;
       let mpv_pid = match &s.backend {
         BackendSession::External(b) => Some(b.child.id()),
-        BackendSession::LibMpv(_) => None,
       };
       
       eprintln!("[close-backend] step=session_extracted elapsed={}ms", entry_time.elapsed().as_millis());
@@ -1216,12 +680,6 @@ impl WindowsPlayerHost {
             Some(&self.app),
             &format!("[session-close-immediate] session_id={} mpv_pid={:?}", session_id, mpv_pid),
           );
-        }
-        BackendSession::LibMpv(b) => {
-          eprintln!("[close-backend] step=libmpv_backend_start elapsed={}ms", entry_time.elapsed().as_millis());
-          windows_libmpv_host::shutdown(b);
-          let _ = windows_libmpv_host::teardown_gl_renderer(&self.app, b.video_hwnd);
-          eprintln!("[close-backend] step=libmpv_shutdown_done elapsed={}ms", entry_time.elapsed().as_millis());
         }
       }
       eprintln!("[close-backend] step=backend_cleanup_done elapsed={}ms", entry_time.elapsed().as_millis());
@@ -1273,7 +731,6 @@ impl WindowsPlayerHost {
         }
       }
     }
-    // libmpv backend: enqueue command and return.
     {
       let g = self.state.lock().map_err(|_| "player state poisoned")?;
       let Some(s) = g.as_ref() else {
@@ -1283,13 +740,6 @@ impl WindowsPlayerHost {
         );
         return Err("No active player".to_string());
       };
-      match &s.backend {
-        BackendSession::LibMpv(b) => {
-          let _ = b.cmd_tx.send(cmd).map_err(|_| "libmpv command channel closed".to_string())?;
-          return Ok(());
-        }
-        BackendSession::External(_) => {}
-      }
     }
 
     let msg = cmd_to_mpv_ipc(&cmd);
@@ -1308,9 +758,7 @@ impl WindowsPlayerHost {
         );
         return Err("No active player".to_string());
       };
-      let BackendSession::External(backend) = &s.backend else {
-        return Ok(());
-      };
+      let BackendSession::External(backend) = &s.backend;
       if backend.ipc_dead.load(Ordering::SeqCst)
         || backend.ipc_unrecoverable.load(Ordering::SeqCst)
         || backend.ipc_reconnecting.load(Ordering::SeqCst)
@@ -1389,24 +837,12 @@ impl WindowsPlayerHost {
 
   /// Hard transport diagnostic: send an OSD message over the *active* mpv IPC writer.
   pub fn test_ipc_osd(&self) -> Result<(), String> {
-    // IPC diagnostics only apply to external mpv.
-    {
-      let g = self.state.lock().map_err(|_| "player state poisoned".to_string())?;
-      let Some(s) = g.as_ref() else {
-        return Err("No active player".to_string());
-      };
-      if matches!(&s.backend, BackendSession::LibMpv(_)) {
-        return Err("IPC diagnostics not available for libmpv embedded mode".to_string());
-      }
-    }
     let (tx, session_id, pipe, pid) = {
       let g = self.state.lock().map_err(|_| "player state poisoned".to_string())?;
       let Some(s) = g.as_ref() else {
         return Err("No active player".to_string());
       };
-      let BackendSession::External(backend) = &s.backend else {
-        return Err("No active external mpv session".to_string());
-      };
+      let BackendSession::External(backend) = &s.backend;
       if backend.ipc_dead.load(Ordering::SeqCst)
         || backend.ipc_unrecoverable.load(Ordering::SeqCst)
         || backend.ipc_reconnecting.load(Ordering::SeqCst)
@@ -1434,9 +870,7 @@ impl WindowsPlayerHost {
       let Some(s) = g.as_ref() else {
         return Err("No active player".to_string());
       };
-      let BackendSession::External(backend) = &s.backend else {
-        return Err("No active external mpv session".to_string());
-      };
+      let BackendSession::External(backend) = &s.backend;
       backend.ipc_generation.load(Ordering::SeqCst)
     };
     enqueue_ipc_with_diagnostics(tx.as_ref(), gen, &msg, "test_osd", true, Some(&self.app))?;
@@ -1449,24 +883,12 @@ impl WindowsPlayerHost {
 
   /// Hard transport diagnostic: send `cycle pause` over the *active* mpv IPC writer.
   pub fn test_toggle_pause(&self) -> Result<(), String> {
-    // IPC diagnostics only apply to external mpv.
-    {
-      let g = self.state.lock().map_err(|_| "player state poisoned".to_string())?;
-      let Some(s) = g.as_ref() else {
-        return Err("No active player".to_string());
-      };
-      if matches!(&s.backend, BackendSession::LibMpv(_)) {
-        return Err("IPC diagnostics not available for libmpv embedded mode".to_string());
-      }
-    }
     let (tx, session_id, pipe, pid) = {
       let g = self.state.lock().map_err(|_| "player state poisoned".to_string())?;
       let Some(s) = g.as_ref() else {
         return Err("No active player".to_string());
       };
-      let BackendSession::External(backend) = &s.backend else {
-        return Err("No active external mpv session".to_string());
-      };
+      let BackendSession::External(backend) = &s.backend;
       if backend.ipc_dead.load(Ordering::SeqCst)
         || backend.ipc_unrecoverable.load(Ordering::SeqCst)
         || backend.ipc_reconnecting.load(Ordering::SeqCst)
@@ -1494,9 +916,7 @@ impl WindowsPlayerHost {
       let Some(s) = g.as_ref() else {
         return Err("No active player".to_string());
       };
-      let BackendSession::External(backend) = &s.backend else {
-        return Err("No active external mpv session".to_string());
-      };
+      let BackendSession::External(backend) = &s.backend;
       backend.ipc_generation.load(Ordering::SeqCst)
     };
     enqueue_ipc_with_diagnostics(tx.as_ref(), gen, &msg, "test_toggle_pause", true, Some(&self.app))?;
@@ -1522,27 +942,6 @@ impl WindowsPlayerHost {
         }
       }
     }
-    // libmpv: fire-and-forget pause.
-    let libmpv_video: Option<(usize, u64)> = {
-      let g = self.state.lock().map_err(|_| "player state poisoned".to_string())?;
-      let Some(s) = g.as_ref() else {
-        return Err("No active player".to_string());
-      };
-      if let BackendSession::LibMpv(b) = &s.backend {
-        let _ = b.cmd_tx.send(PlayerCommand::Pause).map_err(|_| "libmpv command channel closed".to_string())?;
-        Some((s.video_hwnd, s.session_id))
-      } else {
-        None
-      }
-    };
-    if let Some((v, sid)) = libmpv_video {
-      append_player_debug_log(
-        Some(&self.app),
-        &format!("[libmpv-render] repaint request after libmpv pause video_hwnd=0x{v:x}"),
-      );
-      request_repaint_video_traced(Some(&self.app), v, sid, "libmpv_pause");
-      return Ok(());
-    }
     self.verify_pause_resume_correlated(true, "player2_pause")
   }
 
@@ -1556,27 +955,6 @@ impl WindowsPlayerHost {
           *a = "resume".to_string();
         }
       }
-    }
-    // libmpv: fire-and-forget resume.
-    let libmpv_video: Option<(usize, u64)> = {
-      let g = self.state.lock().map_err(|_| "player state poisoned".to_string())?;
-      let Some(s) = g.as_ref() else {
-        return Err("No active player".to_string());
-      };
-      if let BackendSession::LibMpv(b) = &s.backend {
-        let _ = b.cmd_tx.send(PlayerCommand::Play).map_err(|_| "libmpv command channel closed".to_string())?;
-        Some((s.video_hwnd, s.session_id))
-      } else {
-        None
-      }
-    };
-    if let Some((v, sid)) = libmpv_video {
-      append_player_debug_log(
-        Some(&self.app),
-        &format!("[libmpv-render] repaint request after libmpv resume video_hwnd=0x{v:x}"),
-      );
-      request_repaint_video_traced(Some(&self.app), v, sid, "libmpv_resume");
-      return Ok(());
     }
     // Host window validity diagnostics around resume.
     if let Ok(g) = self.state.lock() {
@@ -1607,9 +985,7 @@ impl WindowsPlayerHost {
       let Some(s) = g.as_ref() else {
         return Err("No active player".to_string());
       };
-      let BackendSession::External(backend) = &s.backend else {
-        return Err("No active external mpv session".to_string());
-      };
+      let BackendSession::External(backend) = &s.backend;
       if backend.ipc_dead.load(Ordering::SeqCst)
         || backend.ipc_unrecoverable.load(Ordering::SeqCst)
         || backend.ipc_reconnecting.load(Ordering::SeqCst)
@@ -1658,9 +1034,7 @@ impl WindowsPlayerHost {
       let Some(s) = g.as_ref() else {
         return Err("No active player".to_string());
       };
-      let BackendSession::External(backend) = &s.backend else {
-        return Err("No active external mpv session".to_string());
-      };
+      let BackendSession::External(backend) = &s.backend;
       backend.ipc_generation.load(Ordering::SeqCst)
     };
     enqueue_ipc(ipc_tx.as_ref(), gen, &msg).map_err(|e| format!("player2_resume: IPC enqueue failed: {e}"))?;
@@ -1789,9 +1163,7 @@ impl WindowsPlayerHost {
       let Some(s) = g.as_ref() else {
         return Err("No active player".to_string());
       };
-      let BackendSession::External(backend) = &s.backend else {
-        return Err("No active external mpv session".to_string());
-      };
+      let BackendSession::External(backend) = &s.backend;
       if backend.ipc_dead.load(Ordering::SeqCst)
         || backend.ipc_unrecoverable.load(Ordering::SeqCst)
         || backend.ipc_reconnecting.load(Ordering::SeqCst)
@@ -1831,7 +1203,7 @@ impl WindowsPlayerHost {
       }
     }
 
-    // 1) Allocate id and register waiter BEFORE any outbound IPC — eliminates race with a fast mpv reply.
+    // 1) Allocate id and register waiter BEFORE any outbound IPC â€” eliminates race with a fast mpv reply.
     let id_get = next_id.fetch_add(1, Ordering::SeqCst);
     let msg_get = json!({"command":["get_property","pause"],"request_id": id_get});
     let (tx2, rx2) = mpsc::channel();
@@ -2001,11 +1373,8 @@ impl WindowsPlayerHost {
   pub fn recover_external_session(&self) -> Result<(), String> {
     {
       let g = self.state.lock().map_err(|_| "player state poisoned")?;
-      let Some(s) = g.as_ref() else {
+      if g.as_ref().is_none() {
         return Err("No active session to recover".to_string());
-      };
-      if matches!(&s.backend, BackendSession::LibMpv(_)) {
-        return Err("Recover is not implemented for libmpv embedded mode (Phase 1)".to_string());
       }
     }
     self.recover_external_session_impl(false)
@@ -2014,11 +1383,8 @@ impl WindowsPlayerHost {
   pub fn recover_external_session_no_config(&self) -> Result<(), String> {
     {
       let g = self.state.lock().map_err(|_| "player state poisoned")?;
-      let Some(s) = g.as_ref() else {
+      if g.as_ref().is_none() {
         return Err("No active session to recover".to_string());
-      };
-      if matches!(&s.backend, BackendSession::LibMpv(_)) {
-        return Err("Recover is not implemented for libmpv embedded mode (Phase 1)".to_string());
       }
     }
     self.recover_external_session_impl(true)
@@ -2098,7 +1464,7 @@ struct IpcWriteMsg {
 
 fn cmd_to_mpv_ipc(cmd: &PlayerCommand) -> Value {
   match cmd {
-    // Prefer `set pause yes|no` over `set_property` — matches libmpv path and is more reliable for
+    // Prefer `set pause yes|no` over `set_property` â€” matches libmpv path and is more reliable for
     // unpause on some Windows mpv builds over JSON IPC.
     PlayerCommand::Play => json!({"command":["set","pause","no"]}),
     PlayerCommand::Pause => json!({"command":["set","pause","yes"]}),
@@ -2121,6 +1487,7 @@ fn cmd_to_mpv_ipc(cmd: &PlayerCommand) -> Value {
     PlayerCommand::SetSubPosition(v) => json!({"command":["set_property","sub-pos", *v]}),
     PlayerCommand::SetSubFont(v) => json!({"command":["set_property","sub-font", v]}),
     PlayerCommand::SubAddSelect(path) => json!({"command":["sub-add", path, "select"]}),
+    PlayerCommand::SetSpeed(v) => json!({"command":["set_property","speed", *v]}),
     PlayerCommand::Stop => json!({"command":["quit"]}),
   }
 }
@@ -2266,7 +1633,7 @@ fn mpv_ipc_pause_data_as_bool(data: &Value) -> Option<bool> {
   None
 }
 
-/// mpv may encode `request_id` as integer, float (e.g. `1000001.0`), or string — all must match map keys (`u64`).
+/// mpv may encode `request_id` as integer, float (e.g. `1000001.0`), or string â€” all must match map keys (`u64`).
 fn mpv_ipc_request_id_any(val: &Value) -> Option<u64> {
   let id = val.get("request_id")?;
   if let Some(u) = id.as_u64() {
@@ -2388,7 +1755,7 @@ fn apply_hwnd_click_through_styles(hwnd: HWND) {
 }
 
 /// mpv / libmpv may create **nested** child HWNDs (often after the first pause). A single
-/// `EnumChildWindows` level is not enough — recurse so every descendant stays click-through.
+/// `EnumChildWindows` level is not enough â€” recurse so every descendant stays click-through.
 unsafe extern "system" fn enum_click_through_child(child: HWND, _: LPARAM) -> BOOL {
   set_hwnd_click_through_recursive(child);
   BOOL(1)
@@ -2419,98 +1786,12 @@ fn is_pitflix_video_embed(hwnd: HWND) -> bool {
   window_class_name(hwnd) == "PitflixVideoEmbed"
 }
 
-/// Find a `WRY_WEBVIEW` HWND anywhere under `root` (wry may not be a **direct** child of the root).
-fn find_wry_webview_hwnd_recursive(root: HWND) -> Option<HWND> {
-  if is_wry_webview_container(root) {
-    return Some(root);
-  }
-  unsafe {
-    let mut c = GetWindow(root, GW_CHILD).unwrap_or_default();
-    while !c.0.is_null() {
-      if let Some(hit) = find_wry_webview_hwnd_recursive(c) {
-        return Some(hit);
-      }
-      c = GetWindow(c, GW_HWNDNEXT).unwrap_or_default();
-    }
-  }
-  None
-}
 
-/// Reparent the Pitflix video surface under the WebView2 container and keep it at the **bottom** of
-/// that container’s Z-order so the browser’s own HWND stays above native OpenGL (required for video
-/// to show through transparent WebView pixels).
-fn reparent_pitflix_video_into_wry_tree(app: Option<&AppHandle>, root: HWND, video: HWND) {
-  unsafe {
-    if !IsWindow(Some(root)).as_bool() || !IsWindow(Some(video)).as_bool() {
-      return;
-    }
-    let Some(wry) = find_wry_webview_hwnd_recursive(root) else {
-      append_player_debug_log(
-        app,
-        "[libmpv-render] reparent: WRY_WEBVIEW not found under root; leaving video as child of main HWND",
-      );
-      return;
-    };
-    if let Err(e) = SetParent(video, Some(wry)) {
-      append_player_debug_log(
-        app,
-        &format!("[libmpv-render] reparent: SetParent -> WRY failed err={e}"),
-      );
-      return;
-    }
-    let zr = SetWindowPos(
-      video,
-      Some(HWND_BOTTOM),
-      0,
-      0,
-      0,
-      0,
-      windows::Win32::UI::WindowsAndMessaging::SWP_NOMOVE
-        | windows::Win32::UI::WindowsAndMessaging::SWP_NOSIZE
-        | SWP_NOACTIVATE,
-    );
-    append_player_debug_log(
-      app,
-      &format!(
-        "[libmpv-render] reparent ok video=0x{:x} now child of WRY=0x{:x} z_bottom_ok={}",
-        video.0 as usize,
-        wry.0 as usize,
-        zr.is_ok()
-      ),
-    );
-  }
-}
-
-fn z_order_libmpv_video_bottom(video: HWND) {
-  unsafe {
-    if !IsWindow(Some(video)).as_bool() {
-      return;
-    }
-    let _ = SetWindowPos(
-      video,
-      Some(HWND_BOTTOM),
-      0,
-      0,
-      0,
-      0,
-      windows::Win32::UI::WindowsAndMessaging::SWP_NOMOVE
-        | windows::Win32::UI::WindowsAndMessaging::SWP_NOSIZE
-        | SWP_NOACTIVATE,
-    );
-  }
-}
-
-/// How aggressively we re-apply click-through when refreshing the native stack.
-///
-/// - **External `mpv.exe` + `--wid`**: mpv may create extra Win32 HWNDs under the main window; we must
-///   walk native siblings (except the wry WebView container) and keep them click-through.
-/// - **In-process libmpv + GL**: only our `PitflixVideoEmbed` child should be touched; applying
-///   `WS_EX_TRANSPARENT` recursively to unrelated main-window children can break WebView2 hit-testing
-///   after repeated refreshes (intermittent “dead UI”).
+/// Scope used when refreshing the native overlay stack for external `mpv.exe` + `--wid`:
+/// walk native siblings (except the wry WebView container) and keep them click-through.
 #[derive(Clone, Copy)]
 enum NativeOverlayRefreshScope {
   ExternalMpvChildren,
-  LibMpvVideoEmbedOnly,
 }
 
 /// Apply click-through only to **direct** main-window children that are not the WebView container.
@@ -2528,57 +1809,26 @@ fn set_click_through_all_native_overlays(main_hwnd: HWND) {
   }
 }
 
-fn refresh_native_overlay_stack(main_hwnd: HWND, video_hwnd: usize, scope: NativeOverlayRefreshScope) {
-  match scope {
-    NativeOverlayRefreshScope::ExternalMpvChildren => set_click_through_all_native_overlays(main_hwnd),
-    NativeOverlayRefreshScope::LibMpvVideoEmbedOnly => {
-      let v = HWND(video_hwnd as *mut _);
-      unsafe {
-        if !IsWindow(Some(v)).as_bool() {
-          return;
-        }
-      }
-      if !is_pitflix_video_embed(v) {
-        append_player_debug_log(
-          None,
-          &format!(
-            "[libmpv-render] refresh scope=video_embed_only but hwnd class={:?} (expected PitflixVideoEmbed); skipping",
-            window_class_name(v)
-          ),
-        );
-      }
-      // For libmpv, do NOT apply WS_EX_TRANSPARENT or WS_DISABLED styles.
-      // Click-through is handled by WM_NCHITTEST -> HTTRANSPARENT in video_wnd_proc.
-      // Applying WS_EX_TRANSPARENT breaks OpenGL rendering (causes black screen).
-    }
-  }
+fn refresh_native_overlay_stack(main_hwnd: HWND, video_hwnd: usize, _scope: NativeOverlayRefreshScope) {
+  set_click_through_all_native_overlays(main_hwnd);
   unsafe {
     let v = HWND(video_hwnd as *mut _);
     if !IsWindow(Some(v)).as_bool() {
       return;
     }
-    match scope {
-      NativeOverlayRefreshScope::ExternalMpvChildren => {
-        // External `mpv --wid`: keep the video subtree above the WebView; click-through styles
-        // route input to the WebView.
-        let _ = SetWindowPos(
-          v,
-          Some(HWND_TOP),
-          0,
-          0,
-          0,
-          0,
-          windows::Win32::UI::WindowsAndMessaging::SWP_NOMOVE
-            | windows::Win32::UI::WindowsAndMessaging::SWP_NOSIZE
-            | SWP_NOACTIVATE,
-        );
-      }
-      NativeOverlayRefreshScope::LibMpvVideoEmbedOnly => {
-        if is_pitflix_video_embed(v) {
-          z_order_libmpv_video_bottom(v);
-        }
-      }
-    }
+    // External `mpv --wid`: keep the video subtree above the WebView; click-through styles
+    // route input to the WebView.
+    let _ = SetWindowPos(
+      v,
+      Some(HWND_TOP),
+      0,
+      0,
+      0,
+      0,
+      windows::Win32::UI::WindowsAndMessaging::SWP_NOMOVE
+        | windows::Win32::UI::WindowsAndMessaging::SWP_NOSIZE
+        | SWP_NOACTIVATE,
+    );
   }
 }
 
@@ -2614,10 +1864,7 @@ fn refresh_native_overlay_stack_traced(
   scope: NativeOverlayRefreshScope,
 ) {
   let parent_hwnd = main_hwnd.0 as usize;
-  let scope_tag = match scope {
-    NativeOverlayRefreshScope::ExternalMpvChildren => "external_mpv_children",
-    NativeOverlayRefreshScope::LibMpvVideoEmbedOnly => "libmpv_video_embed_only",
-  };
+  let scope_tag = "external_mpv_children";
   append_player_debug_log(
     app,
     &format!(
@@ -2679,6 +1926,15 @@ fn read_ipc_loop(
             "embedded_minimal_mode": embedded_minimal_mode
           }),
         );
+        // Mark ended so the playback-pol-event transitions to a non-active phase,
+        // which lets BackToPlayerChip clear itself even when mpv exits without
+        // sending an end-file event over IPC.
+        if let Ok(mut st) = state.lock() {
+          st.ended = true;
+          st.playing = false;
+          st.loading = false;
+          emit_state(&app, &st);
+        }
         break;
       }
       Ok(_) => {
@@ -2687,9 +1943,9 @@ fn read_ipc_loop(
           continue;
         }
         if let Ok(val) = serde_json::from_str::<Value>(trimmed) {
-          // Inbound debug (truncated) — updated before any heavy work.
+          // Inbound debug (truncated) â€” updated before any heavy work.
           let inbound_short = if trimmed.len() > 2048 {
-            format!("{}…", &trimmed[..2048])
+            format!("{}â€¦", &trimmed[..2048])
           } else {
             trimmed.to_string()
           };
@@ -2767,7 +2023,7 @@ fn read_ipc_loop(
                   if let Some(p) = mpv_ipc_pause_data_as_bool(&data) {
                     append_player_debug_log(
                       Some(&app),
-                      &format!("[ipc-loop] property-change pause → paused={p}"),
+                      &format!("[ipc-loop] property-change pause â†’ paused={p}"),
                     );
                     st.paused = p;
                   } else {
@@ -2880,10 +2136,44 @@ fn read_ipc_loop(
             "embedded_minimal_mode": embedded_minimal_mode
           }),
         );
+        // Mark ended so the playback-pol-event transitions to a non-active phase,
+        // which lets BackToPlayerChip clear itself even when mpv exits without
+        // sending an end-file event over IPC.
+        if let Ok(mut st) = state.lock() {
+          st.ended = true;
+          st.playing = false;
+          st.loading = false;
+          emit_state(&app, &st);
+        }
         break;
       }
     }
   }
+}
+
+
+/// Create a Win32 child window inside `parent` for mpv to embed into via `--wid`.
+/// Starts at 1×1 pixels; React calls `player2_set_video_bounds` immediately after
+/// `player2_open` returns to resize/reposition it to the player <div> area.
+fn create_video_child_hwnd(parent: HWND) -> Result<usize, String> {
+  use windows::Win32::UI::WindowsAndMessaging::{
+    CreateWindowExW, WS_CHILD, WS_CLIPCHILDREN, WS_VISIBLE,
+  };
+  use windows::core::w;
+  let hwnd = unsafe {
+    CreateWindowExW(
+      WS_EX_NOACTIVATE,
+      w!("STATIC"),
+      w!(""),
+      WS_CHILD | WS_VISIBLE | WS_CLIPCHILDREN,
+      0, 0, 1, 1,
+      Some(parent),
+      None,
+      None,
+      None,
+    ).map_err(|e| format!("CreateWindowExW failed: {e}"))?
+  };
+  Ok(hwnd.0 as usize)
 }
 
 fn spawn_mpv_embedded(
@@ -2953,8 +2243,8 @@ fn spawn_mpv_embedded(
   
   add_arg(&mut cmd, &mut args_for_log, "--keep-open=no".to_string());
   add_arg(&mut cmd, &mut args_for_log, "--hwdec=auto-safe".to_string());
-  // Detached mode (hwnd == 0): enable native mpv keybindings for full controls.
-  // Embedded mode (hwnd != 0): disable mpv input so the app WebView handles it.
+  // Detached/external mode: mpv manages its own window freely (normal window chrome, remembered size/pos).
+  // Embedded (--wid) mode: disable mpv input so window manager handles everything.
   if hwnd != 0 {
     add_arg(&mut cmd, &mut args_for_log, "--no-input-default-bindings".to_string());
     add_arg(&mut cmd, &mut args_for_log, "--input-vo-keyboard=no".to_string());
@@ -3283,12 +2573,14 @@ fn spawn_mpv_embedded(
                 .ok()
                 .map(|s| s.clone())
                 .unwrap_or_else(|| "?".to_string());
-              let tpos = state_for_diag.lock().ok().map(|s| s.time_pos).unwrap_or(0.0);
+              let (tpos, tdur) = state_for_diag.lock().ok()
+                .map(|s| (s.time_pos, s.duration))
+                .unwrap_or((0.0, 0.0));
               let close_reason = close_reason_for_diag.lock().ok().and_then(|v| v.clone());
               append_player_debug_log(
                 None,
                 &format!(
-                  "[mpv-exit] session_id={session_id} pid={mpv_pid_for_writer} exit_code={exit_code:?} last_action={action} time_pos={tpos} pipe={} writer_token={writer_token}",
+                  "[mpv-exit] session_id={session_id} pid={mpv_pid_for_writer} exit_code={exit_code:?} last_action={action} time_pos={tpos} duration={tdur} pipe={} writer_token={writer_token}",
                   ipc_path_for_writer
                 ),
               );
@@ -3322,6 +2614,7 @@ fn spawn_mpv_embedded(
                 media_path: media_path_for_diag.clone(),
                 last_action: action,
                 time_pos: tpos,
+                duration: tdur,
                 close_reason,
                 exe: exe_for_diag.clone(),
                 args: args_for_diag.clone(),
@@ -3415,7 +2708,7 @@ fn spawn_mpv_embedded(
 
   let observe_msgs: Vec<Value> = if external {
     vec![
-      // No time-pos / audio-pts/full / time-pos/full — polled for external sessions (see poll thread above).
+      // No time-pos / audio-pts/full / time-pos/full â€” polled for external sessions (see poll thread above).
       json!({"command":["observe_property", 2, "duration"]}),
       json!({"command":["observe_property", 3, "pause"]}),
       json!({"command":["observe_property", 11, "core-idle"]}),
@@ -3575,87 +2868,7 @@ fn find_mpv_exe(handle: &AppHandle) -> Option<PathBuf> {
   None
 }
 
-fn find_libmpv_dll(handle: &AppHandle) -> Option<PathBuf> {
-  // Release/bundled: inside Tauri resource dir (usually `<app>/resources/binaries/libmpv-2.dll`).
-  if let Ok(d) = handle.path().resource_dir() {
-    let p = d.join("binaries").join("libmpv-2.dll");
-    append_player_debug_log(
-      Some(handle),
-      &format!("[libmpv-load] trying path={}", p.to_string_lossy()),
-    );
-    if p.is_file() {
-      // Probe-load so we can log a clear failure reason (missing dependencies, wrong arch, etc).
-      match super::libmpv::LibMpv::load_at(&p) {
-        Ok(_) => {
-          append_player_debug_log(
-            Some(handle),
-            &format!("[libmpv-load] success path={}", p.to_string_lossy()),
-          );
-          return Some(p);
-        }
-        Err(err) => {
-          append_player_debug_log(
-            Some(handle),
-            &format!("[libmpv-load] failed path={} err={}", p.to_string_lossy(), err),
-          );
-        }
-      }
-    } else {
-      append_player_debug_log(
-        Some(handle),
-        &format!("[libmpv-load] failed path={} err=missing_file", p.to_string_lossy()),
-      );
-    }
-  }
-  #[cfg(dev)]
-  {
-    let p = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-      .join("binaries")
-      .join("libmpv-2.dll");
-    append_player_debug_log(
-      Some(handle),
-      &format!("[libmpv-load] trying path={}", p.to_string_lossy()),
-    );
-    if p.is_file() {
-      match super::libmpv::LibMpv::load_at(&p) {
-        Ok(_) => {
-          append_player_debug_log(
-            Some(handle),
-            &format!("[libmpv-load] success path={}", p.to_string_lossy()),
-          );
-          return Some(p);
-        }
-        Err(err) => {
-          append_player_debug_log(
-            Some(handle),
-            &format!("[libmpv-load] failed path={} err={}", p.to_string_lossy(), err),
-          );
-        }
-      }
-    } else {
-      append_player_debug_log(
-        Some(handle),
-        &format!("[libmpv-load] failed path={} err=missing_file", p.to_string_lossy()),
-      );
-    }
-  }
-  None
-}
-
-static REGISTER_VIDEO_CLASS: Once = Once::new();
-static INPUT_WM_NCHITTEST_LOG: AtomicU64 = AtomicU64::new(0);
 static MPV_RUNTIME_CHAIN_LOGGED: AtomicBool = AtomicBool::new(false);
-static EMBEDDED_PATH_ENTERED_LOGGED: AtomicBool = AtomicBool::new(false);
-
-fn log_embedded_path_entered_once(app: &AppHandle, source: &str) {
-  if EMBEDDED_PATH_ENTERED_LOGGED.swap(true, Ordering::SeqCst) {
-    return;
-  }
-  append_player_debug_log(
-    Some(app),
-    &format!("[playback-mode] embedded_path_entered=true source={source}"),
-  );
-}
 
 fn resolve_mpv_config_dir(handle: &AppHandle, exe: &PathBuf, no_config: bool) -> Result<Option<PathBuf>, String> {
   if no_config {
@@ -3765,123 +2978,3 @@ fn mpv_cli_path(path: &Path) -> String {
   s
 }
 
-fn input_layer_log_nc_hit_test(hwnd: HWND) {
-  let n = INPUT_WM_NCHITTEST_LOG.fetch_add(1, Ordering::Relaxed) + 1;
-  // Log generously at first so we can confirm hit-testing passes through the video child to the WebView.
-  if n > 40 && n % 200 != 0 {
-    return;
-  }
-  unsafe {
-    let style = GetWindowLongPtrW(hwnd, GWL_STYLE);
-    let ex = GetWindowLongPtrW(hwnd, GWL_EXSTYLE);
-    append_player_debug_log(
-      None,
-      &format!(
-        "[input-layer] WM_NCHITTEST hit -> returning HTTRANSPARENT (clicks to parent/WebView) hwnd=0x{:x} style=0x{:x} exstyle=0x{:x} n={n}",
-        hwnd.0 as usize,
-        style as usize,
-        ex as usize
-      ),
-    );
-  }
-}
-
-fn register_video_class() {
-  REGISTER_VIDEO_CLASS.call_once(|| unsafe {
-    let hinstance = GetModuleHandleW(None).map_err(|_| ()).unwrap();
-    let video_class = w!("PitflixVideoEmbed");
-    let vc = WNDCLASSW {
-      style: CS_OWNDC,
-      lpfnWndProc: Some(video_wnd_proc),
-      hInstance: hinstance.into(),
-      lpszClassName: video_class,
-      ..Default::default()
-    };
-    let _ = RegisterClassW(&vc);
-  });
-}
-
-fn create_embed_video_child(parent: HWND) -> Result<HWND, String> {
-  register_video_class();
-  unsafe {
-    let hinstance = GetModuleHandleW(None).map_err(|e| e.to_string())?;
-    let video_class = w!("PitflixVideoEmbed");
-    // Tiny initial size — **not** full client rect. Until React calls `player2_set_video_bounds`, a full-size
-    // HWND sits above the WebView and blocks all clicks. Bounds sync arrives a frame later.
-    let w = 4i32;
-    let h = 4i32;
-    embed_op_log(None, "CreateWindowExW(video child)", "before", 0, parent.0 as usize, 0);
-    let video = CreateWindowExW(
-      // WS_EX_NOACTIVATE prevents focus stealing. Do NOT use WS_EX_TRANSPARENT here —
-      // it makes the window visually transparent and breaks OpenGL rendering (black screen).
-      // Click-through is handled by WM_NCHITTEST -> HTTRANSPARENT in video_wnd_proc.
-      WS_EX_NOACTIVATE,
-      video_class,
-      w!(""),
-      // WS_CHILD | WS_VISIBLE for normal child rendering. Do NOT use WS_DISABLED —
-      // it can interfere with message delivery. Click-through is via WM_NCHITTEST.
-      WS_CHILD | WS_VISIBLE,
-      0,
-      0,
-      w,
-      h,
-      Some(parent),
-      None,
-      Some(hinstance.into()),
-      None,
-    )
-    .map_err(|e| format!("CreateWindowExW(video): {e}"))?;
-    embed_op_log(None, "CreateWindowExW(video child)", "after", 0, parent.0 as usize, video.0 as usize);
-    embed_op_log(None, "ShowWindow(video child)", "before", 0, parent.0 as usize, video.0 as usize);
-    let _ = ShowWindow(video, windows::Win32::UI::WindowsAndMessaging::SW_SHOW);
-    embed_op_log(None, "ShowWindow(video child)", "after", 0, parent.0 as usize, video.0 as usize);
-    // Click-through is handled by WM_NCHITTEST -> HTTRANSPARENT in video_wnd_proc.
-    // Do NOT call apply_hwnd_click_through_styles here — it adds WS_EX_TRANSPARENT which
-    // breaks OpenGL rendering (causes black screen).
-    // Z-order: libmpv path stacks **below** `WRY_WEBVIEW` in `refresh_native_overlay_stack`; external
-    // `--wid` path uses `HWND_TOP` there.
-
-    let style = GetWindowLongPtrW(video, GWL_STYLE);
-    let ex = GetWindowLongPtrW(video, GWL_EXSTYLE);
-    append_player_debug_log(
-      None,
-      &format!(
-        "[input-layer] video child created hwnd=0x{:x} parent=0x{:x} class={} style=0x{:x} exstyle=0x{:x}",
-        video.0 as usize,
-        parent.0 as usize,
-        window_class_name(video),
-        style as usize,
-        ex as usize
-      ),
-    );
-    Ok(video)
-  }
-}
-
-/// Embed host for `--wid` (external mpv). In-process libmpv rendering is disabled.
-unsafe extern "system" fn video_wnd_proc(
-  hwnd: HWND,
-  msg: u32,
-  wparam: WPARAM,
-  lparam: LPARAM,
-) -> LRESULT {
-  unsafe {
-    if msg == WM_NCHITTEST {
-      input_layer_log_nc_hit_test(hwnd);
-      return LRESULT(HTTRANSPARENT as isize);
-    }
-    if msg == WM_MPV_RENDER {
-      let posted_session = wparam.0 as u64;
-      let p = GetWindowLongPtrW(hwnd, windows::Win32::UI::WindowsAndMessaging::GWLP_USERDATA);
-      let _ = windows_libmpv_host::on_wm_mpv_render(p as *mut _, hwnd, posted_session);
-      return LRESULT(0);
-    }
-    if msg == windows::Win32::UI::WindowsAndMessaging::WM_NCDESTROY {
-      windows_libmpv_host::reclaim_renderer_from_hwnd(hwnd);
-    }
-    if msg == WM_MOUSEACTIVATE {
-      return LRESULT(MA_NOACTIVATE as isize);
-    }
-    DefWindowProcW(hwnd, msg, wparam, lparam)
-  }
-}

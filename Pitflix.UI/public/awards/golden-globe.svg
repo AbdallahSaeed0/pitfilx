@@ -1,0 +1,31 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 60 100" fill="none">
+  <defs>
+    <radialGradient id="globe" cx="38%" cy="35%" r="60%">
+      <stop offset="0%" stop-color="#FFDF70"/>
+      <stop offset="55%" stop-color="#C9920A"/>
+      <stop offset="100%" stop-color="#7A5600"/>
+    </radialGradient>
+    <linearGradient id="stem" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" stop-color="#F5C842"/>
+      <stop offset="100%" stop-color="#8B6000"/>
+    </linearGradient>
+  </defs>
+  <!-- Base -->
+  <ellipse cx="30" cy="94" rx="19" ry="5" fill="#7A5600"/>
+  <rect x="11" y="82" width="38" height="12" rx="3" fill="url(#stem)"/>
+  <ellipse cx="30" cy="82" rx="19" ry="5" fill="#F0C030"/>
+  <!-- Stem -->
+  <rect x="26" y="56" width="8" height="28" rx="2" fill="url(#stem)"/>
+  <!-- Globe sphere - large and prominent -->
+  <circle cx="30" cy="30" r="26" fill="url(#globe)"/>
+  <!-- Latitude lines -->
+  <ellipse cx="30" cy="30" rx="26" ry="8" fill="none" stroke="#8B6000" stroke-width="1.2" opacity="0.6"/>
+  <ellipse cx="30" cy="18" rx="20" ry="6" fill="none" stroke="#8B6000" stroke-width="1" opacity="0.5"/>
+  <ellipse cx="30" cy="42" rx="20" ry="6" fill="none" stroke="#8B6000" stroke-width="1" opacity="0.5"/>
+  <!-- Longitude lines -->
+  <path d="M30 4 Q48 17 48 30 Q48 43 30 56" fill="none" stroke="#8B6000" stroke-width="1.2" opacity="0.6"/>
+  <path d="M30 4 Q12 17 12 30 Q12 43 30 56" fill="none" stroke="#8B6000" stroke-width="1.2" opacity="0.6"/>
+  <line x1="30" y1="4" x2="30" y2="56" stroke="#8B6000" stroke-width="0.8" opacity="0.5"/>
+  <!-- Equator highlight -->
+  <ellipse cx="24" cy="20" rx="8" ry="6" fill="#FFDF70" opacity="0.3"/>
+</svg>

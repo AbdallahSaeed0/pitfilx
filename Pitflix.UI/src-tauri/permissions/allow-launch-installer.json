@@ -1,0 +1,13 @@
+{
+  "default": null,
+  "permission": [
+    {
+      "identifier": "allow-launch-installer",
+      "description": "Launch downloaded GitHub release installer from temp and exit",
+      "commands": {
+        "allow": ["launch_downloaded_installer_and_exit"],
+        "deny": []
+      }
+    }
+  ]
+}

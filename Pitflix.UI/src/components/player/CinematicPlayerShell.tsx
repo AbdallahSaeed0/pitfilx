@@ -10,11 +10,11 @@ export function CinematicPlayerShell({ children, className }: CinematicPlayerShe
   return (
     <div
       className={cn(
-        "flex min-h-screen flex-col items-center bg-pitflix-bg-base",
+        "flex min-h-screen flex-col bg-pitflix-bg-base",
         className
       )}
     >
-      <div className="flex w-full max-w-5xl flex-1 flex-col gap-6 px-4 py-8 sm:px-8">
+      <div className="flex w-full flex-1 flex-col items-center gap-4 px-6 py-4 sm:px-10">
         {children}
       </div>
     </div>

@@ -22,7 +22,6 @@ type PlayerTimelineBarProps = {
 
 /**
  * Companion-player timeline: elapsed / remaining, gradient progress, optional resume marker.
- * Thumbnail sprites can later replace the lower track without changing call sites.
  */
 export function PlayerTimelineBar({
   progressPct,
@@ -41,38 +40,35 @@ export function PlayerTimelineBar({
       : null;
 
   return (
-    <div className={cn("space-y-3", className)}>
-      <div className="flex items-end justify-between gap-4 tabular-nums">
-        <div>
-          <p className="text-micro uppercase tracking-wider text-pitflix-text-subtle">Elapsed</p>
-          <p className="text-lg font-semibold text-pitflix-text-primary">{fmtClock(elapsed)}</p>
-        </div>
-        <div className="text-right">
-          <p className="text-micro uppercase tracking-wider text-pitflix-text-subtle">Remaining</p>
-          <p className="text-lg font-semibold text-pitflix-text-muted">−{fmtClock(remaining)}</p>
-        </div>
-      </div>
-
-      <div className="relative pt-1">
+    <div className={cn("space-y-2", className)}>
+      {/* Progress bar */}
+      <div className="relative">
         <div
-          className="relative h-2.5 overflow-hidden rounded-full bg-white/[0.08] ring-1 ring-white/[0.06]"
+          className="relative h-2 overflow-hidden rounded-full bg-white/[0.08] ring-1 ring-white/[0.06]"
           title="Progress"
         >
+          {/* Playback progress */}
           <div
-            className="absolute inset-y-0 left-0 rounded-full bg-gradient-to-r from-pitflix-accent-primary via-violet-500 to-fuchsia-500 shadow-[0_0_20px_rgba(139,92,246,0.35)] transition-[width] duration-500 ease-out"
+            className="absolute inset-y-0 left-0 rounded-full bg-gradient-to-r from-pitflix-accent-primary via-violet-500 to-fuchsia-500 shadow-[0_0_16px_rgba(139,92,246,0.35)] transition-[width] duration-500 ease-out"
             style={{ width: `${pct}%` }}
           />
+
+          {/* Resume marker */}
           {resumePct != null && resumePct > 1 && resumePct < 99 ? (
             <div
-              className="pointer-events-none absolute top-1/2 z-10 h-4 w-0.5 -translate-y-1/2 rounded-full bg-amber-300 shadow-[0_0_8px_rgba(252,211,77,0.6)]"
+              className="pointer-events-none absolute top-1/2 z-10 h-3.5 w-0.5 -translate-y-1/2 rounded-full bg-amber-300 shadow-[0_0_6px_rgba(252,211,77,0.6)]"
               style={{ left: `calc(${resumePct}% - 1px)` }}
               title="Resumed from here"
             />
           ) : null}
         </div>
-        <p className="mt-2 text-center text-micro text-pitflix-text-subtle">
-          {dur > 0 ? `${Math.round(pct)}% watched` : "Duration loading…"}
-        </p>
+      </div>
+
+      {/* Compact time row */}
+      <div className="flex items-center justify-between tabular-nums text-xs text-pitflix-text-subtle">
+        <span className="font-medium text-pitflix-text-muted">{fmtClock(elapsed)}</span>
+        <span>{dur > 0 ? `${Math.round(pct)}%` : "loading…"}</span>
+        <span>−{fmtClock(remaining)}</span>
       </div>
     </div>
   );

@@ -179,7 +179,7 @@ export function HomeSectionRenderer({
     queryKey: qKey,
     queryFn: () => postHomeSectionQuery(queryBody),
     enabled: apiEnabled,
-    staleTime: section.sourceType === "movie_night" ? 0 : 90_000,
+    staleTime: section.sourceType === "movie_night" ? 0 : 5 * 60_000,
   });
 
   const cards = (dataQ.data ?? []) as MediaCard[];
