@@ -2,7 +2,7 @@
 #![allow(non_camel_case_types)] // C API / FFI names (`mpv_*`, `MPV_*`).
 
 use std::{
-  ffi::{c_char, c_int, c_void, CString},
+  ffi::{c_char, c_int, c_void, CStr, CString},
   path::Path,
   ptr,
   sync::Arc,
@@ -78,12 +78,23 @@ pub const MPV_EVENT_SHUTDOWN: c_int = 11;
 // Minimal event ids for Phase 1.
 pub const MPV_EVENT_NONE: c_int = 0;
 pub const MPV_EVENT_PROPERTY_CHANGE: c_int = 22;
+/// Only observed when audio passthrough is enabled (see `quality_enhancement.rs`) — used to
+/// detect the `audio-spdif` log line confirming passthrough actually engaged.
+pub const MPV_EVENT_LOG_MESSAGE: c_int = 2;
 
 #[repr(C)]
 pub struct mpv_event_property {
   pub name: *const c_char,
   pub format: mpv_format,
   pub data: *mut c_void,
+}
+
+#[repr(C)]
+pub struct mpv_event_log_message {
+  pub prefix: *const c_char,
+  pub level: *const c_char,
+  pub text: *const c_char,
+  pub log_level: c_int,
 }
 
 type mpv_create_fn = unsafe extern "C" fn() -> *mut mpv_handle;
@@ -99,6 +110,7 @@ type mpv_observe_property_fn =
   unsafe extern "C" fn(*mut mpv_handle, u64, *const c_char, mpv_format) -> c_int;
 type mpv_wait_event_fn = unsafe extern "C" fn(*mut mpv_handle, f64) -> *const mpv_event;
 type mpv_free_fn = unsafe extern "C" fn(*mut c_void);
+type mpv_request_log_messages_fn = unsafe extern "C" fn(*mut mpv_handle, *const c_char) -> c_int;
 
 type mpv_render_context_create_fn =
   unsafe extern "C" fn(*mut *mut mpv_render_context, *mut mpv_handle, *mut mpv_render_param) -> c_int;
@@ -120,6 +132,7 @@ pub struct LibMpv {
   pub mpv_observe_property: mpv_observe_property_fn,
   pub mpv_wait_event: mpv_wait_event_fn,
   pub mpv_free: mpv_free_fn,
+  pub mpv_request_log_messages: Option<mpv_request_log_messages_fn>,
   pub mpv_render_context_create: mpv_render_context_create_fn,
   pub mpv_render_context_free: mpv_render_context_free_fn,
   pub mpv_render_context_set_update_callback: mpv_render_context_set_update_callback_fn,
@@ -159,6 +172,10 @@ impl LibMpv {
       let mpv_wait_event =
         *lib.get::<mpv_wait_event_fn>(b"mpv_wait_event\0").map_err(|e| e.to_string())?;
       let mpv_free = *lib.get::<mpv_free_fn>(b"mpv_free\0").map_err(|e| e.to_string())?;
+      let mpv_request_log_messages = lib
+        .get::<mpv_request_log_messages_fn>(b"mpv_request_log_messages\0")
+        .ok()
+        .map(|f| *f);
       let mpv_render_context_create = *lib
         .get::<mpv_render_context_create_fn>(b"mpv_render_context_create\0")
         .map_err(|e| e.to_string())?;
@@ -189,6 +206,7 @@ impl LibMpv {
         mpv_observe_property,
         mpv_wait_event,
         mpv_free,
+        mpv_request_log_messages,
         mpv_render_context_create,
         mpv_render_context_free,
         mpv_render_context_set_update_callback,
@@ -309,6 +327,34 @@ impl MpvClient {
     Ok(flag != 0)
   }
 
+  /// Read a property as a JSON string (works for complex properties like `track-list`).
+  pub fn get_property_string(&self, name: &str) -> Result<String, String> {
+    let Some(f) = self.api.mpv_get_property else {
+      return Err("mpv_get_property not exported by libmpv".to_string());
+    };
+    let n = CString::new(name).map_err(|e| e.to_string())?;
+    let mut ptr: *mut c_char = ptr::null_mut();
+    let rc = unsafe {
+      (f)(
+        self.handle,
+        n.as_ptr(),
+        mpv_format::MPV_FORMAT_STRING as c_int,
+        &mut ptr as *mut *mut c_char as *mut c_void,
+      )
+    };
+    if rc < 0 {
+      return Err(format!("mpv_get_property {name} rc={rc}"));
+    }
+    if ptr.is_null() {
+      return Ok(String::new());
+    }
+    let s = unsafe { CStr::from_ptr(ptr) }.to_string_lossy().into_owned();
+    unsafe {
+      (self.api.mpv_free)(ptr as *mut c_void);
+    }
+    Ok(s)
+  }
+
   pub fn set_pause(&self, paused: bool) -> Result<(), String> {
     if let Some(f) = self.api.mpv_set_property {
       let name = CString::new("pause").map_err(|e| e.to_string())?;
@@ -333,6 +379,21 @@ impl MpvClient {
     let rc = unsafe { (self.api.mpv_observe_property)(self.handle, id, n.as_ptr(), format) };
     if rc < 0 {
       return Err(format!("mpv_observe_property failed: {rc}"));
+    }
+    Ok(())
+  }
+
+  /// Subscribes to `MPV_EVENT_LOG_MESSAGE` at the given minimum level (e.g. `"v"`). Only used
+  /// for audio-passthrough confirmation (see `quality_enhancement.rs`); a no-op (`Ok`) if this
+  /// libmpv build doesn't export `mpv_request_log_messages`, so callers can't break on it.
+  pub fn request_log_messages(&self, min_level: &str) -> Result<(), String> {
+    let Some(f) = self.api.mpv_request_log_messages else {
+      return Ok(());
+    };
+    let level = CString::new(min_level).map_err(|e| e.to_string())?;
+    let rc = unsafe { (f)(self.handle, level.as_ptr()) };
+    if rc < 0 {
+      return Err(format!("mpv_request_log_messages failed: {rc}"));
     }
     Ok(())
   }

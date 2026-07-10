@@ -150,10 +150,7 @@ export function NextEpisodesSection({ embedded = false, variant = "priority" }: 
         />
       </div>
       <div className="max-h-[min(420px,52vh)] space-y-2.5 overflow-y-auto scroll-smooth pr-1">
-        {rows.map((r) => {
-          const lib = r.libraryShowId != null;
-          const href = lib ? `/series/${r.libraryShowId}` : `https://www.themoviedb.org/tv/${r.showTmdbId}`;
-          return (
+        {rows.map((r) => (
             <NextEpisodeAirRowLink
               key={`${r.kind ?? "lib"}-${r.showTmdbId}-${r.airDate}-${r.season}-${r.episodeNumber}`}
               showTitle={r.showTitle}
@@ -164,11 +161,10 @@ export function NextEpisodesSection({ embedded = false, variant = "priority" }: 
               posterUrl={r.posterUrl}
               pinned={!!r.pinned}
               kind={r.kind === "followed" ? "followed" : undefined}
-              href={href}
-              external={!lib}
+              libraryShowId={r.libraryShowId}
+              showTmdbId={r.showTmdbId}
             />
-          );
-        })}
+          ))}
       </div>
     </div>
   );

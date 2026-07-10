@@ -13,14 +13,16 @@ public sealed class LibraryAutoScanService : BackgroundService
     private readonly IServiceScopeFactory _scopes;
     private readonly ScanRuntime _scanRuntime;
     private readonly RatingsRefreshQueue _ratingsRefreshQueue;
+    private readonly ITmdbClientFactory _tmdbClientFactory;
     private readonly ILogger<LibraryAutoScanService> _logger;
 
     public LibraryAutoScanService(IServiceScopeFactory scopes, ScanRuntime scanRuntime, RatingsRefreshQueue ratingsRefreshQueue,
-        ILogger<LibraryAutoScanService> logger)
+        ITmdbClientFactory tmdbClientFactory, ILogger<LibraryAutoScanService> logger)
     {
         _scopes = scopes;
         _scanRuntime = scanRuntime;
         _ratingsRefreshQueue = ratingsRefreshQueue;
+        _tmdbClientFactory = tmdbClientFactory;
         _logger = logger;
     }
 
@@ -66,7 +68,7 @@ public sealed class LibraryAutoScanService : BackgroundService
 
     private async Task RunQuietScanAsync(CancellationToken cancellationToken)
     {
-        var tmdb = TmdbClientFactory.Create();
+        var tmdb = _tmdbClientFactory.Create();
         if (tmdb == null)
         {
             _logger.LogWarning("Library auto-scan skipped: TMDB API key is not configured.");

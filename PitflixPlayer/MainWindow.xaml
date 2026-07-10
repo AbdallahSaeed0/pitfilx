@@ -24,8 +24,21 @@
         Layer 1 only: the native video surface.
         No WPF elements are drawn over the HwndHost here — that causes the
         WPF airspace crash.  All controls live in a sibling ControlsWindow.
+
+        Margin insets the video 40px from the top and 54px from the bottom —
+        matching ControlsWindow's TitlebarOverlay/ControlsOverlay heights —
+        so those bars sit on THIS window's own Background="Black" instead of
+        directly over the video.  This window is a normal AllowsTransparency
+        ="False" window: its background is painted by standard, always-
+        reliable opaque GDI/DWM compositing, with none of the per-pixel-alpha
+        layered-window flakiness that ControlsWindow (which must stay
+        AllowsTransparency=True for its click-through video area and popups)
+        is subject to.  So even if ControlsWindow's own bar background ever
+        fails to composite, what's directly behind it is guaranteed solid
+        black — never the desktop or another app's window.
     -->
     <local:VideoHwndHost x:Name="VideoPanel"
                          HorizontalAlignment="Stretch"
-                         VerticalAlignment="Stretch"/>
+                         VerticalAlignment="Stretch"
+                         Margin="0,40,0,54"/>
 </Window>

@@ -43,6 +43,9 @@ public class TmdbSearchResult
     [JsonProperty("popularity")]
     public double Popularity { get; set; }
 
+    [JsonProperty("vote_average")]
+    public double VoteAverage { get; set; }
+
     [JsonProperty("original_language")]
     public string? OriginalLanguage { get; set; }
 }

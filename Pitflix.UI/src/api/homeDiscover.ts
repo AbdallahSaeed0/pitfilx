@@ -87,6 +87,8 @@ export type WatchingCurrentlyCard = {
   totalEpisodes: number;
   progressFraction: number;
   lastPlayedAtUtc: string;
+  /** False when the next episode has aired on TMDB but isn't downloaded into the library yet. */
+  nextEpisodeDownloaded: boolean;
 };
 
 function normalizeWatchingRow(raw: Record<string, unknown>): WatchingCurrentlyCard {
@@ -119,6 +121,7 @@ function normalizeWatchingRow(raw: Record<string, unknown>): WatchingCurrentlyCa
     totalEpisodes: n(raw.totalEpisodes ?? raw.TotalEpisodes),
     progressFraction: Number(raw.progressFraction ?? raw.ProgressFraction ?? 0) || 0,
     lastPlayedAtUtc: String(raw.lastPlayedAtUtc ?? raw.LastPlayedAtUtc ?? ""),
+    nextEpisodeDownloaded: (raw.nextEpisodeDownloaded ?? raw.NextEpisodeDownloaded ?? true) !== false,
   };
 }
 
@@ -127,6 +130,9 @@ export const getWatchingCurrently = () =>
     const rows = r.data as unknown[];
     return rows.map((row) => normalizeWatchingRow(row as Record<string, unknown>));
   });
+
+export const dismissWatchingCurrently = (showId: number) =>
+  api.post<{ ok: boolean }>(`/home/watching-currently/${showId}/dismiss`).then((r) => r.data);
 
 export type TvSearchHit = { tmdbId: number; title: string; year: number | null; posterUrl: string | null };
 

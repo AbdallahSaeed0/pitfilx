@@ -102,6 +102,19 @@ public partial class ControlsWindow : Window
     private POINT  _lastCursorPos;
     private IntPtr _ownerHandle = IntPtr.Zero;
 
+    // ── Fade self-heal ──────────────────────────────────────────────────────
+    // WPF opacity DoubleAnimations run on the composition clock, which can
+    // STALL partway on an AllowsTransparency (layered) window while heavy
+    // video is playing — leaving ControlsOverlay/TitlebarOverlay frozen at a
+    // partial opacity (the intermittent "translucent control bar" bug, where
+    // whatever is behind the whole app shows through the half-painted bar).
+    // We record what the controls' opacity SHOULD settle to and by WHEN; the
+    // always-running cursor-poll tick then snaps any drifted value back to
+    // target once that deadline has passed.  Self-corrects within ~200 ms no
+    // matter why the clock stalled.
+    private double   _fadeTargetControls = 1.0;
+    private DateTime _fadeDeadlineUtc    = DateTime.MinValue;
+
     // ── Skip indicator ────────────────────────────────────────────────────────
     private DispatcherTimer? _skipTimer;
 
@@ -164,7 +177,64 @@ public partial class ControlsWindow : Window
             _cursorPollTimer.Start();
         };
 
+        // The layered (AllowsTransparency) surface often comes up with the
+        // control-bar background NOT yet composited — it reads transparent
+        // until the user moves the window, which is exactly what the user
+        // reported.  ContentRendered fires once after the first real paint;
+        // force the move-equivalent recomposite there (and once more shortly
+        // after, since the video-attach/owner-resize that happens right around
+        // launch can re-stale the surface).
+        ContentRendered += (_, _) =>
+        {
+            ForceLayeredRepaint();
+            Dispatcher.BeginInvoke(new Action(ForceLayeredRepaint),
+                                   DispatcherPriority.ApplicationIdle);
+            Dispatcher.BeginInvoke(new Action(() => ShowControls(animate: false)),
+                                   DispatcherPriority.Render);
+        };
+
         Closed += (_, _) => _cursorPollTimer.Stop();
+    }
+
+    /// <summary>
+    /// Forces the Win32 layered window to re-present its per-pixel-alpha
+    /// surface — the programmatic equivalent of the user nudging the window,
+    /// which is what makes the transparent control-bar background snap to its
+    /// proper black.
+    ///
+    /// A zero-move SWP_FRAMECHANGED is NOT enough: with the window rect
+    /// unchanged the DWM has no reason to re-blit the layered surface.  Only an
+    /// ACTUAL position change triggers the re-present.  So we move the window
+    /// 1 px, let it render at the new position (which repaints the surface),
+    /// then move it straight back — net-zero displacement, no visible jump.
+    /// </summary>
+    public void ForceLayeredRepaint()
+    {
+        // ── Primary: toggle the WINDOW's opacity ──
+        // Any change to a layered window's Opacity marks its per-pixel-alpha
+        // surface dirty, forcing WPF to re-run UpdateLayeredWindow on the next
+        // composite — even if the 0.99 value never visibly lands.  This is the
+        // most reliable re-present trigger because, unlike a net-zero move, it
+        // can't be coalesced away by the window manager.  0.99 for one frame is
+        // imperceptible.
+        BeginAnimation(OpacityProperty, null);   // drop any clock holding Opacity
+        Opacity = 0.99;
+        InvalidateVisual();
+        Dispatcher.BeginInvoke(new Action(() => Opacity = 1.0),
+                               DispatcherPriority.Render);
+
+        // ── Secondary: an actual 1 px move-and-restore ──
+        // Belt-and-suspenders: a real rect change asks the DWM to re-blit too.
+        var hwnd = new WindowInteropHelper(this).Handle;
+        if (hwnd == IntPtr.Zero || !NativeMethods.GetWindowRect(hwnd, out var r)) return;
+        const uint flags = NativeMethods.SWP_NOSIZE |
+                           NativeMethods.SWP_NOZORDER |
+                           NativeMethods.SWP_NOACTIVATE;
+        int origLeft = r.Left, origTop = r.Top;
+        NativeMethods.SetWindowPos(hwnd, IntPtr.Zero, origLeft, origTop + 1, 0, 0, flags);
+        Dispatcher.BeginInvoke(new Action(() =>
+            NativeMethods.SetWindowPos(hwnd, IntPtr.Zero, origLeft, origTop, 0, 0, flags)),
+            DispatcherPriority.Render);
     }
 
     // =========================================================================
@@ -201,7 +271,58 @@ public partial class ControlsWindow : Window
             {
                 if (Owner.WindowState == WindowState.Minimized)
                     WindowState = WindowState.Minimized;
-                else { WindowState = WindowState.Normal; SyncFromOwner(); }
+                else
+                {
+                    WindowState = WindowState.Normal;
+                    SyncFromOwner();
+                    // A fade-out (HideControls) that was mid-flight at the
+                    // moment of minimizing keeps running on its own clock —
+                    // WPF animation clocks are time-based, not render-based,
+                    // so they keep ticking while the window is minimized and
+                    // can land ControlsOverlay/TitlebarOverlay at a partial
+                    // opacity by the time we restore.  Force a clean re-show,
+                    // instantly (no fade) — animating here would itself show
+                    // a brief translucent bar right as the window reappears.
+                    ShowControls(animate: false);
+                    // …and AGAIN, deferred.  This handler runs mid-transition:
+                    // WPF finishes the minimized→restored render AFTER we return,
+                    // and on a layered (AllowsTransparency) window that final
+                    // pass was clobbering the opacity we just set / failing to
+                    // recomposite — leaving the bar stuck translucent.  Re-apply
+                    // at Loaded priority so it lands after the window has fully
+                    // settled, which is what actually makes it stick opaque.
+                    Dispatcher.BeginInvoke(
+                        new Action(() =>
+                        {
+                            if (Owner is not null && Owner.WindowState != WindowState.Minimized)
+                            {
+                                ShowControls(animate: false);
+                                ForceLayeredRepaint();   // re-present after restore
+                                // None of the opacity/recomposite fixes above
+                                // touch the REAL cause when this is hit: after
+                                // minimizing and restoring, the desktop's
+                                // previously-focused window (e.g. the IDE) can
+                                // legitimately be sitting ABOVE us in z-order —
+                                // restoring from Minimized doesn't itself
+                                // guarantee foreground.  This is the "control
+                                // bar shows the IDE through it" bug, not a
+                                // transparency bug.  Force both windows to the
+                                // front, same proven pattern used at app launch.
+                                Owner.Topmost = true;
+                                Owner.Activate();
+                                Topmost = true;
+                                Activate();
+                                _ = Dispatcher.InvokeAsync(async () =>
+                                {
+                                    await Task.Delay(400).ConfigureAwait(true);
+                                    if (Owner is not null) Owner.Topmost = false;
+                                    Topmost = false;
+                                }, DispatcherPriority.Background);
+                            }
+                        }),
+                        DispatcherPriority.Loaded);
+                    if (!_isPaused) { _hideTimer.Stop(); _hideTimer.Start(); }
+                }
             };
         }
 
@@ -235,6 +356,28 @@ public partial class ControlsWindow : Window
                 && local.Y <= child.ActualHeight;
         }
         catch { return false; }
+    }
+
+    /// <summary>
+    /// Explicitly asserts that ControlsWindow sits above MainWindow in the
+    /// Win32 z-order — the bars (and the rest of this window) must ALWAYS
+    /// render in front of the video, never behind it.  WPF/Windows normally
+    /// keeps an OWNED window above its owner automatically, but that's an
+    /// implicit convention, not something this app enforces — and every
+    /// "video showing where the bar should be" bug investigated so far
+    /// turned out to be something else entirely (geometry, compositing,
+    /// focus).  Rather than keep chasing individual causes, this makes the
+    /// stacking order itself a hard guarantee: called every time we already
+    /// touch geometry (SyncFromOwner), so it's continuously reasserted, not
+    /// just set once at startup.
+    /// </summary>
+    private void EnsureAboveOwner()
+    {
+        var hwnd = new WindowInteropHelper(this).Handle;
+        if (hwnd == IntPtr.Zero) return;
+        NativeMethods.SetWindowPos(
+            hwnd, NativeMethods.HWND_TOP, 0, 0, 0, 0,
+            NativeMethods.SWP_NOMOVE | NativeMethods.SWP_NOSIZE | NativeMethods.SWP_NOACTIVATE);
     }
 
     /// <summary>Reads Owner's Win32 rect and applies it to ControlsWindow.</summary>
@@ -322,6 +465,7 @@ public partial class ControlsWindow : Window
             }
         }
         finally { _syncingPosition = false; }
+        EnsureAboveOwner();
     }
 
     private IntPtr HitTestHook(IntPtr hwnd, int msg, IntPtr wParam, IntPtr lParam,
@@ -918,6 +1062,20 @@ public partial class ControlsWindow : Window
 
     private void OnCursorPoll(object? sender, EventArgs e)
     {
+        // ── Fade self-heal (runs EVERY tick, before any early-return) ──
+        // If a fade's time budget has elapsed but the overlay opacity hasn't
+        // actually reached its target, the composition clock stalled (common
+        // on this layered transparent window during heavy playback) — snap the
+        // value home so the bar can't get stuck translucent.  Kept above the
+        // IsCursorInsideOwner gate so it heals even when the cursor is parked
+        // outside the window.
+        HealStalledFade();
+        // Same self-heal philosophy, for z-order: re-assert ControlsWindow is
+        // above MainWindow every tick (cheap no-op when it already is), so
+        // the bars can't end up rendering behind the video even if something
+        // outside our control momentarily disrupts the stacking order.
+        EnsureAboveOwner();
+
         GetCursorPos(out var current);
         bool moved = current.X != _lastCursorPos.X || current.Y != _lastCursorPos.Y;
         _lastCursorPos = current;
@@ -930,6 +1088,32 @@ public partial class ControlsWindow : Window
             _hideTimer.Stop();
             if (!_isPaused) _hideTimer.Start();
         }
+    }
+
+    /// <summary>
+    /// Safety net for stalled opacity fades on the layered transparent window.
+    /// Once a fade's deadline has passed, the overlays MUST be sitting at
+    /// <see cref="_fadeTargetControls"/> (and the thin progress strip at its
+    /// inverse).  If they've drifted — the composition clock stalled mid-fade —
+    /// clear the animation and hard-set the final values so nothing stays stuck
+    /// translucent.  Cheap: only acts when there's an actual mismatch.
+    /// </summary>
+    private void HealStalledFade()
+    {
+        if (DateTime.UtcNow < _fadeDeadlineUtc) return;   // fade still legitimately in progress
+
+        double target = _fadeTargetControls;
+        if (Math.Abs(ControlsOverlay.Opacity - target) < 0.001
+            && Math.Abs(TitlebarOverlay.Opacity - target) < 0.001)
+            return;                                       // already settled — nothing to do
+
+        ControlsOverlay.BeginAnimation(OpacityProperty, null);
+        TitlebarOverlay.BeginAnimation(OpacityProperty, null);
+        ProgressBarStrip.BeginAnimation(OpacityProperty, null);
+        ControlsOverlay.Opacity  = target;
+        TitlebarOverlay.Opacity  = target;
+        // Progress strip is the inverse: shown only when controls are hidden.
+        ProgressBarStrip.Opacity = 1.0 - target;
     }
 
     private bool IsCursorInsideOwner()
@@ -954,20 +1138,49 @@ public partial class ControlsWindow : Window
         catch { return false; }
     }
 
-    private void ShowControls()
+    internal void ShowControls(bool animate = true)
     {
         _controlsVisible = true;
-        var fadeIn = new DoubleAnimation(1.0, TimeSpan.FromMilliseconds(100));
-        ControlsOverlay.BeginAnimation(OpacityProperty, fadeIn);
-        TitlebarOverlay.BeginAnimation(OpacityProperty, fadeIn);
-        // Hide the thin progress bar while full controls are visible
-        var hideBar = new DoubleAnimation(0.0, TimeSpan.FromMilliseconds(100));
-        ProgressBarStrip.BeginAnimation(OpacityProperty, hideBar);
+        // Target = fully opaque; record the deadline so the self-heal poll can
+        // rescue a stalled fade (see _fadeTargetControls field comment).
+        _fadeTargetControls = 1.0;
+        _fadeDeadlineUtc    = DateTime.UtcNow.AddMilliseconds(animate ? 140 : 0);
+        if (animate)
+        {
+            var fadeIn = new DoubleAnimation(1.0, TimeSpan.FromMilliseconds(100));
+            ControlsOverlay.BeginAnimation(OpacityProperty, fadeIn);
+            TitlebarOverlay.BeginAnimation(OpacityProperty, fadeIn);
+            // Hide the thin progress bar while full controls are visible
+            var hideBar = new DoubleAnimation(0.0, TimeSpan.FromMilliseconds(100));
+            ProgressBarStrip.BeginAnimation(OpacityProperty, hideBar);
+        }
+        else
+        {
+            // Snap instantly — no fade.  Used right after restoring from
+            // Minimized: a 100 ms fade-in here is exactly the "translucent
+            // bar over the video" glitch the user is seeing, since the
+            // overlay briefly renders at less than full opacity while the
+            // animation plays right as the window becomes visible again.
+            ControlsOverlay.BeginAnimation(OpacityProperty, null);
+            TitlebarOverlay.BeginAnimation(OpacityProperty, null);
+            ProgressBarStrip.BeginAnimation(OpacityProperty, null);
+            ControlsOverlay.Opacity = 1.0;
+            TitlebarOverlay.Opacity = 1.0;
+            ProgressBarStrip.Opacity = 0.0;
+            // Nudge the layered (AllowsTransparency) window to recomposite.
+            // After a minimize→restore the per-pixel alpha surface can keep
+            // showing the stale (translucent) frame even though the element
+            // opacity is now 1.0; forcing a re-render refreshes it.
+            ControlsOverlay.InvalidateVisual();
+            TitlebarOverlay.InvalidateVisual();
+        }
     }
 
     private void HideControls()
     {
         _controlsVisible = false;
+        _fadeTargetControls = 0.0;
+        _fadeDeadlineUtc    = DateTime.UtcNow.AddMilliseconds(440);
         var fadeOut = new DoubleAnimation(0.0, TimeSpan.FromMilliseconds(400));
         ControlsOverlay.BeginAnimation(OpacityProperty, fadeOut);
         TitlebarOverlay.BeginAnimation(OpacityProperty, fadeOut);
@@ -1751,6 +1964,11 @@ public partial class ControlsWindow : Window
                 // Our window inherits Topmost from Owner automatically when
                 // Owner is set, but force it for the case where Owner is null.
                 this.Topmost = Owner?.Topmost ?? this.Topmost;
+                // Toggling Topmost changes z-order but doesn't fire
+                // StateChanged, so the mpv child window (VideoHwndHost) never
+                // gets re-poked — left the video frame frozen/stale until an
+                // unrelated resize happened.  Force the same re-sync here.
+                if (Owner is MainWindow mw) mw.RefitVideoChildExternal();
             }
         ));
 
@@ -2028,6 +2246,26 @@ public partial class ControlsWindow : Window
             }
             finally { _syncingPosition = false; }
             UpdateMaxRestoreIcon(false);
+            // Restoring resized the layered window; re-present so the bar's
+            // background doesn't come back transparent (case 2 the user hit:
+            // fullscreen → double-click to restore).  Deferred so it runs
+            // after WPF finishes the resize/layout.
+            _ = Dispatcher.BeginInvoke(new Action(ForceLayeredRepaint),
+                                       DispatcherPriority.Loaded);
+            _ = Dispatcher.BeginInvoke(new Action(() => ShowControls(animate: false)),
+                                       DispatcherPriority.Render);
+            // Restoring from fullscreen via double-click-titlebar — same
+            // z-order risk as the Owner.StateChanged minimize-restore path:
+            // whatever app was focused isn't guaranteed to end up behind us.
+            if (Owner is not null) { Owner.Topmost = true; Owner.Activate(); }
+            Topmost = true;
+            Activate();
+            _ = Dispatcher.InvokeAsync(async () =>
+            {
+                await Task.Delay(400).ConfigureAwait(true);
+                if (Owner is not null) Owner.Topmost = false;
+                Topmost = false;
+            }, DispatcherPriority.Background);
         }
         else
         {
@@ -2046,6 +2284,8 @@ public partial class ControlsWindow : Window
                 Owner.WindowState = WindowState.Maximized;
             SyncFromOwner();
             UpdateMaxRestoreIcon(true);
+            _ = Dispatcher.BeginInvoke(new Action(ForceLayeredRepaint),
+                                       DispatcherPriority.Loaded);
         }
     }
 
@@ -2214,7 +2454,7 @@ public partial class ControlsWindow : Window
     // by similar speech rhythm across unrelated scenes, not just low-confidence heuristic
     // guesses). SetIntroOutroSkipData still caches fetched data; only the UI is suppressed.
     // Flip back to false once fingerprinting is more discriminating.
-    private const bool SkipOverlayDisabled = true;
+    private const bool SkipOverlayDisabled = false;
 
     private void EvaluateIntroOutroSkip()
     {

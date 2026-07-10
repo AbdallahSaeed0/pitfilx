@@ -25,6 +25,33 @@ public sealed class TmdbClient
     private static readonly System.Collections.Concurrent.ConcurrentDictionary<int, TmdbPersonDetails?>
         _personCache = new();
 
+    // Same key scheme as _artworkCache. Avoids re-hitting external_ids once per episode when a season
+    // page resolves the same series' IMDb id N times in a row.
+    private static readonly System.Collections.Concurrent.ConcurrentDictionary<string, string?>
+        _imdbIdCache = new(StringComparer.OrdinalIgnoreCase);
+
+    // Season metadata is effectively immutable once a season has aired — cache it for the app's
+    // lifetime rather than re-fetching it from TMDB on every series-detail or season-page visit.
+    // Keyed "tvTmdbId:season".
+    private static readonly System.Collections.Concurrent.ConcurrentDictionary<string,
+        (string Name, string? PosterPath, string? AirDate, int EpisodeCount, double? VoteAverage)?>
+        _seasonHeaderCache = new(StringComparer.OrdinalIgnoreCase);
+
+    private static readonly System.Collections.Concurrent.ConcurrentDictionary<string,
+        IReadOnlyDictionary<int, (string? Name, string? StillPath, double? VoteAverage, string? Overview, string? AirDate, int? Runtime)>?>
+        _seasonEpisodesCache = new(StringComparer.OrdinalIgnoreCase);
+
+    private static readonly System.Collections.Concurrent.ConcurrentDictionary<int, int?>
+        _numberOfSeasonsCache = new();
+
+    // "Next episode to air" only changes when an episode actually airs or a new season is announced —
+    // a short TTL avoids re-querying every show in the library (sometimes 100s of shows) on every
+    // home-page / coming-soon / next-episodes load.
+    private static readonly TimeSpan NextAiringCacheTtl = TimeSpan.FromHours(6);
+    private static readonly System.Collections.Concurrent.ConcurrentDictionary<int,
+        (DateTime CachedAtUtc, (JObject? NextEpisode, string? ShowName)? Value)>
+        _nextAiringCache = new();
+
     public TmdbClient(HttpClient http, string apiKey)
     {
         _http = http;
@@ -61,12 +88,64 @@ public sealed class TmdbClient
         }
     }
 
+    /// <summary>Per-episode cast (regular + guest stars) and crew (director etc.) from
+    /// <c>tv/{{id}}/season/{{s}}/episode/{{e}}/credits</c> — unlike the show-level credits endpoint,
+    /// this reflects who actually directed THIS episode, not the show's overall Executive Producer.</summary>
+    public async Task<(List<TmdbCastMember> Cast, List<TmdbCrewMember> Crew)?> TryGetTvEpisodeCreditsAsync(
+        int tvTmdbId, int seasonNumber, int episodeNumber, CancellationToken cancellationToken = default)
+    {
+        if (tvTmdbId <= 0 || seasonNumber < 0 || episodeNumber <= 0)
+            return null;
+
+        var url = AbsoluteApiUrl(
+            $"tv/{tvTmdbId}/season/{seasonNumber}/episode/{episodeNumber}/credits?api_key={Uri.EscapeDataString(_apiKey)}&language=en-US");
+        try
+        {
+            var json = await _http.GetStringAsync(url, cancellationToken).ConfigureAwait(false);
+            var (cast, crew) = ParseFullCreditsResponse(json);
+
+            // Episode credits carry episode-specific guest stars in a separate array, not in "cast".
+            var root = JObject.Parse(json);
+            if (root["guest_stars"] is JArray guestArr)
+            {
+                var seen = new HashSet<int>(cast.Select(c => c.Id));
+                var order = cast.Count;
+                foreach (var g in guestArr)
+                {
+                    var id = (int?)g?["id"] ?? 0;
+                    if (id <= 0 || !seen.Add(id))
+                        continue;
+                    cast.Add(new TmdbCastMember
+                    {
+                        Id = id,
+                        Name = NormalizeCastPersonName((string?)g?["name"]),
+                        Character = NormalizeCastCharacter((string?)g?["character"]),
+                        ProfilePath = (string?)g?["profile_path"] ?? "",
+                        BillingOrder = order++
+                    });
+                    if (cast.Count >= MaxTopBilledCast)
+                        break;
+                }
+            }
+
+            return (cast, crew);
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
     /// <summary>TV season episode list (fast path to get stills for a whole season).</summary>
-    public async Task<IReadOnlyDictionary<int, (string? Name, string? StillPath, double? VoteAverage, string? Overview)>?> TryGetTvSeasonEpisodesAsync(
+    public async Task<IReadOnlyDictionary<int, (string? Name, string? StillPath, double? VoteAverage, string? Overview, string? AirDate, int? Runtime)>?> TryGetTvSeasonEpisodesAsync(
         int tvTmdbId, int seasonNumber, CancellationToken cancellationToken = default)
     {
         if (tvTmdbId <= 0 || seasonNumber < 0)
             return null;
+
+        var cacheKey = $"{tvTmdbId}:{seasonNumber}";
+        if (_seasonEpisodesCache.TryGetValue(cacheKey, out var cachedMap))
+            return cachedMap;
 
         var url = AbsoluteApiUrl(
             $"tv/{tvTmdbId}/season/{seasonNumber}?api_key={Uri.EscapeDataString(_apiKey)}&language=en-US");
@@ -76,9 +155,14 @@ public sealed class TmdbClient
             var root = JObject.Parse(json);
             var eps = root["episodes"] as JArray;
             if (eps == null || eps.Count == 0)
-                return new Dictionary<int, (string?, string?, double?, string?)>();
+            {
+                IReadOnlyDictionary<int, (string?, string?, double?, string?, string?, int?)> empty =
+                    new Dictionary<int, (string?, string?, double?, string?, string?, int?)>();
+                _seasonEpisodesCache[cacheKey] = empty;
+                return empty;
+            }
 
-            var map = new Dictionary<int, (string? Name, string? StillPath, double? VoteAverage, string? Overview)>();
+            var map = new Dictionary<int, (string? Name, string? StillPath, double? VoteAverage, string? Overview, string? AirDate, int? Runtime)>();
             foreach (var t in eps)
             {
                 var num = (int?)t?["episode_number"] ?? 0;
@@ -88,12 +172,17 @@ public sealed class TmdbClient
                 var still = (string?)t?["still_path"];
                 var vote = (double?)t?["vote_average"];
                 var overview = (string?)t?["overview"];
+                var air = (string?)t?["air_date"];
+                var runtime = (int?)t?["runtime"];
                 map[num] = (string.IsNullOrWhiteSpace(name) ? null : name.Trim(),
                     string.IsNullOrWhiteSpace(still) ? null : still,
                     vote is > 0 ? vote : null,
-                    string.IsNullOrWhiteSpace(overview) ? null : overview.Trim());
+                    string.IsNullOrWhiteSpace(overview) ? null : overview.Trim(),
+                    string.IsNullOrWhiteSpace(air) ? null : air.Trim(),
+                    runtime is > 0 ? runtime : null);
             }
 
+            _seasonEpisodesCache[cacheKey] = map;
             return map;
         }
         catch
@@ -108,13 +197,18 @@ public sealed class TmdbClient
         if (tvTmdbId <= 0)
             return null;
 
+        if (_numberOfSeasonsCache.TryGetValue(tvTmdbId, out var cachedN))
+            return cachedN;
+
         var url = AbsoluteApiUrl($"tv/{tvTmdbId}?api_key={Uri.EscapeDataString(_apiKey)}&language=en-US");
         try
         {
             var json = await _http.GetStringAsync(url, cancellationToken).ConfigureAwait(false);
             var root = JObject.Parse(json);
             var n = (int?)root["number_of_seasons"];
-            return n is > 0 ? n : null;
+            var result = n is > 0 ? n : null;
+            _numberOfSeasonsCache[tvTmdbId] = result;
+            return result;
         }
         catch
         {
@@ -129,6 +223,10 @@ public sealed class TmdbClient
         if (tvTmdbId <= 0 || seasonNumber < 0)
             return null;
 
+        var cacheKey = $"{tvTmdbId}:{seasonNumber}";
+        if (_seasonHeaderCache.TryGetValue(cacheKey, out var cachedHeader))
+            return cachedHeader;
+
         var url = AbsoluteApiUrl(
             $"tv/{tvTmdbId}/season/{seasonNumber}?api_key={Uri.EscapeDataString(_apiKey)}&language=en-US");
         try
@@ -140,11 +238,13 @@ public sealed class TmdbClient
             var air = (string?)root["air_date"];
             var epCount = (int?)root["episode_count"] ?? (root["episodes"] is JArray ja ? ja.Count : 0);
             var voteAvg = (double?)root["vote_average"];
-            return (name.Trim(),
+            (string Name, string? PosterPath, string? AirDate, int EpisodeCount, double? VoteAverage)? result = (name.Trim(),
                 string.IsNullOrWhiteSpace(poster) ? null : poster,
                 string.IsNullOrWhiteSpace(air) ? null : air,
                 epCount,
                 voteAvg is > 0 ? voteAvg : null);
+            _seasonHeaderCache[cacheKey] = result;
+            return result;
         }
         catch
         {
@@ -193,6 +293,10 @@ public sealed class TmdbClient
         if (tmdbId <= 0)
             return null;
 
+        var cacheKey = $"{mediaType}:{tmdbId}";
+        if (_imdbIdCache.TryGetValue(cacheKey, out var cached))
+            return cached;
+
         var isMovie = mediaType.Equals("Movie", StringComparison.OrdinalIgnoreCase);
         var path = isMovie ? $"movie/{tmdbId}/external_ids" : $"tv/{tmdbId}/external_ids";
         var url = AbsoluteApiUrl($"{path}?api_key={Uri.EscapeDataString(_apiKey)}");
@@ -201,7 +305,9 @@ public sealed class TmdbClient
             var json = await _http.GetStringAsync(url, cancellationToken).ConfigureAwait(false);
             var root = JObject.Parse(json);
             var imdb = (string?)root["imdb_id"];
-            return string.IsNullOrWhiteSpace(imdb) ? null : imdb.Trim();
+            var result = string.IsNullOrWhiteSpace(imdb) ? null : imdb.Trim();
+            _imdbIdCache[cacheKey] = result;
+            return result;
         }
         catch
         {
@@ -847,6 +953,10 @@ public sealed class TmdbClient
         if (tvTmdbId <= 0)
             return null;
 
+        if (_nextAiringCache.TryGetValue(tvTmdbId, out var cached) &&
+            DateTime.UtcNow - cached.CachedAtUtc < NextAiringCacheTtl)
+            return cached.Value;
+
         var url = AbsoluteApiUrl($"tv/{tvTmdbId}?api_key={Uri.EscapeDataString(_apiKey)}&language=en-US");
         try
         {
@@ -854,7 +964,10 @@ public sealed class TmdbClient
             var root = JObject.Parse(json);
             var showName = (string?)root["name"] ?? "";
             var next = root["next_episode_to_air"] as JObject;
-            return (next, string.IsNullOrWhiteSpace(showName) ? null : showName.Trim());
+            (JObject? NextEpisode, string? ShowName)? result =
+                (next, string.IsNullOrWhiteSpace(showName) ? null : showName.Trim());
+            _nextAiringCache[tvTmdbId] = (DateTime.UtcNow, result);
+            return result;
         }
         catch
         {
@@ -896,7 +1009,7 @@ public sealed class TmdbClient
     }
 
     public async Task<List<TmdbSearchResult>> SearchAsync(string cleanName, string mediaType, bool isArabic,
-        CancellationToken cancellationToken = default, int maxResults = 5)
+        CancellationToken cancellationToken = default, int maxResults = 5, int? year = null)
     {
         if (string.IsNullOrWhiteSpace(cleanName))
             return new List<TmdbSearchResult>();
@@ -916,12 +1029,12 @@ public sealed class TmdbClient
             }
         }
 
-        var en = await SearchOnceAsync(cleanName, mediaType, "en-US", cancellationToken).ConfigureAwait(false);
+        var en = await SearchOnceAsync(cleanName, mediaType, "en-US", cancellationToken, year).ConfigureAwait(false);
         TryAdd(en);
 
         if (isArabic && merged.Count < cap)
         {
-            var ar = await SearchOnceAsync(cleanName, mediaType, "ar", cancellationToken).ConfigureAwait(false);
+            var ar = await SearchOnceAsync(cleanName, mediaType, "ar", cancellationToken, year).ConfigureAwait(false);
             TryAdd(ar);
         }
 
@@ -978,14 +1091,18 @@ public sealed class TmdbClient
     }
 
     private async Task<List<TmdbSearchResult>> SearchOnceAsync(string cleanName, string mediaType, string language,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken, int? year = null)
     {
-        var endpoint = mediaType.Equals("Movie", StringComparison.OrdinalIgnoreCase)
-            ? "search/movie"
-            : "search/tv";
+        var isMovie = mediaType.Equals("Movie", StringComparison.OrdinalIgnoreCase);
+        var endpoint = isMovie ? "search/movie" : "search/tv";
 
         var url = AbsoluteApiUrl(
             $"{endpoint}?api_key={Uri.EscapeDataString(_apiKey)}&query={Uri.EscapeDataString(cleanName)}&language={Uri.EscapeDataString(language)}");
+        if (year is > 0)
+        {
+            var yearParam = isMovie ? "primary_release_year" : "first_air_date_year";
+            url += $"&{yearParam}={year.Value}";
+        }
 
         var json = await _http.GetStringAsync(url, cancellationToken).ConfigureAwait(false);
         var jo = JObject.Parse(json);
@@ -1054,14 +1171,26 @@ public sealed class TmdbClient
         var isMovie = mediaType.Equals("Movie", StringComparison.OrdinalIgnoreCase);
         var path = isMovie ? $"movie/{tmdbId}" : $"tv/{tmdbId}";
         var creditsUrl = AbsoluteApiUrl($"{path}/credits?api_key={Uri.EscapeDataString(_apiKey)}&language=en-US");
-        try
+
+        // TMDB credits calls occasionally hiccup transiently (timeouts, momentary 5xx); a single
+        // retry avoids silently persisting an empty crew/director list to CrewCacheJson from a fluke.
+        for (var attempt = 0; attempt < 2; attempt++)
         {
-            return await _http.GetStringAsync(creditsUrl, cancellationToken).ConfigureAwait(false);
+            try
+            {
+                return await _http.GetStringAsync(creditsUrl, cancellationToken).ConfigureAwait(false);
+            }
+            catch when (attempt == 0)
+            {
+                await Task.Delay(400, cancellationToken).ConfigureAwait(false);
+            }
+            catch
+            {
+                return null;
+            }
         }
-        catch
-        {
-            return null;
-        }
+
+        return null;
     }
 
     private async Task DownloadCastPortraitCachesAsync(IList<TmdbCastMember> cast,
@@ -1870,6 +1999,22 @@ public sealed class TmdbClient
                 if (!string.IsNullOrWhiteSpace(rating)) return rating.Trim();
             }
             return null;
+        }
+        catch { return null; }
+    }
+
+    /// <summary>Originating network/streaming service name from TMDB <c>tv/{{id}}</c> details (e.g. "Netflix", "HBO").</summary>
+    public async Task<string?> TryGetTvNetworkAsync(int tmdbId, CancellationToken cancellationToken = default)
+    {
+        if (tmdbId <= 0) return null;
+        var url = AbsoluteApiUrl($"tv/{tmdbId}?api_key={Uri.EscapeDataString(_apiKey)}");
+        try
+        {
+            var json = await _http.GetStringAsync(url, cancellationToken).ConfigureAwait(false);
+            var root = JObject.Parse(json);
+            if (root["networks"] is not JArray networks || networks.Count == 0) return null;
+            var name = (string?)networks[0]?["name"];
+            return string.IsNullOrWhiteSpace(name) ? null : name.Trim();
         }
         catch { return null; }
     }

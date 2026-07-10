@@ -5,7 +5,15 @@
       "identifier": "allow-my-device",
       "description": "Read local directories for the My device page",
       "commands": {
-        "allow": ["device_read_dir"],
+        "allow": [
+          "device_read_dir",
+          "device_move_entries",
+          "device_delete_entries",
+          "device_copy_entries",
+          "device_rename_entry",
+          "device_entry_details",
+          "device_create_folder"
+        ],
         "deny": []
       }
     }

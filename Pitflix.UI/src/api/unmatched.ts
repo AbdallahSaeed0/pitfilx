@@ -16,7 +16,7 @@ export const bulkMatchUnmatched = (body: {
 export const skipUnmatched = (id: number) =>
   api.post(`/unmatched/${id}/skip`, {}).then((r) => r.data);
 
-export const searchUnmatched = (body: { query: string; mediaType: string }) =>
+export const searchUnmatched = (body: { query: string; mediaType: string; year?: number }) =>
   api.post("/unmatched/search", body).then((r) => r.data);
 
 export const clearAllUnmatched = () =>

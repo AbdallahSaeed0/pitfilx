@@ -10,6 +10,8 @@ type Props = {
   mediaType: "Movie" | "Series";
   /** Bounding rect of the card that triggered the hover — used to position the popup. */
   anchorRect: DOMRect;
+  /** Cached IMDb rating — preferred over TMDB voteAverage when present. */
+  imdbRating?: number | null;
   onPlay?: () => void;
   onInfo?: () => void;
   /** Forwarded from useHoverCard so moving into the popup keeps it open. */
@@ -34,6 +36,7 @@ export function MediaHoverCard({
   item,
   mediaType,
   anchorRect,
+  imdbRating,
   onPlay,
   onInfo,
   onMouseEnter,
@@ -56,6 +59,8 @@ export function MediaHoverCard({
 
   const title = item.title ?? "Untitled";
   const runtime = formatRuntime((item as unknown as Record<string, unknown>).runtimeMinutes as number | null | undefined);
+  const rating = imdbRating != null && imdbRating > 0 ? imdbRating : (item.voteAverage ?? 0);
+  const ratingIsImdb = imdbRating != null && imdbRating > 0;
 
   // Horizontal: center the popup over the anchor card
   let left = anchorRect.left + anchorRect.width / 2 - CARD_W / 2;
@@ -116,12 +121,16 @@ export function MediaHoverCard({
           <p className="line-clamp-2 text-sm font-bold leading-snug text-white">{title}</p>
           <div className="mt-1 flex flex-wrap items-center gap-1.5 text-[11px] text-pitflix-muted">
             {item.year ? <span>{formatYear(item.year)}</span> : null}
-            {item.year && item.voteAverage ? <span className="text-pitflix-subtle">·</span> : null}
-            {item.voteAverage && item.voteAverage > 0 ? (
-              <span className="flex items-center gap-0.5">
-                <span className="text-amber-400">★</span>
-                {formatRating(item.voteAverage)}
-              </span>
+            {item.year && rating > 0 ? <span className="text-pitflix-subtle">·</span> : null}
+            {rating > 0 ? (
+              ratingIsImdb ? (
+                <span className="font-bold text-[#F5C518]">IMDb {formatRating(rating)}</span>
+              ) : (
+                <span className="flex items-center gap-0.5">
+                  <span className="text-amber-400">★</span>
+                  {formatRating(rating)}
+                </span>
+              )
             ) : null}
             {runtime ? (
               <>

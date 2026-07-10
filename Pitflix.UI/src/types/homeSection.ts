@@ -14,6 +14,7 @@ export type HomeSourceType =
   | "list_spotlight"
   | "arabic_picks"
   | "binge_series"
+  | "trakt_recommendations"
   | "coming_soon"
   | "next_episodes"
   | "next_episodes_all"
@@ -104,6 +105,7 @@ export type WatchHistoryRow = {
   libraryMovieId?: number | null;
   libraryShowId?: number | null;
   libraryEpisodeId?: number | null;
+  episodeTitle?: string | null;
 };
 
 export type FeaturedFallbackResponse = { card: MediaCard | null };

@@ -16,6 +16,19 @@ public class AppSettings
     /// <summary>App name sent to OpenSubtitles (DB → file → default).</summary>
     public static string? ResolvedOpenSubtitlesAppName { get; set; }
 
+    /// <summary>Trakt OAuth app client id/secret (DB → appsettings.local.json → env). DB is the primary
+    /// path — these are entered once in Settings → Trakt, so anyone running their own Pitflix install
+    /// (e.g. a friend) can self-serve without editing config files.</summary>
+    public static string? ResolvedTraktClientId { get; set; }
+
+    public static string? ResolvedTraktClientSecret { get; set; }
+
+    /// <summary>Supabase project URL for the mobile-sync module (DB → appsettings.local.json → env).</summary>
+    public static string? ResolvedSupabaseUrl { get; set; }
+
+    /// <summary>Supabase service-role (or anon, in the no-auth phase) key for the mobile-sync module.</summary>
+    public static string? ResolvedSupabaseServiceRoleKey { get; set; }
+
     /// <summary>
     /// Call after <see cref="LibraryRepository"/> is available.
     /// Order: SQLite <c>TmdbApiKey</c>, then appsettings.local.json, then <c>TMDB_API_KEY</c> env.
@@ -104,6 +117,139 @@ public class AppSettings
             return app.Trim();
         var env = Environment.GetEnvironmentVariable("OPENSUBTITLES_APP_NAME");
         return string.IsNullOrWhiteSpace(env) ? "Pitflix" : env.Trim();
+    }
+
+    /// <summary>Order: DB <c>TraktClientId</c>/<c>TraktClientSecret</c>, then appsettings.local.json
+    /// (<c>Pitflix:Trakt:ClientId</c>/<c>ClientSecret</c>), then <c>TRAKT_CLIENT_ID</c>/<c>TRAKT_CLIENT_SECRET</c> env.</summary>
+    public static void ResolveTraktCredentialsFromSources(LibraryRepository repository)
+    {
+        string? id;
+        string? secret;
+        try
+        {
+            id = repository.GetSettingAsync("TraktClientId").GetAwaiter().GetResult();
+            secret = repository.GetSettingAsync("TraktClientSecret").GetAwaiter().GetResult();
+        }
+        catch
+        {
+            id = null;
+            secret = null;
+        }
+
+        if (!string.IsNullOrWhiteSpace(id) && !string.IsNullOrWhiteSpace(secret))
+        {
+            ResolvedTraktClientId = id.Trim();
+            ResolvedTraktClientSecret = secret.Trim();
+            return;
+        }
+
+        TryLoadTraktCredentialsFromLocalFile(out var fileId, out var fileSecret);
+        if (!string.IsNullOrWhiteSpace(fileId) && !string.IsNullOrWhiteSpace(fileSecret))
+        {
+            ResolvedTraktClientId = fileId;
+            ResolvedTraktClientSecret = fileSecret;
+            return;
+        }
+
+        ResolvedTraktClientId = Environment.GetEnvironmentVariable("TRAKT_CLIENT_ID");
+        ResolvedTraktClientSecret = Environment.GetEnvironmentVariable("TRAKT_CLIENT_SECRET");
+    }
+
+    private static void TryLoadTraktCredentialsFromLocalFile(out string? clientId, out string? clientSecret)
+    {
+        clientId = null;
+        clientSecret = null;
+        foreach (var path in AppLocalConfigFileCandidates())
+        {
+            if (!File.Exists(path))
+                continue;
+            try
+            {
+                using var doc = JsonDocument.Parse(File.ReadAllText(path));
+                if (doc.RootElement.TryGetProperty("Pitflix", out var pitflix) &&
+                    pitflix.TryGetProperty("Trakt", out var trakt))
+                {
+                    if (trakt.TryGetProperty("ClientId", out var idEl))
+                        clientId = idEl.GetString()?.Trim();
+                    if (trakt.TryGetProperty("ClientSecret", out var secretEl))
+                        clientSecret = secretEl.GetString()?.Trim();
+                }
+            }
+            catch
+            {
+                // ignore malformed file
+            }
+
+            if (!string.IsNullOrEmpty(clientId) && !string.IsNullOrEmpty(clientSecret))
+                return;
+        }
+    }
+
+    /// <summary>Order: DB <c>SupabaseUrl</c>/<c>SupabaseServiceRoleKey</c>, then appsettings.local.json
+    /// (<c>Pitflix:Supabase:Url</c>/<c>ServiceRoleKey</c>), then <c>SUPABASE_URL</c>/<c>SUPABASE_SERVICE_ROLE_KEY</c> env.</summary>
+    public static void ResolveSupabaseCredentialsFromSources(LibraryRepository repository)
+    {
+        string? url;
+        string? key;
+        try
+        {
+            url = repository.GetSettingAsync("SupabaseUrl").GetAwaiter().GetResult();
+            key = repository.GetSettingAsync("SupabaseServiceRoleKey").GetAwaiter().GetResult();
+        }
+        catch
+        {
+            url = null;
+            key = null;
+        }
+
+        if (!string.IsNullOrWhiteSpace(url) && !string.IsNullOrWhiteSpace(key))
+        {
+            ResolvedSupabaseUrl = url.Trim().TrimEnd('/');
+            ResolvedSupabaseServiceRoleKey = key.Trim();
+            return;
+        }
+
+        TryLoadSupabaseCredentialsFromLocalFile(out var fileUrl, out var fileKey);
+        if (!string.IsNullOrWhiteSpace(fileUrl) && !string.IsNullOrWhiteSpace(fileKey))
+        {
+            ResolvedSupabaseUrl = fileUrl.TrimEnd('/');
+            ResolvedSupabaseServiceRoleKey = fileKey;
+            return;
+        }
+
+        var envUrl = Environment.GetEnvironmentVariable("SUPABASE_URL");
+        ResolvedSupabaseUrl = string.IsNullOrWhiteSpace(envUrl) ? null : envUrl.Trim().TrimEnd('/');
+        ResolvedSupabaseServiceRoleKey = Environment.GetEnvironmentVariable("SUPABASE_SERVICE_ROLE_KEY");
+    }
+
+    private static void TryLoadSupabaseCredentialsFromLocalFile(out string? url, out string? serviceRoleKey)
+    {
+        url = null;
+        serviceRoleKey = null;
+        foreach (var path in AppLocalConfigFileCandidates())
+        {
+            if (!File.Exists(path))
+                continue;
+            try
+            {
+                using var doc = JsonDocument.Parse(File.ReadAllText(path));
+                if (doc.RootElement.TryGetProperty("Pitflix", out var pitflix) &&
+                    pitflix.TryGetProperty("Supabase", out var supabase))
+                {
+                    if (supabase.TryGetProperty("Url", out var urlEl))
+                        url = urlEl.GetString()?.Trim();
+                    if (supabase.TryGetProperty("ServiceRoleKey", out var keyEl))
+                        serviceRoleKey = keyEl.GetString()?.Trim();
+                }
+            }
+            catch
+            {
+                // ignore malformed file
+            }
+
+            if (!string.IsNullOrEmpty(url) && !string.IsNullOrEmpty(serviceRoleKey))
+                return;
+        }
     }
 
     public static bool IsValidTmdbKey(string? key) =>

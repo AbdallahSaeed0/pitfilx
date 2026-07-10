@@ -231,6 +231,7 @@ public static class ImageUrls
             FileDurationSeconds = h.FileDurationSeconds,
             IsCompleted = h.IsCompleted,
             NextUpLabel = h.NextUpLabel,
+            EpisodeTitle = h.EpisodeTitle,
             BackdropLocalPath = ToImageUrl(h.BackdropLocalPath),
             LibraryMovieId = h.LibraryMovieId,
             LibraryShowId = h.LibraryShowId,

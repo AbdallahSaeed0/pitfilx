@@ -3,6 +3,7 @@ using System.Net.Http;
 using System.Text.Json;
 using Microsoft.Extensions.DependencyInjection;
 using Pitflix.API;
+using Pitflix.API.Services;
 using Pitflix.Core.Api;
 using Pitflix.Core.Database;
 
@@ -28,12 +29,15 @@ public sealed class AwardsService
     private readonly IAwardsDataProvider _provider;
     private readonly IWebHostEnvironment _env;
     private readonly IServiceScopeFactory _scopeFactory;
+    private readonly ITmdbClientFactory _tmdbClientFactory;
 
-    public AwardsService(IAwardsDataProvider provider, IWebHostEnvironment env, IServiceScopeFactory scopeFactory)
+    public AwardsService(IAwardsDataProvider provider, IWebHostEnvironment env, IServiceScopeFactory scopeFactory,
+        ITmdbClientFactory tmdbClientFactory)
     {
         _provider = provider;
         _env = env;
         _scopeFactory = scopeFactory;
+        _tmdbClientFactory = tmdbClientFactory;
     }
 
     private static string NomineeLookupKey(string categoryId, string title, string mediaType) =>
@@ -72,7 +76,7 @@ public sealed class AwardsService
     public async Task<IReadOnlyList<AwardNomineeCacheRow>> BuildCacheRowsForEditionAsync(string awardId, int year,
         AwardEditionFileDto file, LibraryRepository lib, CancellationToken ct)
     {
-        var tmdb = TmdbClientFactory.Create() ?? throw new InvalidOperationException("TMDB client unavailable.");
+        var tmdb = _tmdbClientFactory.Create() ?? throw new InvalidOperationException("TMDB client unavailable.");
         var now = DateTime.UtcNow;
         var rows = new List<AwardNomineeCacheRow>();
         foreach (var cat in file.Categories)
@@ -364,40 +368,8 @@ public sealed class AwardsService
         };
     }
 
-    /// <summary>
-    /// Resolves the <c>Data/Awards</c> directory in the same multi-candidate way as
-    /// <see cref="FileAwardsDataProvider"/> so catalog.json is found in both dev and
-    /// single-file production builds.
-    /// </summary>
-    private string ResolveAwardsDataRoot()
-    {
-        var fromContentRoot = Path.Combine(_env.ContentRootPath, "Data", "Awards");
-        if (Directory.Exists(fromContentRoot))
-            return fromContentRoot;
-
-        var fromBaseDir = Path.Combine(AppContext.BaseDirectory, "Data", "Awards");
-        if (Directory.Exists(fromBaseDir))
-            return fromBaseDir;
-
-        // Tauri NSIS installer places resources under binaries\ relative to the install dir
-        var fromBaseDirBinaries = Path.Combine(AppContext.BaseDirectory, "binaries", "Data", "Awards");
-        if (Directory.Exists(fromBaseDirBinaries))
-            return fromBaseDirBinaries;
-
-        var exeDir = Path.GetDirectoryName(Environment.ProcessPath ?? "");
-        if (!string.IsNullOrEmpty(exeDir))
-        {
-            var fromExeDir = Path.Combine(exeDir, "Data", "Awards");
-            if (Directory.Exists(fromExeDir))
-                return fromExeDir;
-
-            var fromExeDirBinaries = Path.Combine(exeDir, "binaries", "Data", "Awards");
-            if (Directory.Exists(fromExeDirBinaries))
-                return fromExeDirBinaries;
-        }
-
-        return fromContentRoot;
-    }
+    /// <summary>Resolves the <c>Data/Awards</c> directory across dev, single-file, and installed builds.</summary>
+    private string ResolveAwardsDataRoot() => DataRootResolver.Resolve(_env, "Awards");
 
     public sealed record TitleNominationResult(
         string AwardId, string AwardName, int Year, string CategoryId, string CategoryName, bool Winner);
@@ -574,7 +546,7 @@ public sealed class AwardsService
         foreach (var row in cacheRows)
             cacheByKey[NomineeLookupKey(row.CategoryId, row.Title, row.MediaType)] = row;
 
-        var tmdb = TmdbClientFactory.Create();
+        var tmdb = _tmdbClientFactory.Create();
         var res = new AwardEditionResponseDto
         {
             AwardId = file.AwardId,

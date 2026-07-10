@@ -24,19 +24,29 @@ public sealed class SubtitleResult
 /// <summary>OpenSubtitles.com API v1 (api.opensubtitles.com).</summary>
 public sealed class OpenSubtitlesClient : IDisposable
 {
+    // Keyed by (apiKey, appName) — OpenSubtitlesClient is constructed fresh per request (Program.cs),
+    // and the configured key/app rarely changes, so cache and reuse the underlying HttpClient
+    // instead of opening a new socket pool on every subtitle search.
+    private static readonly System.Collections.Concurrent.ConcurrentDictionary<(string, string), HttpClient>
+        _sharedClients = new();
+    private static readonly HttpClient _sharedDownloadClient = new();
+
     private readonly HttpClient _http;
     private readonly string _apiKey;
     private readonly string _appName;
-    private bool _disposed;
 
     public OpenSubtitlesClient(string apiKey, string appName = "Pitflix")
     {
         _apiKey = apiKey ?? "";
         _appName = string.IsNullOrWhiteSpace(appName) ? "Pitflix" : appName;
-        _http = new HttpClient { BaseAddress = new Uri("https://api.opensubtitles.com/api/v1/") };
-        _http.DefaultRequestHeaders.TryAddWithoutValidation("Api-Key", _apiKey);
-        _http.DefaultRequestHeaders.UserAgent.ParseAdd($"{_appName} v1.0");
-        _http.DefaultRequestHeaders.Accept.Add(new MediaTypeWithQualityHeaderValue("application/json"));
+        _http = _sharedClients.GetOrAdd((_apiKey, _appName), key =>
+        {
+            var http = new HttpClient { BaseAddress = new Uri("https://api.opensubtitles.com/api/v1/") };
+            http.DefaultRequestHeaders.TryAddWithoutValidation("Api-Key", key.Item1);
+            http.DefaultRequestHeaders.UserAgent.ParseAdd($"{key.Item2} v1.0");
+            http.DefaultRequestHeaders.Accept.Add(new MediaTypeWithQualityHeaderValue("application/json"));
+            return http;
+        });
     }
 
     public bool IsConfigured => !string.IsNullOrWhiteSpace(_apiKey);
@@ -258,8 +268,7 @@ public sealed class OpenSubtitlesClient : IDisposable
             if (string.IsNullOrEmpty(link))
                 return (false, null, "No download link in response.");
 
-            using var dl = new HttpClient();
-            var bytes = await dl.GetByteArrayAsync(new Uri(link), cancellationToken).ConfigureAwait(false);
+            var bytes = await _sharedDownloadClient.GetByteArrayAsync(new Uri(link), cancellationToken).ConfigureAwait(false);
             var dir = Path.GetDirectoryName(videoFilePath);
             if (string.IsNullOrEmpty(dir))
                 return (false, null, "Invalid video path.");
@@ -276,10 +285,8 @@ public sealed class OpenSubtitlesClient : IDisposable
         }
     }
 
+    /// <summary>No-op — <see cref="_http"/> is shared/cached process-wide and outlives any one instance.</summary>
     public void Dispose()
     {
-        if (_disposed) return;
-        _disposed = true;
-        _http.Dispose();
     }
 }

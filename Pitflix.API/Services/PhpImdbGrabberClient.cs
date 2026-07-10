@@ -7,7 +7,7 @@ namespace Pitflix.API.Services;
 
 /// <summary>
 /// Tier-1 IMDb ratings via bundled <c>php-imdb-detail/fetch_rating.php</c> (PHP CLI).
-/// Fails softly when PHP or the script is unavailable — callers fall back to OMDb/TMDB.
+/// Fails softly when PHP or the script is unavailable — callers fall back to MDBList/TMDB.
 /// </summary>
 public sealed class PhpImdbGrabberClient
 {

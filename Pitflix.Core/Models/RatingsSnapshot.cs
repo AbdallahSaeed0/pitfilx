@@ -33,6 +33,7 @@ public sealed class RatingsSnapshot
 public static class RatingsSourceMask
 {
     public const int Tmdb = 1;
-    public const int Omdb = 2;
+    /// <summary>Bit value unchanged (2) for persisted rows — this tier was OMDb, now sourced from MDBList.</summary>
+    public const int Mdblist = 2;
     public const int PhpImdb = 4;
 }

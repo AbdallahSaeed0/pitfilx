@@ -38,6 +38,13 @@ export type StreamDetailsCastMember = {
   profileUrl: string | null;
 };
 
+export type StreamDetailsCrewMember = {
+  id: number;
+  name: string;
+  job: string;
+  profileUrl: string | null;
+};
+
 export type StreamDetailsResponse = {
   tmdbId: number;
   title: string | null;
@@ -52,8 +59,10 @@ export type StreamDetailsResponse = {
   imdbId: string | null;
   mediaType: "Movie" | "Series";
   numberOfSeasons: number;
+  runtimeMinutes: number | null;
   seasons: StreamDetailsSeason[];
   cast: StreamDetailsCastMember[];
+  crew: StreamDetailsCrewMember[];
   trailer: StreamDetailsTrailer | null;
   recommendations: StreamDetailsRec[];
   error?: string;
@@ -122,5 +131,24 @@ export type DiscoverCategory =
 export function getStreamDiscover(category: DiscoverCategory) {
   return api
     .get<StreamDiscoverItem[]>("/stream/discover", { params: { category } })
+    .then((r) => r.data);
+}
+
+export type ParentsGuideCategory = {
+  name: string;
+  severity: string;
+  items: string[];
+};
+
+export type ParentsGuideResponse = {
+  imdbId: string;
+  overallRating: string | null;
+  categories: ParentsGuideCategory[];
+  error?: string;
+};
+
+export function getParentsGuide(imdbId: string) {
+  return api
+    .get<ParentsGuideResponse>(`/stream/parents-guide/${encodeURIComponent(imdbId)}`)
     .then((r) => r.data);
 }

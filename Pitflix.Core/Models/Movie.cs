@@ -25,6 +25,9 @@ public class Movie
     public string WatchStatus { get; set; } = WatchStatuses.Unwatched;
     public DateTime? CompletedAt { get; set; }
 
+    /// <summary>True when Completed was reached by actually finishing playback in-app (vs. a manual "mark watched" action).</summary>
+    public bool CompletedFromPlayback { get; set; }
+
     /// <summary>JSON array of <see cref="TmdbCrewMember"/> from last metadata refresh (speeds detail page).</summary>
     public string? CrewCacheJson { get; set; }
 

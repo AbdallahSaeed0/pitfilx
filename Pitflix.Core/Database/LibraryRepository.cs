@@ -11,6 +11,8 @@ using Pitflix.Core.Playback;
 
 namespace Pitflix.Core.Database;
 
+public sealed record WrapResult(bool Success, string Message, int MovedCount, string? TargetFolder);
+
 public sealed class LibraryRepository
 {
     private readonly LibraryContext _db;
@@ -66,6 +68,24 @@ public sealed class LibraryRepository
     {
         return await _db.Movies.AsNoTracking().FirstOrDefaultAsync(m => m.Id == id, cancellationToken)
             .ConfigureAwait(false);
+    }
+
+    /// <summary>Batch lookup keyed by Id — avoids N round trips when resolving a list of show ids.</summary>
+    public async Task<Dictionary<int, Show>> GetShowsByIdsAsync(IReadOnlyCollection<int> ids,
+        CancellationToken cancellationToken = default)
+    {
+        if (ids.Count == 0) return new Dictionary<int, Show>();
+        return await _db.Shows.AsNoTracking().Where(s => ids.Contains(s.Id))
+            .ToDictionaryAsync(s => s.Id, cancellationToken).ConfigureAwait(false);
+    }
+
+    /// <summary>Batch lookup keyed by Id — avoids N round trips when resolving a list of movie ids.</summary>
+    public async Task<Dictionary<int, Movie>> GetMoviesByIdsAsync(IReadOnlyCollection<int> ids,
+        CancellationToken cancellationToken = default)
+    {
+        if (ids.Count == 0) return new Dictionary<int, Movie>();
+        return await _db.Movies.AsNoTracking().Where(m => ids.Contains(m.Id))
+            .ToDictionaryAsync(m => m.Id, cancellationToken).ConfigureAwait(false);
     }
 
     public async Task<Show?> GetShowByTmdbIdAsync(int tmdbId, CancellationToken cancellationToken = default)
@@ -223,6 +243,45 @@ public sealed class LibraryRepository
             .ConfigureAwait(false);
     }
 
+    /// <summary>Loads persisted IMDb ratings for a media type and returns the TMDB ids whose rating meets the threshold.</summary>
+    public async Task<HashSet<int>> GetTmdbIdsAtOrAboveImdbRatingAsync(string mediaType, double minRating,
+        CancellationToken cancellationToken = default)
+    {
+        var snapshots = await _db.RatingsSnapshots.AsNoTracking()
+            .Where(r => r.MediaType == mediaType && r.ImdbRating != null)
+            .Select(r => new { r.TmdbId, r.ImdbRating })
+            .ToListAsync(cancellationToken)
+            .ConfigureAwait(false);
+
+        var ids = new HashSet<int>();
+        foreach (var s in snapshots)
+            if (double.TryParse(s.ImdbRating, System.Globalization.NumberStyles.Float,
+                    System.Globalization.CultureInfo.InvariantCulture, out var v) && v >= minRating)
+                ids.Add(s.TmdbId);
+        return ids;
+    }
+
+    /// <summary>Loads persisted IMDb ratings for a media type as a TmdbId -&gt; rating map, for in-memory sorting
+    /// (IMDb rating isn't a column on Movies/Shows, so it can't be ordered by at the SQL level).</summary>
+    public async Task<Dictionary<int, double>> GetImdbRatingMapAsync(string mediaType,
+        CancellationToken cancellationToken = default)
+    {
+        var snapshots = await _db.RatingsSnapshots.AsNoTracking()
+            .Where(r => r.MediaType == mediaType && r.ImdbRating != null)
+            .Select(r => new { r.TmdbId, r.ImdbRating })
+            .ToListAsync(cancellationToken)
+            .ConfigureAwait(false);
+
+        var map = new Dictionary<int, double>();
+        foreach (var s in snapshots)
+            if (double.TryParse(s.ImdbRating, System.Globalization.NumberStyles.Float,
+                    System.Globalization.CultureInfo.InvariantCulture, out var v))
+                map[s.TmdbId] = v;
+        return map;
+    }
+
+    private static bool IsImdbSort(string? sortOption) => sortOption is "IMDb ↓" or "IMDb ↑";
+
     public async Task<PagedResult<MediaCardDto>> GetMovieCardPageAsync(
         bool isArabic,
         string? search,
@@ -231,7 +290,8 @@ public sealed class LibraryRepository
         string? sortOption,
         int page,
         int pageSize,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default,
+        double? minImdbRating = null)
     {
         var q = _db.Movies.AsNoTracking().Where(m => m.IsMatched && m.IsArabic == isArabic);
         if (!string.IsNullOrWhiteSpace(search))
@@ -248,6 +308,46 @@ public sealed class LibraryRepository
         if (!string.IsNullOrWhiteSpace(watchStatus) && !string.Equals(watchStatus, "All", StringComparison.OrdinalIgnoreCase))
             q = q.Where(m => m.WatchStatus == watchStatus);
 
+        if (minImdbRating is > 0)
+        {
+            var qualifying = await GetTmdbIdsAtOrAboveImdbRatingAsync("Movie", minImdbRating.Value, cancellationToken)
+                .ConfigureAwait(false);
+            q = q.Where(m => qualifying.Contains(m.TmdbId));
+        }
+
+        var skip = Math.Max(0, (Math.Max(1, page) - 1) * Math.Max(1, pageSize));
+
+        if (IsImdbSort(sortOption))
+        {
+            var total = await q.CountAsync(cancellationToken).ConfigureAwait(false);
+            var all = await q.Select(m => new MediaCardDto
+            {
+                Id = m.Id,
+                TmdbId = m.TmdbId,
+                Title = m.Title,
+                Year = m.Year,
+                VoteAverage = m.VoteAverage,
+                PosterLocalPath = m.PosterLocalPath,
+                SelectedPosterPath = m.SelectedPosterPath,
+                IsArabic = m.IsArabic,
+                WatchStatus = m.WatchStatus,
+                DateAdded = m.DateAdded,
+                GenresCsv = m.Genres,
+                Overview = m.Overview == null ? null : (m.Overview.Length > 200 ? m.Overview.Substring(0, 200) : m.Overview),
+                BackdropLocalPath = m.BackdropLocalPath,
+                SelectedBackdropPath = m.SelectedBackdropPath,
+                MediaFilePath = m.FilePath,
+                TmdbMediaType = "Movie"
+            }).ToListAsync(cancellationToken).ConfigureAwait(false);
+
+            var ratingMap = await GetImdbRatingMapAsync("Movie", cancellationToken).ConfigureAwait(false);
+            var sorted = sortOption == "IMDb ↓"
+                ? all.OrderByDescending(m => ratingMap.GetValueOrDefault(m.TmdbId, -1))
+                : all.OrderBy(m => ratingMap.GetValueOrDefault(m.TmdbId, -1));
+            var page2 = sorted.Skip(skip).Take(Math.Max(1, pageSize)).ToList();
+            return new PagedResult<MediaCardDto>(page2, total);
+        }
+
         q = sortOption switch
         {
             "Year ↑" => q.OrderBy(m => m.Year ?? 0),
@@ -257,8 +357,7 @@ public sealed class LibraryRepository
             _ => q.OrderBy(m => m.Title)
         };
 
-        var total = await q.CountAsync(cancellationToken).ConfigureAwait(false);
-        var skip = Math.Max(0, (Math.Max(1, page) - 1) * Math.Max(1, pageSize));
+        var totalCount = await q.CountAsync(cancellationToken).ConfigureAwait(false);
         var rows = await q.Skip(skip).Take(Math.Max(1, pageSize))
             .Select(m => new MediaCardDto
             {
@@ -281,7 +380,7 @@ public sealed class LibraryRepository
             })
             .ToListAsync(cancellationToken)
             .ConfigureAwait(false);
-        return new PagedResult<MediaCardDto>(rows, total);
+        return new PagedResult<MediaCardDto>(rows, totalCount);
     }
 
     public async Task<PagedResult<MediaCardDto>> GetShowCardPageAsync(
@@ -292,7 +391,8 @@ public sealed class LibraryRepository
         string? sortOption,
         int page,
         int pageSize,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default,
+        double? minImdbRating = null)
     {
         var q = _db.Shows.AsNoTracking().Where(s => s.IsMatched && s.IsArabic == isArabic);
         if (!string.IsNullOrWhiteSpace(search))
@@ -309,6 +409,45 @@ public sealed class LibraryRepository
         if (!string.IsNullOrWhiteSpace(watchStatus) && !string.Equals(watchStatus, "All", StringComparison.OrdinalIgnoreCase))
             q = q.Where(s => s.WatchStatus == watchStatus);
 
+        if (minImdbRating is > 0)
+        {
+            var qualifying = await GetTmdbIdsAtOrAboveImdbRatingAsync("Series", minImdbRating.Value, cancellationToken)
+                .ConfigureAwait(false);
+            q = q.Where(s => qualifying.Contains(s.TmdbId));
+        }
+
+        var skip = Math.Max(0, (Math.Max(1, page) - 1) * Math.Max(1, pageSize));
+
+        if (IsImdbSort(sortOption))
+        {
+            var total = await q.CountAsync(cancellationToken).ConfigureAwait(false);
+            var all = await q.Select(s => new MediaCardDto
+            {
+                Id = s.Id,
+                TmdbId = s.TmdbId,
+                Title = s.Title,
+                Year = s.Year,
+                VoteAverage = s.VoteAverage,
+                PosterLocalPath = s.PosterLocalPath,
+                SelectedPosterPath = s.SelectedPosterPath,
+                IsArabic = s.IsArabic,
+                WatchStatus = s.WatchStatus,
+                DateAdded = s.DateAdded,
+                GenresCsv = s.Genres,
+                Overview = s.Overview == null ? null : (s.Overview.Length > 200 ? s.Overview.Substring(0, 200) : s.Overview),
+                BackdropLocalPath = s.BackdropLocalPath,
+                SelectedBackdropPath = s.SelectedBackdropPath,
+                TmdbMediaType = "Series"
+            }).ToListAsync(cancellationToken).ConfigureAwait(false);
+
+            var ratingMap = await GetImdbRatingMapAsync("Series", cancellationToken).ConfigureAwait(false);
+            var sorted = sortOption == "IMDb ↓"
+                ? all.OrderByDescending(s => ratingMap.GetValueOrDefault(s.TmdbId, -1))
+                : all.OrderBy(s => ratingMap.GetValueOrDefault(s.TmdbId, -1));
+            var page2 = sorted.Skip(skip).Take(Math.Max(1, pageSize)).ToList();
+            return new PagedResult<MediaCardDto>(page2, total);
+        }
+
         q = sortOption switch
         {
             "Year ↑" => q.OrderBy(s => s.Year ?? 0),
@@ -318,8 +457,7 @@ public sealed class LibraryRepository
             _ => q.OrderBy(s => s.Title)
         };
 
-        var total = await q.CountAsync(cancellationToken).ConfigureAwait(false);
-        var skip = Math.Max(0, (Math.Max(1, page) - 1) * Math.Max(1, pageSize));
+        var totalCount = await q.CountAsync(cancellationToken).ConfigureAwait(false);
         var rows = await q.Skip(skip).Take(Math.Max(1, pageSize))
             .Select(s => new MediaCardDto
             {
@@ -341,7 +479,7 @@ public sealed class LibraryRepository
             })
             .ToListAsync(cancellationToken)
             .ConfigureAwait(false);
-        return new PagedResult<MediaCardDto>(rows, total);
+        return new PagedResult<MediaCardDto>(rows, totalCount);
     }
 
     public async Task<PagedResult<ScanLog>> GetUnmatchedPageAsync(
@@ -784,6 +922,24 @@ public sealed class LibraryRepository
         _db.WatchHistories.Add(h);
         await _db.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
 
+        if (suppressContinueWatching && !string.IsNullOrWhiteSpace(filePath))
+        {
+            var key = NormalizeHistoryPath(filePath);
+            var rows = await _db.WatchHistories
+                .Where(x => x.FilePath != null && x.FilePath != "")
+                .ToListAsync(cancellationToken).ConfigureAwait(false);
+            var touched = false;
+            foreach (var row in rows)
+            {
+                if (NormalizeHistoryPath(row.FilePath) != key || row.SuppressContinueWatching)
+                    continue;
+                row.SuppressContinueWatching = true;
+                touched = true;
+            }
+            if (touched)
+                await _db.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
+        }
+
         // Enrich with TMDB id, season/episode numbers, and poster URL from the library.
         // This runs inline but is a cheap DB-only lookup (no network calls).
         await EnrichHistoryFromLibraryAsync(h, cancellationToken).ConfigureAwait(false);
@@ -851,6 +1007,35 @@ public sealed class LibraryRepository
             if (h.TmdbId != before) updated++;
         }
         return updated;
+    }
+
+    /// <summary>Max known file duration (seconds) per path from prior playback, for season episode lists.</summary>
+    public async Task<IReadOnlyDictionary<string, int>> GetMaxFileDurationSecondsByPathsAsync(
+        IEnumerable<string> filePaths, CancellationToken cancellationToken = default)
+    {
+        var paths = filePaths
+            .Where(p => !string.IsNullOrWhiteSpace(p))
+            .Select(p => p.Trim())
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+        if (paths.Count == 0)
+            return new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+
+        var rows = await _db.WatchHistories.AsNoTracking()
+            .Where(h => paths.Contains(h.FilePath) && h.FileDurationSeconds > 0)
+            .Select(h => new { h.FilePath, h.FileDurationSeconds })
+            .ToListAsync(cancellationToken).ConfigureAwait(false);
+
+        var map = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+        foreach (var row in rows)
+        {
+            if (map.TryGetValue(row.FilePath, out var existing))
+                map[row.FilePath] = Math.Max(existing, row.FileDurationSeconds);
+            else
+                map[row.FilePath] = row.FileDurationSeconds;
+        }
+
+        return map;
     }
 
     /// <summary>Recent plays, one entry per distinct file path (latest first).</summary>
@@ -961,12 +1146,12 @@ public sealed class LibraryRepository
     /// Grouped per show; sort by latest activity then progress relevance.
     /// </summary>
     public async Task<IReadOnlyList<CurrentlyWatchingRow>> GetCurrentlyWatchingSeriesAsync(int recentDays = 21,
-        int maxItems = 200, CancellationToken cancellationToken = default)
+        int maxItems = 200, Pitflix.Core.Api.TmdbClient? tmdb = null, CancellationToken cancellationToken = default)
     {
         _ = recentDays;
 
         var histRows = await _db.WatchHistories.AsNoTracking()
-            .Where(h => h.MediaType == "Series")
+            .Where(h => h.MediaType == "Series" && !h.IsCompleted)
             .ToListAsync(cancellationToken)
             .ConfigureAwait(false);
 
@@ -983,24 +1168,39 @@ public sealed class LibraryRepository
             }
         }
 
-        var candidateShowIds = await _db.Shows.AsNoTracking()
-            .Where(s => s.IsMatched && s.TmdbId > 0)
-            .Select(s => s.Id)
-            .ToListAsync(cancellationToken)
+        var candidateShows = await _db.Shows.AsNoTracking()
+            .Where(s => s.IsMatched && s.TmdbId > 0 && !s.IsDropped)
+            .ToDictionaryAsync(s => s.Id, cancellationToken)
             .ConfigureAwait(false);
 
-        var rows = new List<(CurrentlyWatchingRow Row, double SortKey)>();
+        var candidateShowIds = candidateShows.Keys.ToList();
+        var episodesByShowId = (await _db.Episodes.AsNoTracking()
+                .Where(e => candidateShowIds.Contains(e.ShowId))
+                .ToListAsync(cancellationToken)
+                .ConfigureAwait(false))
+            .GroupBy(e => e.ShowId)
+            .ToDictionary(g => g.Key, g => g.ToList());
 
-        foreach (var sid in candidateShowIds)
+        // Episodes marked watched via the unified-history path (e.g. "Mark watched" on an episode that
+        // isn't downloaded) — lets the TMDB fallback below skip past those the same way a library
+        // Completed row would, without requiring a local file.
+        var watchedVirtual = (await _db.WatchHistories.AsNoTracking()
+                .Where(h => h.MediaType == "Series" && h.IsCompleted &&
+                            h.TmdbId != null && h.SeasonNumber != null && h.EpisodeNumber != null)
+                .Select(h => new { h.TmdbId, h.SeasonNumber, h.EpisodeNumber })
+                .ToListAsync(cancellationToken)
+                .ConfigureAwait(false))
+            .Select(h => (TmdbId: h.TmdbId!.Value, Season: h.SeasonNumber!.Value, Episode: h.EpisodeNumber!.Value))
+            .ToHashSet();
+        var todayStr = DateTime.UtcNow.ToString("yyyy-MM-dd");
+
+        // Phase 1: pure-local pass (no network) — figures out which shows have a library episode ready
+        // to go, and which are fully caught up locally and need a TMDB fallback check.
+        var localStates = new List<(int ShowId, Show Show, List<Episode> Ordered, int Completed, int Total,
+            int Remaining, Episode? Next)>();
+        foreach (var (sid, show) in candidateShows)
         {
-            var allEps = (await GetEpisodesForShowAsync(sid, cancellationToken).ConfigureAwait(false)).ToList();
-            if (allEps.Count == 0)
-                continue;
-
-            var show = await _db.Shows.AsNoTracking()
-                .FirstOrDefaultAsync(s => s.Id == sid, cancellationToken)
-                .ConfigureAwait(false);
-            if (show == null || !show.IsMatched || show.TmdbId <= 0)
+            if (!episodesByShowId.TryGetValue(sid, out var allEps) || allEps.Count == 0)
                 continue;
 
             var ordered = allEps.OrderBy(e => e.Season).ThenBy(e => e.EpisodeNumber).ToList();
@@ -1013,20 +1213,60 @@ public sealed class LibraryRepository
             if (!hasStarted)
                 continue;
 
-            var next = GetNextEpisodeForShow(ordered);
-            if (next == null)
-                continue;
-
-            var allEpisodesCompleted = ordered.All(e =>
-                string.Equals(e.WatchStatus, WatchStatuses.Completed, StringComparison.OrdinalIgnoreCase));
-            if (allEpisodesCompleted)
-                continue;
-
             var total = ordered.Count;
             var remaining = ordered.Count(e =>
                 !string.Equals(e.WatchStatus, WatchStatuses.Completed, StringComparison.OrdinalIgnoreCase));
-            if (remaining <= 0)
-                continue;
+            var next = GetNextEpisodeForShow(ordered);
+            localStates.Add((sid, show, ordered, completed, total, remaining, next));
+        }
+
+        // Phase 2: shows with no library episode left need a TMDB lookup — run those concurrently
+        // (bounded) instead of one-by-one, which is what made this endpoint slow to load.
+        var needsFallback = localStates.Where(s => s.Next == null || s.Remaining <= 0).ToList();
+        var fallbackByShowId = new Dictionary<int, (int Season, int EpisodeNumber, int Count)?>();
+        if (tmdb != null && needsFallback.Count > 0)
+        {
+            var results = new System.Collections.Concurrent.ConcurrentDictionary<int, (int, int, int)?>();
+            await Parallel.ForEachAsync(needsFallback,
+                new ParallelOptions { MaxDegreeOfParallelism = 6, CancellationToken = cancellationToken },
+                async (state, ct) =>
+                {
+                    var maxSeason = state.Ordered.Max(e => e.Season);
+                    var found = await FindNextUndownloadedAiredEpisodeAsync(tmdb, state.Show, state.Ordered, maxSeason, todayStr, watchedVirtual, ct)
+                        .ConfigureAwait(false)
+                        ?? await FindNextUndownloadedAiredEpisodeAsync(tmdb, state.Show, state.Ordered, maxSeason + 1, todayStr, watchedVirtual, ct)
+                            .ConfigureAwait(false);
+                    results[state.ShowId] = found;
+                }).ConfigureAwait(false);
+            foreach (var kv in results)
+                fallbackByShowId[kv.Key] = kv.Value;
+        }
+
+        // Phase 3: assemble final rows.
+        var rows = new List<(CurrentlyWatchingRow Row, double SortKey)>();
+        foreach (var (sid, show, ordered, completed, total, remaining, next) in localStates)
+        {
+            int nextSeasonNum;
+            int nextEpisodeNum;
+            var nextIsDownloaded = true;
+            var effectiveRemaining = remaining;
+
+            if (next != null && remaining > 0)
+            {
+                nextSeasonNum = next.Season;
+                nextEpisodeNum = next.EpisodeNumber;
+            }
+            else if (fallbackByShowId.TryGetValue(sid, out var found) && found != null)
+            {
+                nextSeasonNum = found.Value.Season;
+                nextEpisodeNum = found.Value.EpisodeNumber;
+                effectiveRemaining = found.Value.Count;
+                nextIsDownloaded = false;
+            }
+            else
+            {
+                continue; // truly caught up — nothing local or on TMDB left to watch
+            }
 
             var lastPlayedAt = DateTime.MinValue;
             Episode? lastFromHistory = null;
@@ -1072,7 +1312,7 @@ public sealed class LibraryRepository
 
             var progress = total > 0 ? (double)completed / total : 0.0;
             var inProgressBoost = show.WatchStatus == WatchStatuses.Watching ? 1.0 : 0.0;
-            var sortKey = inProgressBoost * 10_000 + progress * 1_000 - remaining;
+            var sortKey = inProgressBoost * 10_000 + progress * 1_000 - effectiveRemaining;
 
             rows.Add((new CurrentlyWatchingRow
             {
@@ -1083,13 +1323,14 @@ public sealed class LibraryRepository
                 SelectedPosterPath = show.SelectedPosterPath,
                 LastWatchedSeason = lastWatchedEp.Season,
                 LastWatchedEpisode = lastWatchedEp.EpisodeNumber,
-                NextSeason = next.Season,
-                NextEpisode = next.EpisodeNumber,
-                EpisodesRemaining = remaining,
+                NextSeason = nextSeasonNum,
+                NextEpisode = nextEpisodeNum,
+                EpisodesRemaining = effectiveRemaining,
                 WatchedEpisodes = completed,
                 TotalEpisodes = total,
                 ProgressFraction = progress,
                 LastPlayedAtUtc = lastPlayedAt,
+                NextEpisodeDownloaded = nextIsDownloaded,
             }, sortKey));
         }
 
@@ -1099,6 +1340,42 @@ public sealed class LibraryRepository
             .Select(x => x.Row)
             .Take(Math.Clamp(maxItems, 1, 500))
             .ToList();
+    }
+
+    /// <summary>Finds the next TMDB-aired episode for a season that isn't in the local library and hasn't
+    /// been marked watched via unified history — used by <see cref="GetCurrentlyWatchingSeriesAsync"/> so a
+    /// show whose library episodes are all watched still surfaces in Up Next instead of disappearing once
+    /// there's more of it aired but not yet downloaded.</summary>
+    private static async Task<(int Season, int EpisodeNumber, int Count)?> FindNextUndownloadedAiredEpisodeAsync(
+        Pitflix.Core.Api.TmdbClient tmdb, Show show, List<Episode> eps, int season, string todayStr,
+        HashSet<(int TmdbId, int Season, int Episode)> watchedVirtual,
+        CancellationToken cancellationToken)
+    {
+        IReadOnlyDictionary<int, (string? Name, string? StillPath, double? VoteAverage, string? Overview, string? AirDate, int? Runtime)>? seasonEpisodes;
+        try
+        {
+            seasonEpisodes = await tmdb.TryGetTvSeasonEpisodesAsync(show.TmdbId, season, cancellationToken)
+                .ConfigureAwait(false);
+        }
+        catch
+        {
+            return null;
+        }
+        if (seasonEpisodes == null || seasonEpisodes.Count == 0)
+            return null;
+
+        var inLibrary = eps.Where(e => e.Season == season).Select(e => e.EpisodeNumber).ToHashSet();
+        var newAired = seasonEpisodes
+            .Where(kv => !inLibrary.Contains(kv.Key))
+            .Where(kv => !watchedVirtual.Contains((show.TmdbId, season, kv.Key)))
+            .Where(kv => !string.IsNullOrWhiteSpace(kv.Value.AirDate) &&
+                         string.Compare(kv.Value.AirDate!.Trim(), todayStr, StringComparison.Ordinal) <= 0)
+            .OrderBy(kv => kv.Key)
+            .ToList();
+        if (newAired.Count == 0)
+            return null;
+
+        return (season, newAired[0].Key, newAired.Count);
     }
 
     private static bool TryMatchHistoryPlayTime(
@@ -1128,6 +1405,36 @@ public sealed class LibraryRepository
         var b = path.Replace('/', '\\');
         if (!string.Equals(b, path, StringComparison.Ordinal))
             yield return b;
+    }
+
+    /// <summary>
+    /// Removes a show from Up Next: deletes all episode watch-history rows and resets watch status to Unwatched.
+    /// </summary>
+    public async Task<bool> DismissCurrentlyWatchingShowAsync(int showId, CancellationToken cancellationToken = default)
+    {
+        var eps = await _db.Episodes.Where(e => e.ShowId == showId).ToListAsync(cancellationToken)
+            .ConfigureAwait(false);
+        if (eps.Count == 0)
+            return false;
+
+        var variants = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var ep in eps)
+        {
+            var fp = (ep.FilePath ?? "").Trim();
+            if (fp.Length == 0)
+                continue;
+            foreach (var v in PathVariants(fp))
+                variants.Add(v);
+        }
+
+        if (variants.Count > 0)
+        {
+            await _db.WatchHistories.Where(h => variants.Contains(h.FilePath))
+                .ExecuteDeleteAsync(cancellationToken).ConfigureAwait(false);
+        }
+
+        await UpdateShowWatchStatusAsync(showId, WatchStatuses.Unwatched, cancellationToken).ConfigureAwait(false);
+        return true;
     }
 
     /// <summary>
@@ -1226,6 +1533,15 @@ public sealed class LibraryRepository
         return await RemoveContinueWatchingByHistoryIdAsync(historyId, cancellationToken).ConfigureAwait(false);
     }
 
+    /// <summary>True when playback reached the final seconds of the file (not merely "near end").</summary>
+    private static bool IsPlaybackCompleted(int positionSeconds, int durationSeconds)
+    {
+        if (durationSeconds <= 0 || positionSeconds < 0)
+            return false;
+        const int endToleranceSeconds = 2;
+        return positionSeconds >= durationSeconds - endToleranceSeconds;
+    }
+
     public async Task UpdateWatchHistoryAfterReturnAsync(int historyId, DateTime stoppedAtUtc, int sessionSeconds,
         CancellationToken cancellationToken = default)
     {
@@ -1246,7 +1562,7 @@ public sealed class LibraryRepository
         if (sessionSeconds > 60)
             h.EstimatedSeconds = Math.Max(h.EstimatedSeconds, sessionSeconds);
 
-        if (h.FileDurationSeconds > 0 && h.EstimatedSeconds >= h.FileDurationSeconds * 0.90)
+        if (IsPlaybackCompleted(h.EstimatedSeconds, h.FileDurationSeconds))
             h.IsCompleted = true;
 
         await _db.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
@@ -1301,16 +1617,16 @@ public sealed class LibraryRepository
         h.EstimatedSeconds = Math.Max(h.EstimatedSeconds, positionSeconds);
 
         var dur = h.FileDurationSeconds;
-        var nearEnd = dur > 0 && h.EstimatedSeconds >= (int)(dur * 0.90);
-        if (nearEnd)
+        var atEnd = IsPlaybackCompleted(h.EstimatedSeconds, dur);
+        if (atEnd)
             h.IsCompleted = true;
 
-        if (markWatching && positionSeconds > 60 && !nearEnd)
+        if (markWatching && positionSeconds > 60 && !atEnd)
             await ApplyWatchingFromHistoryAsync(h, cancellationToken).ConfigureAwait(false);
 
         await _db.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
 
-        if (nearEnd)
+        if (atEnd)
             await ApplyCompletedFromHistoryAsync(h, cancellationToken).ConfigureAwait(false);
     }
 
@@ -1362,7 +1678,7 @@ public sealed class LibraryRepository
         h.MaxKnownPositionSeconds = Math.Max(h.MaxKnownPositionSeconds, positionSeconds);
         h.EstimatedSeconds = Math.Max(h.EstimatedSeconds, positionSeconds);
         h.IsStopFinalized = true;
-        if (h.FileDurationSeconds > 0 && h.EstimatedSeconds >= h.FileDurationSeconds * 0.90)
+        if (IsPlaybackCompleted(h.EstimatedSeconds, h.FileDurationSeconds))
             h.IsCompleted = true;
 
         await _db.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
@@ -1378,14 +1694,14 @@ public sealed class LibraryRepository
         {
             var lite = await TryGetMovieByFilePathAsync(h.FilePath, cancellationToken).ConfigureAwait(false);
             if (lite != null)
-                await UpdateMovieWatchStatusAsync(lite.Id, WatchStatuses.Completed, cancellationToken)
+                await UpdateMovieWatchStatusAsync(lite.Id, WatchStatuses.Completed, cancellationToken, fromPlayback: true)
                     .ConfigureAwait(false);
         }
         else if (string.Equals(h.MediaType, "Series", StringComparison.OrdinalIgnoreCase))
         {
             var lite = await TryGetEpisodeByFilePathAsync(h.FilePath, cancellationToken).ConfigureAwait(false);
             if (lite != null)
-                await UpdateEpisodeWatchStatusAsync(lite.Id, WatchStatuses.Completed, cancellationToken)
+                await UpdateEpisodeWatchStatusAsync(lite.Id, WatchStatuses.Completed, cancellationToken, fromPlayback: true)
                     .ConfigureAwait(false);
         }
     }
@@ -1596,36 +1912,97 @@ public sealed class LibraryRepository
         string? posterUrl, string source,
         int? seasonNumber, int? episodeNumber,
         int estimatedSeconds,
-        CancellationToken ct = default)
+        CancellationToken ct = default,
+        DateTime? watchedAtUtc = null)
     {
-        // Idempotency: skip if same title+source already recorded today
+        var mtNorm = string.Equals(mediaType, "Series", StringComparison.OrdinalIgnoreCase) ? "Series" : "Movie";
+        var srcNorm = string.IsNullOrWhiteSpace(source) ? "manual" : source.Trim().ToLowerInvariant();
+        var openedAt = watchedAtUtc ?? DateTime.UtcNow;
         var today = DateTime.UtcNow.Date;
-        var already = await _db.WatchHistories.AnyAsync(h =>
-            h.TmdbId == tmdbId &&
-            h.Source == source &&
-            h.SeasonNumber == seasonNumber &&
-            h.EpisodeNumber == episodeNumber &&
-            h.OpenedAt >= today, ct).ConfigureAwait(false);
-        if (already) return;
+
+        // Idempotency: skip if same title+source already recorded today (NULL-safe season/episode).
+        // Only applies to "now" writes (watchedAtUtc unset) -- a caller backfilling historical dates
+        // (e.g. a bulk import) is expected to track its own resumability instead.
+        if (watchedAtUtc == null)
+        {
+            var already = await _db.WatchHistories.AnyAsync(h =>
+                h.TmdbId == tmdbId &&
+                h.Source == srcNorm &&
+                h.MediaType == mtNorm &&
+                h.OpenedAt >= today &&
+                (seasonNumber == null ? h.SeasonNumber == null : h.SeasonNumber == seasonNumber) &&
+                (episodeNumber == null ? h.EpisodeNumber == null : h.EpisodeNumber == episodeNumber), ct)
+                .ConfigureAwait(false);
+            if (already) return;
+        }
 
         _db.WatchHistories.Add(new WatchHistory
         {
             FilePath = "",
             Title = title,
-            MediaType = mediaType,
-            OpenedAt = DateTime.UtcNow,
+            MediaType = mtNorm,
+            OpenedAt = openedAt,
             IsCompleted = true,
             IsStopFinalized = true,
             EstimatedSeconds = Math.Max(0, estimatedSeconds),
             TmdbId = tmdbId,
             ImdbId = imdbId,
-            Source = source,
+            Source = srcNorm,
             SeasonNumber = seasonNumber,
             EpisodeNumber = episodeNumber,
             PosterUrl = posterUrl,
             SuppressContinueWatching = true, // streaming entries don't appear in "Continue watching"
         });
         await _db.SaveChangesAsync(ct).ConfigureAwait(false);
+    }
+
+    /// <summary>Reverses <see cref="RecordUnifiedWatchAsync"/> — removes completed watch-history rows for
+    /// this title (optionally scoped to one season/episode) so it no longer counts as "watched" for
+    /// streaming/browse-mode cards or Watch Later.</summary>
+    public async Task UnrecordUnifiedWatchAsync(
+        int tmdbId, string mediaType, int? seasonNumber, int? episodeNumber, CancellationToken ct = default)
+    {
+        var mtNorm = string.Equals(mediaType, "Series", StringComparison.OrdinalIgnoreCase) ? "Series" : "Movie";
+        var rows = await _db.WatchHistories.Where(h =>
+                h.TmdbId == tmdbId &&
+                h.MediaType == mtNorm &&
+                (seasonNumber == null ? h.SeasonNumber == null : h.SeasonNumber == seasonNumber) &&
+                (episodeNumber == null ? h.EpisodeNumber == null : h.EpisodeNumber == episodeNumber))
+            .ToListAsync(ct)
+            .ConfigureAwait(false);
+        if (rows.Count == 0)
+            return;
+        _db.WatchHistories.RemoveRange(rows);
+        await _db.SaveChangesAsync(ct).ConfigureAwait(false);
+    }
+
+    /// <summary>Episode numbers within a season marked watched via unified history (e.g. "Mark watched" on
+    /// an episode that isn't downloaded) — lets the season page show a Watched state for episodes with no
+    /// library row.</summary>
+    public async Task<HashSet<int>> GetVirtuallyWatchedEpisodeNumbersAsync(int showTmdbId, int season,
+        CancellationToken cancellationToken = default)
+    {
+        return (await _db.WatchHistories.AsNoTracking()
+                .Where(h => h.MediaType == "Series" && h.IsCompleted &&
+                            h.TmdbId == showTmdbId && h.SeasonNumber == season && h.EpisodeNumber != null)
+                .Select(h => h.EpisodeNumber!.Value)
+                .ToListAsync(cancellationToken)
+                .ConfigureAwait(false))
+            .ToHashSet();
+    }
+
+    /// <summary>Distinct TMDB ids with at least one completed watch entry for the given media type —
+    /// backs the "Watched" badge on streaming/browse-mode cards, which have no local library match to
+    /// key off of.</summary>
+    public async Task<HashSet<int>> GetWatchedTmdbIdsAsync(string mediaType, CancellationToken cancellationToken = default)
+    {
+        var mtNorm = string.Equals(mediaType, "Series", StringComparison.OrdinalIgnoreCase) ? "Series" : "Movie";
+        var ids = await _db.WatchHistories.AsNoTracking()
+            .Where(h => h.MediaType == mtNorm && h.TmdbId != null && h.IsCompleted)
+            .Select(h => h.TmdbId!.Value)
+            .Distinct()
+            .ToListAsync(cancellationToken).ConfigureAwait(false);
+        return ids.ToHashSet();
     }
 
     public async Task EnsureEpisodeStillLocalPathColumnAsync(CancellationToken cancellationToken = default)
@@ -1639,6 +2016,26 @@ public sealed class LibraryRepository
 
         await AddIfMissingAsync("Episodes", "StillLocalPath", "ALTER TABLE Episodes ADD COLUMN StillLocalPath TEXT")
             .ConfigureAwait(false);
+    }
+
+    public async Task EnsureShowDroppedColumnAsync(CancellationToken cancellationToken = default)
+    {
+        if (await SqliteColumnExistsAsync("Shows", "IsDropped", cancellationToken).ConfigureAwait(false))
+            return;
+        await _db.Database.ExecuteSqlRawAsync(
+                "ALTER TABLE Shows ADD COLUMN IsDropped INTEGER NOT NULL DEFAULT 0", cancellationToken)
+            .ConfigureAwait(false);
+    }
+
+    /// <summary>Marks (or unmarks) a series as one the user won't continue watching — see <see cref="Show.IsDropped"/>.</summary>
+    public async Task<bool> SetShowDroppedAsync(int showId, bool dropped, CancellationToken cancellationToken = default)
+    {
+        var show = await _db.Shows.FirstOrDefaultAsync(s => s.Id == showId, cancellationToken).ConfigureAwait(false);
+        if (show == null)
+            return false;
+        show.IsDropped = dropped;
+        await _db.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
+        return true;
     }
 
     public async Task EnsureListItemMetadataColumnsAsync(CancellationToken cancellationToken = default)
@@ -1753,7 +2150,7 @@ public sealed class LibraryRepository
         UpdateBackdropAsync(id, mediaType, path, cancellationToken);
 
     public async Task UpdateMovieWatchStatusAsync(int movieId, string watchStatus,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default, bool fromPlayback = false)
     {
         if (!WatchStatuses.IsValid(watchStatus))
             return;
@@ -1764,6 +2161,7 @@ public sealed class LibraryRepository
 
         m.WatchStatus = watchStatus;
         m.CompletedAt = watchStatus == WatchStatuses.Completed ? DateTime.UtcNow : null;
+        m.CompletedFromPlayback = watchStatus == WatchStatuses.Completed && fromPlayback;
         await _db.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
 
         // When a movie is marked Completed, clear it from Continue Watching in history too.
@@ -1784,12 +2182,15 @@ public sealed class LibraryRepository
 
         show.WatchStatus = watchStatus;
         show.CompletedAt = watchStatus == WatchStatuses.Completed ? DateTime.UtcNow : null;
+        // This endpoint is always a manual bulk status change — never reachable from real playback.
+        show.CompletedFromPlayback = false;
 
         var eps = await _db.Episodes.Where(e => e.ShowId == showId).ToListAsync(cancellationToken).ConfigureAwait(false);
         foreach (var ep in eps)
         {
             ep.WatchStatus = watchStatus;
             ep.CompletedAt = watchStatus == WatchStatuses.Completed ? DateTime.UtcNow : null;
+            ep.CompletedFromPlayback = false;
         }
 
         await _db.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
@@ -1814,7 +2215,7 @@ public sealed class LibraryRepository
     }
 
     public async Task UpdateEpisodeWatchStatusAsync(int episodeId, string watchStatus,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default, bool fromPlayback = false)
     {
         if (!WatchStatuses.IsValid(watchStatus))
             return;
@@ -1826,6 +2227,7 @@ public sealed class LibraryRepository
 
         ep.WatchStatus = watchStatus;
         ep.CompletedAt = watchStatus == WatchStatuses.Completed ? DateTime.UtcNow : null;
+        ep.CompletedFromPlayback = watchStatus == WatchStatuses.Completed && fromPlayback;
         await _db.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
 
         // When an episode is marked Completed, clear it from Continue Watching in history too.
@@ -1855,16 +2257,20 @@ public sealed class LibraryRepository
         {
             show.WatchStatus = WatchStatuses.Completed;
             show.CompletedAt = DateTime.UtcNow;
+            // Only counts as a real-playback completion if every episode got there via playback too.
+            show.CompletedFromPlayback = eps.All(e => e.CompletedFromPlayback);
         }
         else if (anyProgress)
         {
             show.WatchStatus = WatchStatuses.Watching;
             show.CompletedAt = null;
+            show.CompletedFromPlayback = false;
         }
         else
         {
             show.WatchStatus = WatchStatuses.Unwatched;
             show.CompletedAt = null;
+            show.CompletedFromPlayback = false;
         }
 
         await _db.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
@@ -1889,6 +2295,192 @@ public sealed class LibraryRepository
         await _db.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
     }
 
+    // ── Trakt.tv integration ────────────────────────────────────────────────
+
+    /// <summary>Read-only lookup used by the Trakt scrobble hooks to read the fields (TmdbId, MediaType,
+    /// season/episode, duration) they need without threading them through every history endpoint call.</summary>
+    public async Task<WatchHistory?> GetWatchHistoryByIdAsync(int id, CancellationToken cancellationToken = default)
+    {
+        return await _db.WatchHistories.AsNoTracking().FirstOrDefaultAsync(x => x.Id == id, cancellationToken)
+            .ConfigureAwait(false);
+    }
+
+    /// <summary>Read-only lookup used by Trakt history import to find the local episode matching a
+    /// (show, season, episode number) triple without a network round trip.</summary>
+    public async Task<Episode?> GetEpisodeAsync(int showId, int season, int episodeNumber,
+        CancellationToken cancellationToken = default)
+    {
+        return await _db.Episodes
+            .FirstOrDefaultAsync(e => e.ShowId == showId && e.Season == season && e.EpisodeNumber == episodeNumber,
+                cancellationToken)
+            .ConfigureAwait(false);
+    }
+
+    public async Task<TraktSettings> GetOrCreateTraktSettingsAsync(CancellationToken cancellationToken = default)
+    {
+        var s = await _db.TraktSettings.FirstOrDefaultAsync(x => x.Id == 1, cancellationToken).ConfigureAwait(false);
+        if (s != null)
+            return s;
+
+        s = new TraktSettings { Id = 1, IsConnected = false, AutoSyncEnabled = false };
+        _db.TraktSettings.Add(s);
+        await _db.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
+        return s;
+    }
+
+    public async Task SaveTraktTokensAsync(string accessToken, string refreshToken, DateTime expiresAtUtc,
+        CancellationToken cancellationToken = default)
+    {
+        var s = await GetOrCreateTraktSettingsAsync(cancellationToken).ConfigureAwait(false);
+        s.AccessToken = accessToken;
+        s.RefreshToken = refreshToken;
+        s.TokenExpiresAt = expiresAtUtc;
+        s.IsConnected = true;
+        await _db.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
+    }
+
+    public async Task SetTraktAutoSyncEnabledAsync(bool enabled, CancellationToken cancellationToken = default)
+    {
+        var s = await GetOrCreateTraktSettingsAsync(cancellationToken).ConfigureAwait(false);
+        s.AutoSyncEnabled = enabled;
+        await _db.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
+    }
+
+    /// <summary>Refresh failed and could not be recovered: stop trying to use these tokens, but keep the
+    /// refresh token around so the Settings UI can tell "expired, please reconnect" apart from "never connected".</summary>
+    public async Task MarkTraktConnectionExpiredAsync(CancellationToken cancellationToken = default)
+    {
+        var s = await GetOrCreateTraktSettingsAsync(cancellationToken).ConfigureAwait(false);
+        s.IsConnected = false;
+        await _db.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
+    }
+
+    public async Task DisconnectTraktAsync(CancellationToken cancellationToken = default)
+    {
+        var s = await GetOrCreateTraktSettingsAsync(cancellationToken).ConfigureAwait(false);
+        s.AccessToken = null;
+        s.RefreshToken = null;
+        s.TokenExpiresAt = null;
+        s.IsConnected = false;
+        s.AutoSyncEnabled = false;
+        await _db.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
+    }
+
+    public async Task<int?> GetTraktIdAsync(int tmdbId, string mediaType, CancellationToken cancellationToken = default)
+    {
+        var row = await _db.TraktIdMaps.AsNoTracking()
+            .FirstOrDefaultAsync(x => x.TmdbId == tmdbId && x.MediaType == mediaType, cancellationToken)
+            .ConfigureAwait(false);
+        return row?.TraktId;
+    }
+
+    public async Task SaveTraktIdAsync(int tmdbId, string mediaType, int traktId,
+        CancellationToken cancellationToken = default)
+    {
+        var existing = await _db.TraktIdMaps
+            .FirstOrDefaultAsync(x => x.TmdbId == tmdbId && x.MediaType == mediaType, cancellationToken)
+            .ConfigureAwait(false);
+        if (existing != null)
+        {
+            existing.TraktId = traktId;
+        }
+        else
+        {
+            _db.TraktIdMaps.Add(new TraktIdMap { TmdbId = tmdbId, MediaType = mediaType, TraktId = traktId });
+        }
+
+        await _db.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
+    }
+
+    /// <summary>Applies a Trakt playback-progress item to local Continue Watching. Skips when local data is
+    /// newer than <paramref name="pausedAtUtc"/> or the title is already completed.</summary>
+    public async Task<bool> ApplyTraktPlaybackProgressAsync(
+        string filePath,
+        string title,
+        string? posterLocalPath,
+        string mediaType,
+        double progressPercent,
+        int durationSeconds,
+        DateTime pausedAtUtc,
+        int tmdbId,
+        int? seasonNumber,
+        int? episodeNumber,
+        CancellationToken cancellationToken = default)
+    {
+        if (string.IsNullOrWhiteSpace(filePath) || progressPercent <= 0 || progressPercent >= 80)
+            return false;
+
+        var positionSeconds = durationSeconds > 0
+            ? (int)Math.Round(durationSeconds * progressPercent / 100.0, MidpointRounding.AwayFromZero)
+            : 0;
+        if (positionSeconds < 60)
+            return false;
+
+        var existing = await _db.WatchHistories
+            .Where(h => h.FilePath == filePath)
+            .OrderByDescending(h => h.OpenedAt)
+            .FirstOrDefaultAsync(cancellationToken)
+            .ConfigureAwait(false);
+
+        if (existing != null)
+        {
+            if (existing.IsCompleted)
+                return false;
+            if (existing.LastHeartbeatAtUtc.HasValue && existing.LastHeartbeatAtUtc.Value > pausedAtUtc)
+                return false;
+
+            existing.Title = string.IsNullOrWhiteSpace(title) ? existing.Title : title;
+            existing.PosterLocalPath ??= posterLocalPath;
+            existing.MediaType = mediaType;
+            existing.TmdbId = tmdbId;
+            existing.SeasonNumber = seasonNumber;
+            existing.EpisodeNumber = episodeNumber;
+            existing.Source = "trakt";
+            existing.LastExplicitPositionSeconds = positionSeconds;
+            existing.MaxKnownPositionSeconds = Math.Max(existing.MaxKnownPositionSeconds, positionSeconds);
+            existing.EstimatedSeconds = Math.Max(existing.EstimatedSeconds, positionSeconds);
+            existing.FileDurationSeconds = Math.Max(existing.FileDurationSeconds, durationSeconds);
+            existing.LastHeartbeatAtUtc = pausedAtUtc;
+            existing.StoppedAt = pausedAtUtc;
+            existing.IsStopFinalized = true;
+            existing.SuppressContinueWatching = false;
+            await _db.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
+
+            if (positionSeconds > 60 && !IsPlaybackCompleted(positionSeconds, existing.FileDurationSeconds))
+                await ApplyWatchingFromHistoryAsync(existing, cancellationToken).ConfigureAwait(false);
+            return true;
+        }
+
+        var h = new WatchHistory
+        {
+            FilePath = filePath,
+            Title = title,
+            PosterLocalPath = posterLocalPath,
+            MediaType = mediaType,
+            OpenedAt = pausedAtUtc,
+            StartedAt = pausedAtUtc,
+            StoppedAt = pausedAtUtc,
+            EstimatedSeconds = positionSeconds,
+            FileDurationSeconds = durationSeconds,
+            MaxKnownPositionSeconds = positionSeconds,
+            LastExplicitPositionSeconds = positionSeconds,
+            LastHeartbeatAtUtc = pausedAtUtc,
+            IsStopFinalized = true,
+            IsCompleted = false,
+            SuppressContinueWatching = false,
+            TmdbId = tmdbId,
+            SeasonNumber = seasonNumber,
+            EpisodeNumber = episodeNumber,
+            Source = "trakt",
+        };
+        _db.WatchHistories.Add(h);
+        await _db.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
+
+        if (positionSeconds > 60 && !IsPlaybackCompleted(positionSeconds, durationSeconds))
+            await ApplyWatchingFromHistoryAsync(h, cancellationToken).ConfigureAwait(false);
+        return true;
+    }
+
     // ── Incremental scan timestamp ────────────────────────────────────────────
 
     /// <summary>Returns the UTC timestamp of the last successful auto-scan, or null if never run.</summary>
@@ -1904,6 +2496,20 @@ public sealed class LibraryRepository
     /// <summary>Stores the UTC timestamp of the most recently completed auto-scan.</summary>
     public Task SetLastAutoScanAtAsync(DateTime utcNow, CancellationToken cancellationToken = default)
         => SaveSettingAsync("LastAutoScanAt", utcNow.ToString("O"), cancellationToken);
+
+    /// <summary>Returns the UTC timestamp of the last successful pinned-folder scan, or null if never run.</summary>
+    public async Task<DateTime?> GetLastPinnedScanAtAsync(CancellationToken cancellationToken = default)
+    {
+        var raw = await GetSettingAsync("LastPinnedScanAt", cancellationToken).ConfigureAwait(false);
+        if (string.IsNullOrWhiteSpace(raw)) return null;
+        return DateTime.TryParse(raw, null, System.Globalization.DateTimeStyles.RoundtripKind, out var dt)
+            ? dt
+            : (DateTime?)null;
+    }
+
+    /// <summary>Stores the UTC timestamp of the most recently completed pinned-folder scan.</summary>
+    public Task SetLastPinnedScanAtAsync(DateTime utcNow, CancellationToken cancellationToken = default)
+        => SaveSettingAsync("LastPinnedScanAt", utcNow.ToString("O"), cancellationToken);
 
     // ─────────────────────────────────────────────────────────────────────────
 
@@ -2763,6 +3369,45 @@ public sealed class LibraryRepository
             });
             await _db.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
         }
+
+        await MigrateBuiltinListNamesAsync(cancellationToken).ConfigureAwait(false);
+    }
+
+    private async Task MigrateBuiltinListNamesAsync(CancellationToken cancellationToken)
+    {
+        var defaults = await _db.UserLists.Where(l => l.IsDefault).ToListAsync(cancellationToken).ConfigureAwait(false);
+        var changed = false;
+        foreach (var list in defaults)
+        {
+            if (list.Name is BuiltinLists.FavoritesLegacyName
+                or BuiltinLists.FavoritesName
+                || (list.Name.Contains("Favorites", StringComparison.OrdinalIgnoreCase)
+                    && !list.Name.StartsWith("::", StringComparison.Ordinal)))
+            {
+                if (list.Name != BuiltinLists.FavoritesName)
+                {
+                    list.Name = BuiltinLists.FavoritesName;
+                    changed = true;
+                }
+
+                continue;
+            }
+
+            if (list.Name is BuiltinLists.WatchLaterLegacyName
+                or BuiltinLists.WatchLaterName
+                || (list.Name.Contains("Watch Later", StringComparison.OrdinalIgnoreCase)
+                    && !list.Name.StartsWith("::", StringComparison.Ordinal)))
+            {
+                if (list.Name != BuiltinLists.WatchLaterName)
+                {
+                    list.Name = BuiltinLists.WatchLaterName;
+                    changed = true;
+                }
+            }
+        }
+
+        if (changed)
+            await _db.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
     }
 
     public async Task<IReadOnlyList<UserList>> GetUserListsOrderedAsync(CancellationToken cancellationToken = default)
@@ -2805,6 +3450,22 @@ public sealed class LibraryRepository
         var l = await _db.UserLists.AsNoTracking()
             .FirstOrDefaultAsync(x => x.Name == name, cancellationToken).ConfigureAwait(false);
         return l?.Id;
+    }
+
+    public async Task<int?> GetFavoritesListIdAsync(CancellationToken cancellationToken = default)
+    {
+        foreach (var name in new[] { BuiltinLists.FavoritesName, BuiltinLists.FavoritesLegacyName })
+        {
+            var id = await GetUserListIdByExactNameAsync(name, cancellationToken).ConfigureAwait(false);
+            if (id != null)
+                return id;
+        }
+
+        return await _db.UserLists.AsNoTracking()
+            .Where(l => l.IsDefault && l.Name.Contains("Favorites"))
+            .Select(l => (int?)l.Id)
+            .FirstOrDefaultAsync(cancellationToken)
+            .ConfigureAwait(false);
     }
 
     public async Task<bool> IsInListAsync(int listId, int tmdbId, string mediaType,
@@ -3501,6 +4162,223 @@ public sealed class LibraryRepository
             .ConfigureAwait(false);
     }
 
+    /// <summary>Moves this season's loose episode files (and their subtitle sidecars) into one folder
+    /// named after the show, so a season scattered directly in a shared library folder gets tidied up.
+    /// Reuses an existing show folder if one of the episodes already sits in one; otherwise creates a new
+    /// one next to wherever most of the season's files currently live.</summary>
+    public async Task<WrapResult> WrapSeasonEpisodesIntoFolderAsync(int showId, int season,
+        CancellationToken cancellationToken = default)
+    {
+        var show = await _db.Shows.FirstOrDefaultAsync(s => s.Id == showId, cancellationToken).ConfigureAwait(false);
+        if (show == null)
+            return new WrapResult(false, "Series not found.", 0, null);
+
+        var episodes = await _db.Episodes
+            .Where(e => e.ShowId == showId && e.Season == season && e.FilePath != "")
+            .ToListAsync(cancellationToken)
+            .ConfigureAwait(false);
+        var withFiles = episodes.Where(e => File.Exists(e.FilePath)).ToList();
+        if (withFiles.Count == 0)
+            return new WrapResult(false, "No episode files found for this season.", 0, null);
+
+        var directories = withFiles
+            .Select(e => Path.GetDirectoryName(e.FilePath) ?? "")
+            .Where(d => d.Length > 0)
+            .ToList();
+        var distinctDirs = directories.Distinct(StringComparer.OrdinalIgnoreCase).ToList();
+
+        static string Sanitize(string name)
+        {
+            var invalid = Path.GetInvalidFileNameChars();
+            var cleaned = new string(name.Where(c => !invalid.Contains(c)).ToArray()).Trim();
+            return string.IsNullOrWhiteSpace(cleaned) ? "Untitled" : cleaned;
+        }
+
+        static string Normalize(string name) =>
+            new string(name.Where(char.IsLetterOrDigit).ToArray()).ToLowerInvariant();
+
+        var showTitle = Sanitize(show.Title ?? "Untitled");
+        var normalizedTitle = Normalize(showTitle);
+
+        static bool IsSeasonFolderName(string name, int season)
+        {
+            var n = Normalize(name);
+            return n == $"season{season}" || n == $"season{season:D2}" ||
+                   n == $"s{season}" || n == $"s{season:D2}";
+        }
+
+        // Prefer an existing "<Show>/Season NN" folder if one of the episodes is already in it.
+        string? showDir = null;
+        foreach (var d in distinctDirs)
+        {
+            if (!IsSeasonFolderName(new DirectoryInfo(d).Name, season)) continue;
+            var parent = Directory.GetParent(d);
+            if (parent != null && Normalize(parent.Name) == normalizedTitle)
+            {
+                showDir = parent.FullName;
+                break;
+            }
+        }
+
+        // Otherwise reuse an existing show-named folder (episodes sitting loose directly inside it).
+        showDir ??= distinctDirs.FirstOrDefault(d => Normalize(new DirectoryInfo(d).Name) == normalizedTitle);
+
+        // Otherwise anchor a brand-new show folder next to wherever most of the season's files sit.
+        if (showDir == null)
+        {
+            var anchorDir = directories
+                .GroupBy(d => d, StringComparer.OrdinalIgnoreCase)
+                .OrderByDescending(g => g.Count())
+                .First().Key;
+            showDir = Path.Combine(anchorDir, showTitle);
+        }
+
+        var targetDir = Path.Combine(showDir, $"Season {season:D2}");
+
+        // If exactly one directory holds all of this season's files, it's already the target
+        // "<Show>/Season NN" folder, and no *other* show's episodes also live there — nothing to do.
+        if (distinctDirs.Count == 1 && string.Equals(distinctDirs[0], targetDir, StringComparison.OrdinalIgnoreCase))
+        {
+            var onlyDir = distinctDirs[0];
+            var othersInSameDir = await _db.Episodes.AsNoTracking()
+                .AnyAsync(e => e.ShowId != showId && EF.Functions.Like(e.FilePath, onlyDir + "%"), cancellationToken)
+                .ConfigureAwait(false);
+            if (!othersInSameDir)
+                return new WrapResult(true, "Already organized — nothing to wrap.", 0, onlyDir);
+        }
+
+        Directory.CreateDirectory(targetDir);
+
+        var moved = 0;
+        var conflicts = new List<string>();
+        foreach (var ep in withFiles)
+        {
+            var currentDir = Path.GetDirectoryName(ep.FilePath) ?? "";
+            if (string.Equals(currentDir, targetDir, StringComparison.OrdinalIgnoreCase))
+                continue;
+
+            var fileName = Path.GetFileName(ep.FilePath);
+            var destPath = Path.Combine(targetDir, fileName);
+            if (File.Exists(destPath))
+            {
+                conflicts.Add(fileName);
+                continue;
+            }
+
+            // Move sidecar files sharing the video's filename stem (subtitles, etc.) alongside it.
+            var originalVideoPath = ep.FilePath;
+            var stem = Path.GetFileNameWithoutExtension(originalVideoPath);
+            var siblings = Directory.Exists(currentDir)
+                ? Directory.GetFiles(currentDir, stem + "*")
+                : Array.Empty<string>();
+
+            File.Move(originalVideoPath, destPath);
+            ep.FilePath = destPath;
+
+            foreach (var sibling in siblings)
+            {
+                if (string.Equals(sibling, originalVideoPath, StringComparison.OrdinalIgnoreCase)) continue; // that's the video itself, already moved above
+                if (!File.Exists(sibling)) continue; // already moved as another episode's sibling
+                var siblingDest = Path.Combine(targetDir, Path.GetFileName(sibling));
+                if (File.Exists(siblingDest)) continue;
+                try
+                {
+                    File.Move(sibling, siblingDest);
+                    if (string.Equals(sibling, ep.SubtitlePath, StringComparison.OrdinalIgnoreCase))
+                        ep.SubtitlePath = siblingDest;
+                }
+                catch
+                {
+                    /* best-effort — subtitle sidecar move failures shouldn't block the episode itself */
+                }
+            }
+
+            moved++;
+        }
+
+        await _db.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
+
+        var displayPath = $"{Path.GetFileName(showDir)}/{Path.GetFileName(targetDir)}";
+        var message = conflicts.Count > 0
+            ? $"Moved {moved} file(s) into \"{displayPath}\". Skipped {conflicts.Count} due to a name already existing there."
+            : $"Moved {moved} file(s) into \"{displayPath}\".";
+        return new WrapResult(true, message, moved, targetDir);
+    }
+
+    /// <summary>Moves a movie's loose video file (and subtitle sidecars) into its own folder,
+    /// named after the movie, when it's currently sitting directly in a shared library folder
+    /// alongside other titles. No-op if the file already has a folder to itself.</summary>
+    public async Task<WrapResult> WrapMovieFileIntoFolderAsync(int movieId,
+        CancellationToken cancellationToken = default)
+    {
+        var movie = await _db.Movies.FirstOrDefaultAsync(m => m.Id == movieId, cancellationToken)
+            .ConfigureAwait(false);
+        if (movie == null)
+            return new WrapResult(false, "Movie not found.", 0, null);
+        if (string.IsNullOrWhiteSpace(movie.FilePath) || !File.Exists(movie.FilePath))
+            return new WrapResult(false, "No video file found for this movie.", 0, null);
+
+        var currentDir = Path.GetDirectoryName(movie.FilePath) ?? "";
+        if (currentDir.Length == 0)
+            return new WrapResult(false, "Could not resolve this movie's folder.", 0, null);
+
+        // Already alone in its own folder (no other movie's file shares this directory) — nothing to do.
+        var othersInSameDir = await _db.Movies.AsNoTracking()
+            .AnyAsync(m => m.Id != movieId && EF.Functions.Like(m.FilePath, currentDir + "%"), cancellationToken)
+            .ConfigureAwait(false);
+        if (!othersInSameDir)
+            return new WrapResult(true, "Already organized — nothing to wrap.", 0, currentDir);
+
+        static string Sanitize(string name)
+        {
+            var invalid = Path.GetInvalidFileNameChars();
+            var cleaned = new string(name.Where(c => !invalid.Contains(c)).ToArray()).Trim();
+            return string.IsNullOrWhiteSpace(cleaned) ? "Untitled" : cleaned;
+        }
+
+        var folderName = Sanitize(movie.Year is > 0 ? $"{movie.Title} ({movie.Year})" : movie.Title);
+        var targetDir = Path.Combine(currentDir, folderName);
+        Directory.CreateDirectory(targetDir);
+
+        var fileName = Path.GetFileName(movie.FilePath);
+        var destPath = Path.Combine(targetDir, fileName);
+        if (File.Exists(destPath))
+            return new WrapResult(false,
+                $"Couldn't move — \"{fileName}\" already exists in \"{folderName}\".", 0, targetDir);
+
+        var originalPath = movie.FilePath;
+        var stem = Path.GetFileNameWithoutExtension(originalPath);
+        var siblings = Directory.GetFiles(currentDir, stem + "*");
+
+        File.Move(originalPath, destPath);
+        movie.FilePath = destPath;
+
+        var movedSiblings = 0;
+        foreach (var sibling in siblings)
+        {
+            if (string.Equals(sibling, originalPath, StringComparison.OrdinalIgnoreCase)) continue;
+            if (!File.Exists(sibling)) continue;
+            var siblingDest = Path.Combine(targetDir, Path.GetFileName(sibling));
+            if (File.Exists(siblingDest)) continue;
+            try
+            {
+                File.Move(sibling, siblingDest);
+                movedSiblings++;
+            }
+            catch
+            {
+                /* best-effort — a stray sidecar file failing to move shouldn't block the movie itself */
+            }
+        }
+
+        await _db.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
+
+        var message = movedSiblings > 0
+            ? $"Moved the video and {movedSiblings} subtitle file(s) into \"{folderName}\"."
+            : $"Moved the video into \"{folderName}\".";
+        return new WrapResult(true, message, 1, targetDir);
+    }
+
     private static int? ParseYearFromTmdbDate(string? releaseDate)
     {
         if (string.IsNullOrEmpty(releaseDate) || releaseDate.Length < 4)
@@ -3533,7 +4411,10 @@ public sealed class LibraryRepository
             m.Runtime = details.Runtime;
             m.IsArabic = MediaLanguageHelper.ComputeIsArabic(details.OriginalLanguage, m.FilePath ?? "");
 
-            m.CrewCacheJson = Newtonsoft.Json.JsonConvert.SerializeObject(details.Crew);
+            // Don't clobber a previously-cached crew list with an empty one — an empty result here
+            // usually means the TMDB /credits call failed transiently, not that the movie has no crew.
+            if (details.Crew.Count > 0 || string.IsNullOrWhiteSpace(m.CrewCacheJson))
+                m.CrewCacheJson = Newtonsoft.Json.JsonConvert.SerializeObject(details.Crew);
 
             var castRows = details.Cast.Select(c => new CastMember
             {
@@ -3754,29 +4635,34 @@ public sealed class LibraryRepository
         var eps = await _db.Episodes.Where(e => e.ShowId == showId).ToListAsync(cancellationToken)
             .ConfigureAwait(false);
         var bySeason = eps.GroupBy(e => e.Season).ToList();
-        var remaining = Math.Clamp(maxImageDownloads, 0, 500);
 
-        foreach (var seasonGroup in bySeason)
+        // Season metadata fetches are pure network calls (no _db access) — safe to run concurrently.
+        var seasonMaps = await Task.WhenAll(bySeason.Select(async seasonGroup =>
         {
-            cancellationToken.ThrowIfCancellationRequested();
-            var seasonNum = seasonGroup.Key;
-            IReadOnlyDictionary<int, (string? Name, string? StillPath, double? VoteAverage, string? Overview)>? seasonMap;
             try
             {
-                seasonMap = await tmdb.TryGetTvSeasonEpisodesAsync(showTmdbId, seasonNum, cancellationToken)
+                var map = await tmdb.TryGetTvSeasonEpisodesAsync(showTmdbId, seasonGroup.Key, cancellationToken)
                     .ConfigureAwait(false);
+                return (seasonGroup.Key, Map: map);
             }
             catch
             {
-                continue;
+                return (seasonGroup.Key, Map: (IReadOnlyDictionary<int, (string? Name, string? StillPath, double? VoteAverage, string? Overview, string? AirDate, int? Runtime)>?)null);
             }
+        })).ConfigureAwait(false);
+        var seasonMapByNumber = seasonMaps.ToDictionary(x => x.Key, x => x.Map);
 
-            if (seasonMap == null || seasonMap.Count == 0)
+        // Apply title fixes immediately (no network needed) and collect still-download candidates,
+        // capped at the budget, to fetch concurrently afterward.
+        var remaining = Math.Clamp(maxImageDownloads, 0, 500);
+        var downloadCandidates = new List<(Episode Episode, string StillPath)>();
+        foreach (var seasonGroup in bySeason)
+        {
+            if (!seasonMapByNumber.TryGetValue(seasonGroup.Key, out var seasonMap) || seasonMap == null)
                 continue;
 
             foreach (var ep in seasonGroup)
             {
-                cancellationToken.ThrowIfCancellationRequested();
                 if (!seasonMap.TryGetValue(ep.EpisodeNumber, out var meta))
                     continue;
 
@@ -3788,20 +4674,42 @@ public sealed class LibraryRepository
 
                 if (string.IsNullOrWhiteSpace(ep.StillLocalPath) && !string.IsNullOrWhiteSpace(meta.StillPath))
                 {
-                    try
-                    {
-                        ep.StillLocalPath = await tmdb
-                            .DownloadImageAsync(meta.StillPath,
-                                $"still_tv{showTmdbId}_S{ep.Season}E{ep.EpisodeNumber}.jpg", cancellationToken,
-                                "Stills", "w300")
-                            .ConfigureAwait(false);
-                        remaining--;
-                    }
-                    catch
-                    {
-                        /* skip image */
-                    }
+                    downloadCandidates.Add((ep, meta.StillPath!));
+                    remaining--;
                 }
+            }
+        }
+
+        if (downloadCandidates.Count > 0)
+        {
+            var downloaded = new System.Collections.Concurrent.ConcurrentBag<(int EpisodeId, string? Path)>();
+            await Parallel.ForEachAsync(downloadCandidates, new ParallelOptions
+            {
+                MaxDegreeOfParallelism = 6,
+                CancellationToken = cancellationToken
+            }, async (candidate, ct) =>
+            {
+                try
+                {
+                    var path = await tmdb
+                        .DownloadImageAsync(candidate.StillPath,
+                            $"still_tv{showTmdbId}_S{candidate.Episode.Season}E{candidate.Episode.EpisodeNumber}.jpg", ct,
+                            "Stills", "w300")
+                        .ConfigureAwait(false);
+                    downloaded.Add((candidate.Episode.Id, path));
+                }
+                catch
+                {
+                    /* skip image */
+                }
+            }).ConfigureAwait(false);
+
+            // Apply results back onto the tracked entities single-threaded (DbContext isn't thread-safe).
+            var byId = eps.ToDictionary(e => e.Id);
+            foreach (var (episodeId, path) in downloaded)
+            {
+                if (!string.IsNullOrWhiteSpace(path) && byId.TryGetValue(episodeId, out var ep))
+                    ep.StillLocalPath = path;
             }
         }
 
@@ -3809,7 +4717,8 @@ public sealed class LibraryRepository
     }
 
     /// <summary>Aggregates for GET /api/stats/watch (UI dashboard).</summary>
-    public async Task<WatchStatisticsBundle> GetWatchStatisticsBundleAsync(CancellationToken cancellationToken = default)
+    public async Task<WatchStatisticsBundle> GetWatchStatisticsBundleAsync(
+        TmdbClient? tmdb = null, CancellationToken cancellationToken = default)
     {
         var now = DateTime.UtcNow;
         var weekStart = now.Date.AddDays(-(int)now.DayOfWeek);
@@ -3820,6 +4729,55 @@ public sealed class LibraryRepository
         var totalSeconds = histories.Sum(h => Math.Max(0, h.EstimatedSeconds));
         var weekSeconds = histories.Where(h => h.OpenedAt >= weekStart).Sum(h => Math.Max(0, h.EstimatedSeconds));
         var monthSeconds = histories.Where(h => h.OpenedAt >= monthStart).Sum(h => Math.Max(0, h.EstimatedSeconds));
+
+        static bool IsMovieHistory(WatchHistory h) => string.Equals(h.MediaType, "Movie", StringComparison.OrdinalIgnoreCase);
+        static bool IsSeriesHistory(WatchHistory h) => string.Equals(h.MediaType, "Series", StringComparison.OrdinalIgnoreCase);
+
+        var movieSecondsTotal = histories.Where(IsMovieHistory).Sum(h => Math.Max(0, h.EstimatedSeconds));
+        var seriesSecondsTotal = histories.Where(IsSeriesHistory).Sum(h => Math.Max(0, h.EstimatedSeconds));
+        var movieSecondsWeek = histories.Where(h => IsMovieHistory(h) && h.OpenedAt >= weekStart)
+            .Sum(h => Math.Max(0, h.EstimatedSeconds));
+        var seriesSecondsWeek = histories.Where(h => IsSeriesHistory(h) && h.OpenedAt >= weekStart)
+            .Sum(h => Math.Max(0, h.EstimatedSeconds));
+        var movieSecondsMonth = histories.Where(h => IsMovieHistory(h) && h.OpenedAt >= monthStart)
+            .Sum(h => Math.Max(0, h.EstimatedSeconds));
+        var seriesSecondsMonth = histories.Where(h => IsSeriesHistory(h) && h.OpenedAt >= monthStart)
+            .Sum(h => Math.Max(0, h.EstimatedSeconds));
+
+        // Marathon: most episodes of the same show watched on the same calendar day.
+        var longestMarathonEpisodes = 0;
+        var longestMarathonShowTitle = "";
+        foreach (var grp in histories.Where(IsSeriesHistory)
+                     .GroupBy(h => (ShowKey: h.TmdbId?.ToString() ?? h.Title, h.OpenedAt.Date)))
+        {
+            // Distinct episodes within the group — history rows can repeat per resume/heartbeat,
+            // so count unique (season, episode) pairs (falling back to file path) rather than raw rows.
+            var count = grp.Select(h => h.SeasonNumber.HasValue && h.EpisodeNumber.HasValue
+                    ? $"{h.SeasonNumber}x{h.EpisodeNumber}"
+                    : h.FilePath)
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .Count();
+            if (count > longestMarathonEpisodes)
+            {
+                longestMarathonEpisodes = count;
+                var rawTitle = grp.First().Title;
+                var epTagMatch = Regex.Match(rawTitle, @"\sS\d+E\d+\s*$", RegexOptions.IgnoreCase);
+                var cutIdx = epTagMatch.Success ? epTagMatch.Index : -1;
+                if (cutIdx > 0)
+                {
+                    var prefix = rawTitle[..cutIdx].TrimEnd();
+                    // Trim a trailing separator glyph (em/en dash, middle dot, etc.) left over before the episode tag.
+                    var sepIdx = prefix.Length - 1;
+                    while (sepIdx >= 0 && !char.IsLetterOrDigit(prefix[sepIdx]))
+                        sepIdx--;
+                    longestMarathonShowTitle = prefix[..(sepIdx + 1)];
+                }
+                else
+                {
+                    longestMarathonShowTitle = rawTitle;
+                }
+            }
+        }
 
         var moviesCompletedLibrary = await _db.Movies.AsNoTracking()
             .CountAsync(m => m.IsMatched && m.WatchStatus == WatchStatuses.Completed, cancellationToken)
@@ -3845,27 +4803,53 @@ public sealed class LibraryRepository
             .ToListAsync(cancellationToken).ConfigureAwait(false);
         var extraMovies = streamingMovieWatches.Count(id => !libraryMovieTmdbSet.Contains(id));
 
-        var streamingEpWatches = await _db.WatchHistories.AsNoTracking()
-            .Where(h => h.Source != "local" && h.IsCompleted && h.SeasonNumber != null && h.EpisodeNumber != null)
-            .CountAsync(cancellationToken).ConfigureAwait(false);
+        // Same "don't double count" treatment as extraMovies above: a show can be both in the
+        // local library (already counted via episodesWatchedLibrary) and have streaming/manual
+        // history rows for the same episodes (e.g. an external import) -- only add ones not
+        // already covered, and dedupe the streaming rows themselves (heartbeats/resumes/rewatch
+        // imports can all leave more than one row for the same episode).
+        var libraryCompletedEpisodeKeys = await (
+                from ep in _db.Episodes.AsNoTracking()
+                join s in _db.Shows.AsNoTracking() on ep.ShowId equals s.Id
+                where ep.WatchStatus == WatchStatuses.Completed && s.TmdbId > 0
+                select new { s.TmdbId, ep.Season, ep.EpisodeNumber })
+            .ToListAsync(cancellationToken).ConfigureAwait(false);
+        var libraryCompletedEpisodeSet = libraryCompletedEpisodeKeys
+            .Select(k => (k.TmdbId, k.Season, k.EpisodeNumber))
+            .ToHashSet();
+
+        var streamingEpKeys = await _db.WatchHistories.AsNoTracking()
+            .Where(h => h.Source != "local" && h.IsCompleted && h.TmdbId != null &&
+                        h.SeasonNumber != null && h.EpisodeNumber != null)
+            .Select(h => new { TmdbId = h.TmdbId!.Value, Season = h.SeasonNumber!.Value, Episode = h.EpisodeNumber!.Value })
+            .Distinct()
+            .ToListAsync(cancellationToken).ConfigureAwait(false);
+        var streamingEpWatches = streamingEpKeys
+            .Count(k => !libraryCompletedEpisodeSet.Contains((k.TmdbId, k.Season, k.Episode)));
 
         var moviesCompleted = moviesCompletedLibrary + extraMovies;
         var episodesWatched = episodesWatchedLibrary + streamingEpWatches;
 
-        var genreCounts = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
-        foreach (var csv in await _db.Movies.AsNoTracking()
-                     .Where(m => m.IsMatched && m.WatchStatus == WatchStatuses.Completed && m.Genres != null)
-                     .Select(m => m.Genres!).ToListAsync(cancellationToken).ConfigureAwait(false))
-        foreach (var g in SplitGenres(csv))
-            genreCounts[g] = genreCounts.TryGetValue(g, out var c) ? c + 1 : 1;
-        foreach (var csv in await _db.Shows.AsNoTracking()
-                     .Where(s => s.IsMatched && s.WatchStatus == WatchStatuses.Completed && s.Genres != null)
-                     .Select(s => s.Genres!).ToListAsync(cancellationToken).ConfigureAwait(false))
-        foreach (var g in SplitGenres(csv))
-            genreCounts[g] = genreCounts.TryGetValue(g, out var c) ? c + 1 : 1;
+        var movieGenreCsvs = await _db.Movies.AsNoTracking()
+            .Where(m => m.IsMatched && m.WatchStatus == WatchStatuses.Completed && m.Genres != null)
+            .Select(m => m.Genres!).ToListAsync(cancellationToken).ConfigureAwait(false);
+        var seriesGenreCsvs = await _db.Shows.AsNoTracking()
+            .Where(s => s.IsMatched && s.WatchStatus == WatchStatuses.Completed && s.Genres != null)
+            .Select(s => s.Genres!).ToListAsync(cancellationToken).ConfigureAwait(false);
 
-        var topPairs = genreCounts.OrderByDescending(kv => kv.Value).Take(5)
-            .Select(kv => new WatchGenreCount(kv.Key, kv.Value)).ToList();
+        static List<WatchGenreCount> TopGenresFrom(IEnumerable<string> csvs)
+        {
+            var counts = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+            foreach (var csv in csvs)
+            foreach (var g in SplitGenres(csv))
+                counts[g] = counts.TryGetValue(g, out var c) ? c + 1 : 1;
+            return counts.OrderByDescending(kv => kv.Value).Take(5)
+                .Select(kv => new WatchGenreCount(kv.Key, kv.Value)).ToList();
+        }
+
+        var topPairs = TopGenresFrom(movieGenreCsvs.Concat(seriesGenreCsvs));
+        var topMovieGenres = TopGenresFrom(movieGenreCsvs);
+        var topSeriesGenres = TopGenresFrom(seriesGenreCsvs);
 
         var arM = await _db.Movies.AsNoTracking().CountAsync(m => m.IsMatched && m.IsArabic, cancellationToken)
             .ConfigureAwait(false);
@@ -3879,13 +4863,17 @@ public sealed class LibraryRepository
         var e = enM + enS;
         var topLanguage = a > e ? "Arabic" : (e > a ? "English" : "Mixed");
 
+        // Recently completed only surfaces titles actually finished via in-app playback —
+        // manual "mark watched" actions shouldn't show up here.
         var recentMovies = await _db.Movies.AsNoTracking()
-            .Where(m => m.IsMatched && m.WatchStatus == WatchStatuses.Completed && m.CompletedAt != null)
+            .Where(m => m.IsMatched && m.WatchStatus == WatchStatuses.Completed && m.CompletedAt != null &&
+                        m.CompletedFromPlayback)
             .OrderByDescending(m => m.CompletedAt)
             .Take(5)
             .ToListAsync(cancellationToken).ConfigureAwait(false);
         var recentShows = await _db.Shows.AsNoTracking()
-            .Where(s => s.IsMatched && s.WatchStatus == WatchStatuses.Completed && s.CompletedAt != null)
+            .Where(s => s.IsMatched && s.WatchStatus == WatchStatuses.Completed && s.CompletedAt != null &&
+                        s.CompletedFromPlayback)
             .OrderByDescending(s => s.CompletedAt)
             .Take(5)
             .ToListAsync(cancellationToken).ConfigureAwait(false);
@@ -3955,24 +4943,55 @@ public sealed class LibraryRepository
             .ConfigureAwait(false);
 
         var currentlyWatchingRows =
-            await GetCurrentlyWatchingSeriesAsync(21, 500, cancellationToken).ConfigureAwait(false);
+            await GetCurrentlyWatchingSeriesAsync(21, 500, tmdb: null, cancellationToken: cancellationToken).ConfigureAwait(false);
         var currentlyWatchingCount = currentlyWatchingRows.Count;
 
-        var decadeCounts = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
-        foreach (var y in await _db.Movies.AsNoTracking()
-                     .Where(m => m.IsMatched && m.WatchStatus == WatchStatuses.Completed && m.Year != null)
-                     .Select(m => m.Year!.Value).ToListAsync(cancellationToken).ConfigureAwait(false))
-            AddDecade(decadeCounts, y);
-        foreach (var y in await _db.Shows.AsNoTracking()
-                     .Where(s => s.IsMatched && s.WatchStatus == WatchStatuses.Completed && s.Year != null)
-                     .Select(s => s.Year!.Value).ToListAsync(cancellationToken).ConfigureAwait(false))
-            AddDecade(decadeCounts, y);
+        var movieYears = await _db.Movies.AsNoTracking()
+            .Where(m => m.IsMatched && m.WatchStatus == WatchStatuses.Completed && m.Year != null)
+            .Select(m => m.Year!.Value).ToListAsync(cancellationToken).ConfigureAwait(false);
+        var seriesYears = await _db.Shows.AsNoTracking()
+            .Where(s => s.IsMatched && s.WatchStatus == WatchStatuses.Completed && s.Year != null)
+            .Select(s => s.Year!.Value).ToListAsync(cancellationToken).ConfigureAwait(false);
 
-        var decadeTop = decadeCounts
-            .OrderByDescending(kv => kv.Value)
-            .Take(6)
-            .Select(kv => new WatchDecadeCount(kv.Key, kv.Value))
-            .ToList();
+        static List<WatchDecadeCount> DecadeTopFrom(IEnumerable<int> years)
+        {
+            var counts = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+            foreach (var y in years)
+                AddDecade(counts, y);
+            return counts.OrderByDescending(kv => kv.Value).Take(6)
+                .Select(kv => new WatchDecadeCount(kv.Key, kv.Value)).ToList();
+        }
+
+        var decadeTop = DecadeTopFrom(movieYears.Concat(seriesYears));
+        var decadeTopMovies = DecadeTopFrom(movieYears);
+        var decadeTopSeries = DecadeTopFrom(seriesYears);
+
+        // Network counts: lazily backfill a small batch of matched shows missing Network from TMDB,
+        // then aggregate counts across Completed/Watching matched shows.
+        if (tmdb != null)
+        {
+            var showsMissingNetwork = await _db.Shows.AsNoTracking()
+                .Where(s => s.IsMatched && s.TmdbId > 0 && s.Network == null)
+                .Select(s => new { s.Id, s.TmdbId })
+                .Take(8)
+                .ToListAsync(cancellationToken).ConfigureAwait(false);
+            foreach (var s in showsMissingNetwork)
+            {
+                var network = await tmdb.TryGetTvNetworkAsync(s.TmdbId, cancellationToken).ConfigureAwait(false);
+                await _db.Database.ExecuteSqlRawAsync(
+                    "UPDATE Shows SET Network = {0} WHERE Id = {1}", network ?? "", s.Id)
+                    .ConfigureAwait(false);
+            }
+        }
+
+        var networkCounts = await _db.Shows.AsNoTracking()
+            .Where(s => s.IsMatched &&
+                        (s.WatchStatus == WatchStatuses.Completed || s.WatchStatus == WatchStatuses.Watching) &&
+                        s.Network != null && s.Network != "")
+            .GroupBy(s => s.Network!)
+            .Select(g => new WatchNetworkCount(g.Key, g.Count()))
+            .ToListAsync(cancellationToken).ConfigureAwait(false);
+        networkCounts = networkCounts.OrderByDescending(n => n.Count).ToList();
 
         var rewatchSessionApprox = histories
             .Where(h => !string.IsNullOrWhiteSpace(h.FilePath))
@@ -4009,7 +5028,22 @@ public sealed class LibraryRepository
             seriesCompletionPercent,
             showsWatchingLibrary,
             decadeTop,
-            rewatchSessionApprox);
+            rewatchSessionApprox,
+            (int)(movieSecondsTotal / 60),
+            (int)(seriesSecondsTotal / 60),
+            (int)(movieSecondsWeek / 60),
+            (int)(seriesSecondsWeek / 60),
+            (int)(movieSecondsMonth / 60),
+            (int)(seriesSecondsMonth / 60),
+            longestMarathonEpisodes,
+            longestMarathonShowTitle,
+            networkCounts,
+            topMovieGenres,
+            topSeriesGenres,
+            decadeTopMovies,
+            decadeTopSeries,
+            recentMovies.Cast<object>().ToList(),
+            recentShows.Cast<object>().ToList());
     }
 
     private static void AddDecade(Dictionary<string, int> map, int year)
@@ -4637,7 +5671,7 @@ public sealed class LibraryRepository
             var src = (q.SourceType ?? "").ToLowerInvariant();
             if (src.Contains("favorite"))
             {
-                listId = await GetUserListIdByExactNameAsync(BuiltinLists.FavoritesName, cancellationToken)
+                listId = await GetFavoritesListIdAsync(cancellationToken)
                     .ConfigureAwait(false);
             }
             else
@@ -4911,7 +5945,24 @@ public sealed record WatchStatisticsBundle(
     double SeriesCompletionPercent,
     int ShowsWatchingLibrary,
     IReadOnlyList<WatchDecadeCount> DecadeTop,
-    int RewatchSessionsApprox);
+    int RewatchSessionsApprox,
+    int MovieWatchTimeMinutes,
+    int SeriesWatchTimeMinutes,
+    int MovieWatchTimeMinutesWeek,
+    int SeriesWatchTimeMinutesWeek,
+    int MovieWatchTimeMinutesMonth,
+    int SeriesWatchTimeMinutesMonth,
+    int LongestMarathonEpisodes,
+    string LongestMarathonShowTitle,
+    IReadOnlyList<WatchNetworkCount> NetworkCounts,
+    IReadOnlyList<WatchGenreCount> TopMovieGenres,
+    IReadOnlyList<WatchGenreCount> TopSeriesGenres,
+    IReadOnlyList<WatchDecadeCount> DecadeTopMovies,
+    IReadOnlyList<WatchDecadeCount> DecadeTopSeries,
+    IReadOnlyList<object> RecentlyCompletedMovies,
+    IReadOnlyList<object> RecentlyCompletedSeries);
+
+public sealed record WatchNetworkCount(string Network, int Count);
 
 public sealed record ListItemDisplayRow(int TmdbId, string MediaType, string Title, int? Year, string? PosterLocalPath,
     int? LibraryDatabaseId, string? PosterRemoteUrl = null, string? ImdbId = null);

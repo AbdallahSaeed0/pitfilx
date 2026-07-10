@@ -1,0 +1,581 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+  <meta name="design_doc_mode" content="canvas">
+  <link href="https://fonts.googleapis.com/css2?family=DM+Sans:opsz,wght@9..40,300;9..40,400;9..40,500;9..40,600;9..40,700;9..40,800&display=swap" rel="stylesheet">
+  <style>
+    body { margin: 0; background: #06060e; }
+  </style>
+</helmet>
+
+<div style="background:#06060e; min-height:100vh; padding:48px 56px; font-family:'DM Sans',system-ui,sans-serif; color:white;">
+
+  <!-- Toggle controls -->
+  <div style="display:flex; gap:8px; margin-bottom:40px; flex-wrap:wrap; align-items:center;">
+    <span style="font-size:10px; font-weight:600; letter-spacing:0.14em; text-transform:uppercase; color:rgba(255,255,255,0.22); margin-right:4px;">Show</span>
+    <button onClick="{{ toggle1a }}" style="{{ btn1a }}">1a</button>
+    <button onClick="{{ toggle1b }}" style="{{ btn1b }}">1b</button>
+    <button onClick="{{ toggle1c }}" style="{{ btn1c }}">1c</button>
+    <button onClick="{{ toggle1d }}" style="{{ btn1d }}">1d</button>
+    <span style="color:rgba(255,255,255,0.12); font-size:11px; margin-left:8px;">Click to toggle visibility</span>
+  </div>
+
+  <!-- Page header -->
+  <div style="margin-bottom:48px;">
+    <p style="margin:0 0 6px; font-size:10px; font-weight:600; letter-spacing:0.18em; text-transform:uppercase; color:rgba(255,255,255,0.22);">UI Explorations — Library Screen</p>
+    <h1 style="margin:0; font-size:20px; font-weight:600; letter-spacing:-0.02em; color:rgba(255,255,255,0.85);">Continue Watching + Up Next — 4 directions</h1>
+  </div>
+
+  <!-- ══════════════════════════════════════════
+       1a — COMPACT SPOTLIGHT CARD
+  ══════════════════════════════════════════ -->
+  <sc-if value="{{ show1a }}" hint-placeholder-val="{{ true }}">
+  <section id="1a" style="margin-bottom:80px; max-width:1140px;">
+    <div style="display:flex; align-items:center; gap:12px; margin-bottom:18px;">
+      <a href="#1a" style="background:#7c3aed; color:white; font-size:10px; font-weight:700; padding:3px 11px; border-radius:20px; text-decoration:none; letter-spacing:0.07em; flex-shrink:0;">1a</a>
+      <span style="font-size:14px; font-weight:600;">Compact Spotlight Card</span>
+      <span style="color:rgba(255,255,255,0.22); font-size:13px;">Horizontal card, not full-bleed · landscape 16:9 episode thumbnails</span>
+    </div>
+    <div style="background:#0d0d1c; border-radius:14px; overflow:hidden; border:1px solid rgba(255,255,255,0.05);">
+      <div style="padding:22px 26px 20px;">
+        <p style="margin:0 0 14px; font-size:9.5px; font-weight:700; letter-spacing:0.16em; text-transform:uppercase; color:#7c3aed;">Continue Watching</p>
+        <div style="display:flex; align-items:stretch; background:rgba(255,255,255,0.03); border:1px solid rgba(255,255,255,0.07); border-radius:10px; overflow:hidden; position:relative;">
+          <div style="width:3px; background:linear-gradient(180deg,#c0392b,#7f1d1d); flex-shrink:0;"></div>
+          <div style="width:78px; height:118px; flex-shrink:0; background:linear-gradient(150deg,#7f1d1d,#c0392b,#991b1b); position:relative; overflow:hidden;">
+            <div style="position:absolute;inset:0;background:repeating-linear-gradient(135deg,transparent,transparent 7px,rgba(0,0,0,0.12) 7px,rgba(0,0,0,0.12) 14px);"></div>
+            <div style="position:absolute;bottom:5px;left:0;right:0;text-align:center;font-size:6px;color:rgba(255,255,255,0.28);letter-spacing:0.08em;font-weight:600;">POSTER</div>
+          </div>
+          <div style="flex:1; padding:14px 20px; display:flex; flex-direction:column; justify-content:center; gap:9px; min-width:0;">
+            <div>
+              <h3 style="margin:0 0 3px; font-size:19px; font-weight:700; letter-spacing:-0.02em;">Wales Forever</h3>
+              <p style="margin:0; color:rgba(255,255,255,0.38); font-size:12.5px;">Season 5 · Episode 4 · 44 min left</p>
+            </div>
+            <div>
+              <div style="height:3px; background:rgba(255,255,255,0.08); border-radius:2px; overflow:hidden; margin-bottom:5px;">
+                <div style="height:100%; width:30%; background:#7c3aed; border-radius:2px;"></div>
+              </div>
+              <p style="margin:0; font-size:11px; color:rgba(255,255,255,0.24);">30% watched</p>
+            </div>
+          </div>
+          <div style="display:flex; align-items:center; gap:10px; padding:0 22px; flex-shrink:0;">
+            <button style="width:50px; height:50px; border-radius:50%; background:#7c3aed; border:none; color:white; font-size:19px; cursor:pointer; display:flex; align-items:center; justify-content:center; padding-left:3px; box-shadow:0 4px 22px rgba(124,58,237,0.48);">▶</button>
+            <div style="display:flex; flex-direction:column; gap:5px;">
+              <button style="background:rgba(255,255,255,0.05); border:1px solid rgba(255,255,255,0.09); color:rgba(255,255,255,0.58); padding:5px 13px; border-radius:6px; font-size:11.5px; font-family:inherit; cursor:pointer;">Details</button>
+              <button style="background:rgba(255,255,255,0.05); border:1px solid rgba(255,255,255,0.09); color:rgba(255,255,255,0.38); padding:5px 13px; border-radius:6px; font-size:11.5px; font-family:inherit; cursor:pointer;">Dismiss</button>
+            </div>
+          </div>
+          <div style="position:absolute; top:10px; right:14px; display:flex; gap:4px;">
+            <div style="width:16px; height:3px; border-radius:2px; background:#7c3aed;"></div>
+            <div style="width:5px; height:3px; border-radius:2px; background:rgba(255,255,255,0.18);"></div>
+            <div style="width:5px; height:3px; border-radius:2px; background:rgba(255,255,255,0.18);"></div>
+          </div>
+        </div>
+      </div>
+      <div style="padding:0 26px 22px;">
+        <div style="display:flex; align-items:baseline; justify-content:space-between; margin-bottom:14px;">
+          <div style="display:flex; align-items:baseline; gap:9px;">
+            <span style="font-size:15px; font-weight:700;">Up Next</span>
+            <span style="color:rgba(255,255,255,0.28); font-size:12.5px;">Shows you're still watching</span>
+          </div>
+          <button style="background:none; border:none; color:#7c3aed; font-size:12.5px; font-weight:600; cursor:pointer; font-family:inherit;">Browse series →</button>
+        </div>
+        <div style="display:flex; gap:12px;">
+          <div style="flex-shrink:0; width:196px;">
+            <div style="width:196px; height:110px; border-radius:7px; overflow:hidden; position:relative; background:linear-gradient(135deg,#7f1d1d,#c0392b); border:2px solid #7c3aed; box-sizing:border-box;">
+              <div style="position:absolute;inset:0;background:repeating-linear-gradient(135deg,transparent,transparent 6px,rgba(0,0,0,0.1) 6px,rgba(0,0,0,0.1) 12px);"></div>
+              <div style="position:absolute; top:7px; left:7px; background:#7c3aed; color:white; font-size:9.5px; font-weight:700; padding:2px 7px; border-radius:4px;">S05E04</div>
+              <div style="position:absolute; bottom:7px; right:7px; width:26px; height:26px; border-radius:50%; background:rgba(0,0,0,0.55); display:flex; align-items:center; justify-content:center; font-size:11px; padding-left:2px;">▶</div>
+              <div style="position:absolute; bottom:0; left:0; right:0; height:3px; background:rgba(255,255,255,0.1);"><div style="height:100%; width:30%; background:#7c3aed;"></div></div>
+            </div>
+            <p style="margin:7px 0 2px; font-size:12.5px; font-weight:600;">Welcome to Wrexham</p>
+            <p style="margin:0; font-size:11px; color:rgba(255,255,255,0.3);">52 / 56 eps</p>
+          </div>
+          <div style="flex-shrink:0; width:196px;">
+            <div style="width:196px; height:110px; border-radius:7px; overflow:hidden; position:relative; background:linear-gradient(135deg,#1a2332,#2c3e50);">
+              <div style="position:absolute;inset:0;background:repeating-linear-gradient(135deg,transparent,transparent 6px,rgba(0,0,0,0.1) 6px,rgba(0,0,0,0.1) 12px);"></div>
+              <div style="position:absolute; top:7px; left:7px; background:rgba(0,0,0,0.5); color:rgba(255,255,255,0.75); font-size:9.5px; font-weight:700; padding:2px 7px; border-radius:4px;">S04E11</div>
+              <div style="position:absolute; bottom:7px; right:7px; width:26px; height:26px; border-radius:50%; background:rgba(0,0,0,0.55); display:flex; align-items:center; justify-content:center; font-size:11px; padding-left:2px;">▶</div>
+              <div style="position:absolute; bottom:0; left:0; right:0; height:3px; background:rgba(255,255,255,0.1);"><div style="height:100%; width:57%; background:rgba(255,255,255,0.35);"></div></div>
+            </div>
+            <p style="margin:7px 0 2px; font-size:12.5px; font-weight:600;">The Sopranos</p>
+            <p style="margin:0; font-size:11px; color:rgba(255,255,255,0.3);">49 / 86 eps</p>
+          </div>
+          <div style="flex-shrink:0; width:196px;">
+            <div style="width:196px; height:110px; border-radius:7px; overflow:hidden; position:relative; background:linear-gradient(135deg,#004d40,#00897b);">
+              <div style="position:absolute;inset:0;background:repeating-linear-gradient(135deg,transparent,transparent 6px,rgba(0,0,0,0.1) 6px,rgba(0,0,0,0.1) 12px);"></div>
+              <div style="position:absolute; top:7px; left:7px; background:rgba(0,0,0,0.5); color:rgba(255,255,255,0.75); font-size:9.5px; font-weight:700; padding:2px 7px; border-radius:4px;">S09E01</div>
+              <div style="position:absolute; bottom:7px; right:7px; width:26px; height:26px; border-radius:50%; background:rgba(0,0,0,0.55); display:flex; align-items:center; justify-content:center; font-size:11px; padding-left:2px;">▶</div>
+              <div style="position:absolute; bottom:0; left:0; right:0; height:3px; background:rgba(255,255,255,0.1);"><div style="height:100%; width:97%; background:rgba(255,255,255,0.35);"></div></div>
+            </div>
+            <p style="margin:7px 0 2px; font-size:12.5px; font-weight:600;">Rick and Morty</p>
+            <p style="margin:0; font-size:11px; color:rgba(255,255,255,0.3);">81 / 83 eps</p>
+          </div>
+          <div style="flex-shrink:0; width:196px;">
+            <div style="width:196px; height:110px; border-radius:7px; overflow:hidden; position:relative; background:linear-gradient(135deg,#3e2723,#6d4c41);">
+              <div style="position:absolute;inset:0;background:repeating-linear-gradient(135deg,transparent,transparent 6px,rgba(0,0,0,0.1) 6px,rgba(0,0,0,0.1) 12px);"></div>
+              <div style="position:absolute; top:7px; left:7px; background:rgba(0,0,0,0.5); color:rgba(255,255,255,0.75); font-size:9.5px; font-weight:700; padding:2px 7px; border-radius:4px;">S05E01</div>
+              <div style="position:absolute; bottom:7px; right:7px; width:26px; height:26px; border-radius:50%; background:rgba(0,0,0,0.55); display:flex; align-items:center; justify-content:center; font-size:11px; padding-left:2px;">▶</div>
+              <div style="position:absolute; bottom:0; left:0; right:0; height:3px; background:rgba(255,255,255,0.1);"><div style="height:100%; width:82%; background:rgba(255,255,255,0.35);"></div></div>
+            </div>
+            <p style="margin:7px 0 2px; font-size:12.5px; font-weight:600;">The Bear</p>
+            <p style="margin:0; font-size:11px; color:rgba(255,255,255,0.3);">38 / 46 eps</p>
+          </div>
+          <div style="flex-shrink:0; width:196px;">
+            <div style="width:196px; height:110px; border-radius:7px; overflow:hidden; position:relative; background:linear-gradient(135deg,#311b92,#7b1fa2);">
+              <div style="position:absolute;inset:0;background:repeating-linear-gradient(135deg,transparent,transparent 6px,rgba(0,0,0,0.1) 6px,rgba(0,0,0,0.1) 12px);"></div>
+              <div style="position:absolute; top:7px; left:7px; background:rgba(0,0,0,0.5); color:rgba(255,255,255,0.75); font-size:9.5px; font-weight:700; padding:2px 7px; border-radius:4px;">S03E04</div>
+              <div style="position:absolute; bottom:7px; right:7px; width:26px; height:26px; border-radius:50%; background:rgba(0,0,0,0.55); display:flex; align-items:center; justify-content:center; font-size:11px; padding-left:2px;">▶</div>
+              <div style="position:absolute; bottom:0; left:0; right:0; height:3px; background:rgba(255,255,255,0.1);"><div style="height:100%; width:71%; background:rgba(255,255,255,0.35);"></div></div>
+            </div>
+            <p style="margin:7px 0 2px; font-size:12.5px; font-weight:600;">Euphoria</p>
+            <p style="margin:0; font-size:11px; color:rgba(255,255,255,0.3);">5 / 7 eps</p>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+  </sc-if>
+
+  <!-- ══════════════════════════════════════════
+       1b — AMBIENT COLOR IMMERSION
+  ══════════════════════════════════════════ -->
+  <sc-if value="{{ show1b }}" hint-placeholder-val="{{ true }}">
+  <section id="1b" style="margin-bottom:80px; max-width:1140px;">
+    <div style="display:flex; align-items:center; gap:12px; margin-bottom:18px;">
+      <a href="#1b" style="background:#7c3aed; color:white; font-size:10px; font-weight:700; padding:3px 11px; border-radius:20px; text-decoration:none; letter-spacing:0.07em; flex-shrink:0;">1b</a>
+      <span style="font-size:14px; font-weight:600;">Ambient Color Immersion</span>
+      <span style="color:rgba(255,255,255,0.22); font-size:13px;">Full-bleed show color wash · progress as bottom line · tall poster cards</span>
+    </div>
+    <div style="background:#0d0d1c; border-radius:14px; overflow:hidden; border:1px solid rgba(255,255,255,0.05);">
+      <div style="position:relative; height:220px; overflow:hidden; background:#0a0808;">
+        <div style="position:absolute; inset:0; background:radial-gradient(ellipse 80% 120% at 50% 140%, rgba(192,57,43,0.65) 0%, rgba(127,29,29,0.3) 45%, transparent 75%);"></div>
+        <div style="position:absolute; inset:0; background:radial-gradient(ellipse 40% 80% at 18% 100%, rgba(192,57,43,0.22) 0%, transparent 60%);"></div>
+        <div style="position:absolute; top:20px; left:26px; right:26px; display:flex; align-items:center; justify-content:space-between;">
+          <p style="margin:0; font-size:9.5px; font-weight:700; letter-spacing:0.16em; text-transform:uppercase; color:rgba(192,57,43,0.9);">Continue Watching</p>
+          <div style="display:flex; align-items:center; gap:8px;">
+            <div style="display:flex; gap:4px;">
+              <div style="width:18px; height:3px; border-radius:2px; background:rgba(192,57,43,0.9);"></div>
+              <div style="width:6px; height:3px; border-radius:2px; background:rgba(255,255,255,0.18);"></div>
+              <div style="width:6px; height:3px; border-radius:2px; background:rgba(255,255,255,0.18);"></div>
+            </div>
+            <button style="width:24px; height:24px; border-radius:50%; background:rgba(255,255,255,0.07); border:1px solid rgba(255,255,255,0.12); color:rgba(255,255,255,0.45); font-size:12px; cursor:pointer; display:flex; align-items:center; justify-content:center;">×</button>
+          </div>
+        </div>
+        <div style="position:absolute; bottom:0; left:0; right:0; padding:0 26px 20px; display:flex; align-items:flex-end; justify-content:space-between; gap:24px;">
+          <div>
+            <h2 style="margin:0 0 8px; font-size:44px; font-weight:800; letter-spacing:-0.035em; line-height:0.95; text-shadow:0 2px 32px rgba(0,0,0,0.6);">Wales<br>Forever</h2>
+            <p style="margin:0; color:rgba(255,255,255,0.4); font-size:12px;">S5 E4  ·  44 min remaining</p>
+          </div>
+          <div style="display:flex; align-items:center; gap:9px; flex-shrink:0; padding-bottom:2px;">
+            <button style="background:#7c3aed; border:none; color:white; padding:11px 22px; border-radius:8px; font-size:13px; font-weight:600; font-family:inherit; cursor:pointer; display:flex; align-items:center; gap:8px; box-shadow:0 4px 20px rgba(124,58,237,0.45);">▶ Continue S5E4</button>
+            <button style="background:rgba(255,255,255,0.07); border:1px solid rgba(255,255,255,0.1); color:rgba(255,255,255,0.62); padding:11px 16px; border-radius:8px; font-size:13px; font-family:inherit; cursor:pointer;">Details</button>
+            <button style="width:40px; height:40px; border-radius:8px; background:rgba(255,255,255,0.07); border:1px solid rgba(255,255,255,0.1); color:rgba(255,255,255,0.5); font-size:16px; cursor:pointer; display:flex; align-items:center; justify-content:center;">✓</button>
+          </div>
+        </div>
+        <div style="position:absolute; bottom:0; left:0; right:0; height:2px; background:rgba(255,255,255,0.06);">
+          <div style="height:100%; width:30%; background:rgba(192,57,43,0.8);"></div>
+        </div>
+      </div>
+      <div style="padding:20px 26px 24px;">
+        <div style="display:flex; align-items:baseline; justify-content:space-between; margin-bottom:16px;">
+          <div style="display:flex; align-items:baseline; gap:9px;">
+            <span style="font-size:15px; font-weight:700;">Up Next</span>
+            <span style="color:rgba(255,255,255,0.28); font-size:12.5px;">Shows you're still watching</span>
+          </div>
+          <button style="background:none; border:none; color:#7c3aed; font-size:12.5px; font-weight:600; cursor:pointer; font-family:inherit;">Browse series →</button>
+        </div>
+        <div style="display:flex; gap:10px;">
+          <div style="flex-shrink:0; width:138px;">
+            <div style="width:138px; height:196px; border-radius:9px; overflow:hidden; position:relative; background:linear-gradient(160deg,#7f1d1d,#c0392b); border:2px solid rgba(192,57,43,0.7); box-sizing:border-box; box-shadow:0 8px 28px rgba(192,57,43,0.3);">
+              <div style="position:absolute;inset:0;background:repeating-linear-gradient(135deg,transparent,transparent 8px,rgba(0,0,0,0.1) 8px,rgba(0,0,0,0.1) 16px);"></div>
+              <div style="position:absolute; inset:0; background:linear-gradient(to top, rgba(0,0,0,0.85) 0%, transparent 55%);"></div>
+              <div style="position:absolute; top:8px; left:8px; background:rgba(192,57,43,0.9); color:white; font-size:9px; font-weight:700; padding:2px 6px; border-radius:3px;">S05E04</div>
+              <div style="position:absolute; bottom:10px; left:10px; right:10px;">
+                <p style="margin:0 0 4px; font-size:12px; font-weight:700; line-height:1.2;">Welcome to Wrexham</p>
+                <div style="height:2px; background:rgba(255,255,255,0.15); border-radius:1px;"><div style="height:100%; width:30%; background:rgba(192,57,43,0.9);"></div></div>
+              </div>
+            </div>
+          </div>
+          <div style="flex-shrink:0; width:138px;">
+            <div style="width:138px; height:196px; border-radius:9px; overflow:hidden; position:relative; background:linear-gradient(160deg,#0f1923,#1a2a3a);">
+              <div style="position:absolute;inset:0;background:repeating-linear-gradient(135deg,transparent,transparent 8px,rgba(0,0,0,0.12) 8px,rgba(0,0,0,0.12) 16px);"></div>
+              <div style="position:absolute; inset:0; background:linear-gradient(to top, rgba(0,0,0,0.85) 0%, transparent 55%);"></div>
+              <div style="position:absolute; top:8px; left:8px; background:rgba(0,0,0,0.5); color:rgba(255,255,255,0.7); font-size:9px; font-weight:700; padding:2px 6px; border-radius:3px;">S04E11</div>
+              <div style="position:absolute; bottom:10px; left:10px; right:10px;">
+                <p style="margin:0 0 4px; font-size:12px; font-weight:700; line-height:1.2;">The Sopranos</p>
+                <div style="height:2px; background:rgba(255,255,255,0.12); border-radius:1px;"><div style="height:100%; width:57%; background:rgba(255,255,255,0.4);"></div></div>
+              </div>
+            </div>
+          </div>
+          <div style="flex-shrink:0; width:138px;">
+            <div style="width:138px; height:196px; border-radius:9px; overflow:hidden; position:relative; background:linear-gradient(160deg,#003d32,#00695c);">
+              <div style="position:absolute;inset:0;background:repeating-linear-gradient(135deg,transparent,transparent 8px,rgba(0,0,0,0.12) 8px,rgba(0,0,0,0.12) 16px);"></div>
+              <div style="position:absolute; inset:0; background:linear-gradient(to top, rgba(0,0,0,0.85) 0%, transparent 55%);"></div>
+              <div style="position:absolute; top:8px; left:8px; background:rgba(0,0,0,0.5); color:rgba(255,255,255,0.7); font-size:9px; font-weight:700; padding:2px 6px; border-radius:3px;">S09E01</div>
+              <div style="position:absolute; bottom:10px; left:10px; right:10px;">
+                <p style="margin:0 0 4px; font-size:12px; font-weight:700; line-height:1.2;">Rick and Morty</p>
+                <div style="height:2px; background:rgba(255,255,255,0.12); border-radius:1px;"><div style="height:100%; width:97%; background:rgba(255,255,255,0.4);"></div></div>
+              </div>
+            </div>
+          </div>
+          <div style="flex-shrink:0; width:138px;">
+            <div style="width:138px; height:196px; border-radius:9px; overflow:hidden; position:relative; background:linear-gradient(160deg,#2c1810,#5d3a2a);">
+              <div style="position:absolute;inset:0;background:repeating-linear-gradient(135deg,transparent,transparent 8px,rgba(0,0,0,0.12) 8px,rgba(0,0,0,0.12) 16px);"></div>
+              <div style="position:absolute; inset:0; background:linear-gradient(to top, rgba(0,0,0,0.85) 0%, transparent 55%);"></div>
+              <div style="position:absolute; top:8px; left:8px; background:rgba(0,0,0,0.5); color:rgba(255,255,255,0.7); font-size:9px; font-weight:700; padding:2px 6px; border-radius:3px;">S05E01</div>
+              <div style="position:absolute; bottom:10px; left:10px; right:10px;">
+                <p style="margin:0 0 4px; font-size:12px; font-weight:700; line-height:1.2;">The Bear</p>
+                <div style="height:2px; background:rgba(255,255,255,0.12); border-radius:1px;"><div style="height:100%; width:82%; background:rgba(255,255,255,0.4);"></div></div>
+              </div>
+            </div>
+          </div>
+          <div style="flex-shrink:0; width:138px;">
+            <div style="width:138px; height:196px; border-radius:9px; overflow:hidden; position:relative; background:linear-gradient(160deg,#1a0838,#5b21b6);">
+              <div style="position:absolute;inset:0;background:repeating-linear-gradient(135deg,transparent,transparent 8px,rgba(0,0,0,0.12) 8px,rgba(0,0,0,0.12) 16px);"></div>
+              <div style="position:absolute; inset:0; background:linear-gradient(to top, rgba(0,0,0,0.85) 0%, transparent 55%);"></div>
+              <div style="position:absolute; top:8px; left:8px; background:rgba(0,0,0,0.5); color:rgba(255,255,255,0.7); font-size:9px; font-weight:700; padding:2px 6px; border-radius:3px;">S03E04</div>
+              <div style="position:absolute; bottom:10px; left:10px; right:10px;">
+                <p style="margin:0 0 4px; font-size:12px; font-weight:700; line-height:1.2;">Euphoria</p>
+                <div style="height:2px; background:rgba(255,255,255,0.12); border-radius:1px;"><div style="height:100%; width:71%; background:rgba(255,255,255,0.4);"></div></div>
+              </div>
+            </div>
+          </div>
+          <div style="flex-shrink:0; width:138px; height:196px; border-radius:9px; border:1px dashed rgba(255,255,255,0.08); display:flex; align-items:center; justify-content:center;">
+            <span style="color:rgba(255,255,255,0.18); font-size:22px; font-weight:200;">+</span>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+  </sc-if>
+
+  <!-- ══════════════════════════════════════════
+       1c — WATCHLIST QUEUE + LIST SHELF
+  ══════════════════════════════════════════ -->
+  <sc-if value="{{ show1c }}" hint-placeholder-val="{{ true }}">
+  <section id="1c" style="margin-bottom:80px; max-width:1140px;">
+    <div style="display:flex; align-items:center; gap:12px; margin-bottom:18px;">
+      <a href="#1c" style="background:#7c3aed; color:white; font-size:10px; font-weight:700; padding:3px 11px; border-radius:20px; text-decoration:none; letter-spacing:0.07em; flex-shrink:0;">1c</a>
+      <span style="font-size:14px; font-weight:600;">Watchlist Queue + List Shelf</span>
+      <span style="color:rgba(255,255,255,0.22); font-size:13px;">Two-panel inbox-style queue · compact list rows with inline play</span>
+    </div>
+    <div style="background:#0d0d1c; border-radius:14px; overflow:hidden; border:1px solid rgba(255,255,255,0.05);">
+      <div style="border-bottom:1px solid rgba(255,255,255,0.05);">
+        <div style="padding:18px 26px 14px; display:flex; align-items:center; justify-content:space-between;">
+          <p style="margin:0; font-size:9.5px; font-weight:700; letter-spacing:0.16em; text-transform:uppercase; color:#7c3aed;">Continue Watching</p>
+          <span style="font-size:11px; color:rgba(255,255,255,0.2);">3 in progress</span>
+        </div>
+        <div style="display:flex; height:188px;">
+          <div style="width:320px; flex-shrink:0; border-right:1px solid rgba(255,255,255,0.05); display:flex; flex-direction:column;">
+            <div style="display:flex; align-items:center; gap:12px; padding:10px 18px; background:rgba(124,58,237,0.1); border-left:2px solid #7c3aed; cursor:pointer;">
+              <div style="width:46px; height:64px; border-radius:5px; background:linear-gradient(150deg,#7f1d1d,#c0392b); flex-shrink:0; position:relative; overflow:hidden;">
+                <div style="position:absolute;inset:0;background:repeating-linear-gradient(135deg,transparent,transparent 5px,rgba(0,0,0,0.1) 5px,rgba(0,0,0,0.1) 10px);"></div>
+              </div>
+              <div style="flex:1; min-width:0;">
+                <p style="margin:0 0 2px; font-size:13px; font-weight:700; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">Wales Forever</p>
+                <p style="margin:0 0 6px; font-size:11px; color:rgba(255,255,255,0.35);">S5 E4</p>
+                <div style="height:2px; background:rgba(255,255,255,0.08); border-radius:1px;"><div style="height:100%; width:30%; background:#7c3aed;"></div></div>
+              </div>
+              <span style="font-size:11px; color:rgba(124,58,237,0.7); flex-shrink:0;">44m left</span>
+            </div>
+            <div style="display:flex; align-items:center; gap:12px; padding:10px 18px; cursor:pointer; border-left:2px solid transparent;">
+              <div style="width:46px; height:64px; border-radius:5px; background:linear-gradient(150deg,#0f1923,#2c3e50); flex-shrink:0; position:relative; overflow:hidden;">
+                <div style="position:absolute;inset:0;background:repeating-linear-gradient(135deg,transparent,transparent 5px,rgba(0,0,0,0.1) 5px,rgba(0,0,0,0.1) 10px);"></div>
+              </div>
+              <div style="flex:1; min-width:0;">
+                <p style="margin:0 0 2px; font-size:13px; font-weight:600; color:rgba(255,255,255,0.65); white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">The Sopranos</p>
+                <p style="margin:0 0 6px; font-size:11px; color:rgba(255,255,255,0.28);">S4 E11</p>
+                <div style="height:2px; background:rgba(255,255,255,0.07); border-radius:1px;"><div style="height:100%; width:57%; background:rgba(255,255,255,0.22);"></div></div>
+              </div>
+              <span style="font-size:11px; color:rgba(255,255,255,0.22); flex-shrink:0;">1h 2m</span>
+            </div>
+            <div style="display:flex; align-items:center; gap:12px; padding:10px 18px; cursor:pointer; border-left:2px solid transparent;">
+              <div style="width:46px; height:64px; border-radius:5px; background:linear-gradient(150deg,#003d32,#00695c); flex-shrink:0; position:relative; overflow:hidden;">
+                <div style="position:absolute;inset:0;background:repeating-linear-gradient(135deg,transparent,transparent 5px,rgba(0,0,0,0.1) 5px,rgba(0,0,0,0.1) 10px);"></div>
+              </div>
+              <div style="flex:1; min-width:0;">
+                <p style="margin:0 0 2px; font-size:13px; font-weight:600; color:rgba(255,255,255,0.65); white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">Rick and Morty</p>
+                <p style="margin:0 0 6px; font-size:11px; color:rgba(255,255,255,0.28);">S9 E1</p>
+                <div style="height:2px; background:rgba(255,255,255,0.07); border-radius:1px;"><div style="height:100%; width:97%; background:rgba(255,255,255,0.22);"></div></div>
+              </div>
+              <span style="font-size:11px; color:rgba(255,255,255,0.22); flex-shrink:0;">18m</span>
+            </div>
+          </div>
+          <div style="flex:1; position:relative; background:linear-gradient(135deg,#150808,#220d0d,#1a0909); overflow:hidden;">
+            <div style="position:absolute; inset:0; background:radial-gradient(ellipse 90% 100% at 80% 50%, rgba(192,57,43,0.18) 0%, transparent 65%);"></div>
+            <div style="position:absolute; inset:0; padding:20px 24px; display:flex; flex-direction:column; justify-content:space-between;">
+              <div>
+                <h3 style="margin:0 0 4px; font-size:22px; font-weight:800; letter-spacing:-0.025em;">Wales Forever</h3>
+                <p style="margin:0; font-size:12px; color:rgba(255,255,255,0.35);">Season 5 · Episode 4 · 30% watched</p>
+              </div>
+              <div style="display:flex; gap:8px;">
+                <button style="background:#7c3aed; border:none; color:white; padding:10px 20px; border-radius:8px; font-size:12.5px; font-weight:600; font-family:inherit; cursor:pointer; box-shadow:0 3px 16px rgba(124,58,237,0.4);">▶ Continue</button>
+                <button style="background:rgba(255,255,255,0.06); border:1px solid rgba(255,255,255,0.09); color:rgba(255,255,255,0.55); padding:10px 16px; border-radius:8px; font-size:12.5px; font-family:inherit; cursor:pointer;">Details</button>
+                <button style="width:38px; height:38px; border-radius:8px; background:rgba(255,255,255,0.06); border:1px solid rgba(255,255,255,0.09); color:rgba(255,255,255,0.45); font-size:16px; cursor:pointer; display:flex; align-items:center; justify-content:center;">✓</button>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div style="padding:18px 26px 22px;">
+        <div style="display:flex; align-items:baseline; justify-content:space-between; margin-bottom:14px;">
+          <div style="display:flex; align-items:baseline; gap:9px;">
+            <span style="font-size:15px; font-weight:700;">Up Next</span>
+            <span style="color:rgba(255,255,255,0.28); font-size:12.5px;">Shows you're still watching</span>
+          </div>
+          <button style="background:none; border:none; color:#7c3aed; font-size:12.5px; font-weight:600; cursor:pointer; font-family:inherit;">Browse series →</button>
+        </div>
+        <div style="display:flex; flex-direction:column; gap:2px;">
+          <div style="display:flex; align-items:center; gap:14px; padding:9px 10px; border-radius:8px; background:rgba(124,58,237,0.07);">
+            <div style="width:48px; height:68px; border-radius:5px; background:linear-gradient(150deg,#7f1d1d,#c0392b); flex-shrink:0; position:relative; overflow:hidden; border:1px solid rgba(192,57,43,0.3);"><div style="position:absolute;inset:0;background:repeating-linear-gradient(135deg,transparent,transparent 5px,rgba(0,0,0,0.1) 5px,rgba(0,0,0,0.1) 10px);"></div></div>
+            <div style="flex:1; min-width:0;">
+              <p style="margin:0 0 2px; font-size:13px; font-weight:700;">Welcome to Wrexham</p>
+              <p style="margin:0 0 7px; font-size:11px; color:rgba(255,255,255,0.35);">S05E04  ·  52 / 56 eps</p>
+              <div style="height:2px; background:rgba(255,255,255,0.07); border-radius:1px; max-width:240px;"><div style="height:100%; width:30%; background:#7c3aed;"></div></div>
+            </div>
+            <span style="font-size:11px; color:rgba(255,255,255,0.25); flex-shrink:0;">44 min left</span>
+            <button style="width:34px; height:34px; border-radius:50%; background:#7c3aed; border:none; color:white; font-size:14px; cursor:pointer; display:flex; align-items:center; justify-content:center; padding-left:2px; flex-shrink:0; box-shadow:0 2px 12px rgba(124,58,237,0.4);">▶</button>
+          </div>
+          <div style="display:flex; align-items:center; gap:14px; padding:9px 10px; border-radius:8px;">
+            <div style="width:48px; height:68px; border-radius:5px; background:linear-gradient(150deg,#0f1923,#2c3e50); flex-shrink:0; position:relative; overflow:hidden;"><div style="position:absolute;inset:0;background:repeating-linear-gradient(135deg,transparent,transparent 5px,rgba(0,0,0,0.1) 5px,rgba(0,0,0,0.1) 10px);"></div></div>
+            <div style="flex:1; min-width:0;">
+              <p style="margin:0 0 2px; font-size:13px; font-weight:600; color:rgba(255,255,255,0.75);">The Sopranos</p>
+              <p style="margin:0 0 7px; font-size:11px; color:rgba(255,255,255,0.28);">S04E11  ·  49 / 86 eps</p>
+              <div style="height:2px; background:rgba(255,255,255,0.07); border-radius:1px; max-width:240px;"><div style="height:100%; width:57%; background:rgba(255,255,255,0.25);"></div></div>
+            </div>
+            <span style="font-size:11px; color:rgba(255,255,255,0.2); flex-shrink:0;">1h 2m left</span>
+            <button style="width:34px; height:34px; border-radius:50%; background:rgba(255,255,255,0.07); border:1px solid rgba(255,255,255,0.1); color:rgba(255,255,255,0.55); font-size:14px; cursor:pointer; display:flex; align-items:center; justify-content:center; padding-left:2px; flex-shrink:0;">▶</button>
+          </div>
+          <div style="display:flex; align-items:center; gap:14px; padding:9px 10px; border-radius:8px;">
+            <div style="width:48px; height:68px; border-radius:5px; background:linear-gradient(150deg,#003d32,#00695c); flex-shrink:0; position:relative; overflow:hidden;"><div style="position:absolute;inset:0;background:repeating-linear-gradient(135deg,transparent,transparent 5px,rgba(0,0,0,0.1) 5px,rgba(0,0,0,0.1) 10px);"></div></div>
+            <div style="flex:1; min-width:0;">
+              <p style="margin:0 0 2px; font-size:13px; font-weight:600; color:rgba(255,255,255,0.75);">Rick and Morty</p>
+              <p style="margin:0 0 7px; font-size:11px; color:rgba(255,255,255,0.28);">S09E01  ·  81 / 83 eps</p>
+              <div style="height:2px; background:rgba(255,255,255,0.07); border-radius:1px; max-width:240px;"><div style="height:100%; width:97%; background:rgba(255,255,255,0.25);"></div></div>
+            </div>
+            <span style="font-size:11px; color:rgba(255,255,255,0.2); flex-shrink:0;">18 min left</span>
+            <button style="width:34px; height:34px; border-radius:50%; background:rgba(255,255,255,0.07); border:1px solid rgba(255,255,255,0.1); color:rgba(255,255,255,0.55); font-size:14px; cursor:pointer; display:flex; align-items:center; justify-content:center; padding-left:2px; flex-shrink:0;">▶</button>
+          </div>
+          <div style="display:flex; align-items:center; gap:14px; padding:9px 10px; border-radius:8px;">
+            <div style="width:48px; height:68px; border-radius:5px; background:linear-gradient(150deg,#2c1810,#5d3a2a); flex-shrink:0; position:relative; overflow:hidden;"><div style="position:absolute;inset:0;background:repeating-linear-gradient(135deg,transparent,transparent 5px,rgba(0,0,0,0.1) 5px,rgba(0,0,0,0.1) 10px);"></div></div>
+            <div style="flex:1; min-width:0;">
+              <p style="margin:0 0 2px; font-size:13px; font-weight:600; color:rgba(255,255,255,0.75);">The Bear</p>
+              <p style="margin:0 0 7px; font-size:11px; color:rgba(255,255,255,0.28);">S05E01  ·  38 / 46 eps</p>
+              <div style="height:2px; background:rgba(255,255,255,0.07); border-radius:1px; max-width:240px;"><div style="height:100%; width:82%; background:rgba(255,255,255,0.25);"></div></div>
+            </div>
+            <span style="font-size:11px; color:rgba(255,255,255,0.2); flex-shrink:0;">34 min left</span>
+            <button style="width:34px; height:34px; border-radius:50%; background:rgba(255,255,255,0.07); border:1px solid rgba(255,255,255,0.1); color:rgba(255,255,255,0.55); font-size:14px; cursor:pointer; display:flex; align-items:center; justify-content:center; padding-left:2px; flex-shrink:0;">▶</button>
+          </div>
+          <div style="display:flex; align-items:center; gap:14px; padding:9px 10px; border-radius:8px;">
+            <div style="width:48px; height:68px; border-radius:5px; background:linear-gradient(150deg,#1a0838,#5b21b6); flex-shrink:0; position:relative; overflow:hidden;"><div style="position:absolute;inset:0;background:repeating-linear-gradient(135deg,transparent,transparent 5px,rgba(0,0,0,0.1) 5px,rgba(0,0,0,0.1) 10px);"></div></div>
+            <div style="flex:1; min-width:0;">
+              <p style="margin:0 0 2px; font-size:13px; font-weight:600; color:rgba(255,255,255,0.75);">Euphoria</p>
+              <p style="margin:0 0 7px; font-size:11px; color:rgba(255,255,255,0.28);">S03E04  ·  5 / 7 eps</p>
+              <div style="height:2px; background:rgba(255,255,255,0.07); border-radius:1px; max-width:240px;"><div style="height:100%; width:71%; background:rgba(255,255,255,0.25);"></div></div>
+            </div>
+            <span style="font-size:11px; color:rgba(255,255,255,0.2); flex-shrink:0;">52 min left</span>
+            <button style="width:34px; height:34px; border-radius:50%; background:rgba(255,255,255,0.07); border:1px solid rgba(255,255,255,0.1); color:rgba(255,255,255,0.55); font-size:14px; cursor:pointer; display:flex; align-items:center; justify-content:center; padding-left:2px; flex-shrink:0;">▶</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+  </sc-if>
+
+  <!-- ══════════════════════════════════════════
+       1d — SPLIT WIDE + EPISODE-FIRST SHELF
+  ══════════════════════════════════════════ -->
+  <sc-if value="{{ show1d }}" hint-placeholder-val="{{ true }}">
+  <section id="1d" style="margin-bottom:80px; max-width:1140px;">
+    <div style="display:flex; align-items:center; gap:12px; margin-bottom:18px;">
+      <a href="#1d" style="background:#7c3aed; color:white; font-size:10px; font-weight:700; padding:3px 11px; border-radius:20px; text-decoration:none; letter-spacing:0.07em; flex-shrink:0;">1d</a>
+      <span style="font-size:14px; font-weight:600;">Split Wide + Episode-First Shelf</span>
+      <span style="color:rgba(255,255,255,0.22); font-size:13px;">60/40 split hero · Up Next leads with episode title, show is secondary</span>
+    </div>
+    <div style="background:#0d0d1c; border-radius:14px; overflow:hidden; border:1px solid rgba(255,255,255,0.05);">
+
+      <!-- CONTINUE WATCHING — 60/40 split -->
+      <div style="display:flex; border-bottom:1px solid rgba(255,255,255,0.05);">
+
+        <!-- Left 60%: info + actions -->
+        <div style="flex:6; padding:28px 32px; display:flex; flex-direction:column; justify-content:space-between; min-width:0; border-right:1px solid rgba(255,255,255,0.05);">
+          <div>
+            <p style="margin:0 0 16px; font-size:9.5px; font-weight:700; letter-spacing:0.16em; text-transform:uppercase; color:#7c3aed;">Continue Watching</p>
+            <h2 style="margin:0 0 6px; font-size:32px; font-weight:800; letter-spacing:-0.03em; line-height:1.05;">Wales Forever</h2>
+            <p style="margin:0 0 20px; font-size:13px; color:rgba(255,255,255,0.38);">Season 5, Episode 4  ·  "The Beautiful Game"  ·  44 min left</p>
+            <!-- Progress -->
+            <div style="margin-bottom:20px;">
+              <div style="display:flex; justify-content:space-between; margin-bottom:6px;">
+                <span style="font-size:11px; color:rgba(255,255,255,0.28);">30% watched</span>
+                <span style="font-size:11px; color:rgba(255,255,255,0.2);">52 / 56 episodes</span>
+              </div>
+              <div style="height:4px; background:rgba(255,255,255,0.07); border-radius:3px; overflow:hidden;">
+                <div style="height:100%; width:30%; background:linear-gradient(90deg,#7c3aed,#a855f7); border-radius:3px;"></div>
+              </div>
+            </div>
+          </div>
+          <div style="display:flex; gap:8px; flex-wrap:wrap;">
+            <button style="background:#7c3aed; border:none; color:white; padding:12px 24px; border-radius:9px; font-size:13px; font-weight:700; font-family:inherit; cursor:pointer; display:flex; align-items:center; gap:9px; box-shadow:0 4px 20px rgba(124,58,237,0.45);">▶ Continue S5E4</button>
+            <button style="background:rgba(255,255,255,0.05); border:1px solid rgba(255,255,255,0.09); color:rgba(255,255,255,0.6); padding:12px 18px; border-radius:9px; font-size:13px; font-family:inherit; cursor:pointer;">Details</button>
+            <button style="background:rgba(255,255,255,0.05); border:1px solid rgba(255,255,255,0.09); color:rgba(255,255,255,0.38); padding:12px 15px; border-radius:9px; font-size:13px; font-family:inherit; cursor:pointer;">✓</button>
+            <button style="background:rgba(255,255,255,0.05); border:1px solid rgba(255,255,255,0.09); color:rgba(255,255,255,0.38); padding:12px 15px; border-radius:9px; font-size:13px; font-family:inherit; cursor:pointer;">×</button>
+          </div>
+        </div>
+
+        <!-- Right 40%: stacked mini-queue -->
+        <div style="flex:4; display:flex; flex-direction:column; overflow:hidden;">
+          <div style="padding:12px 18px 8px; border-bottom:1px solid rgba(255,255,255,0.04);">
+            <span style="font-size:9px; font-weight:700; letter-spacing:0.14em; text-transform:uppercase; color:rgba(255,255,255,0.2);">Also in progress</span>
+          </div>
+          <!-- Mini row: Sopranos -->
+          <div style="display:flex; align-items:center; gap:10px; padding:10px 18px; border-bottom:1px solid rgba(255,255,255,0.04); cursor:pointer;">
+            <div style="width:32px; height:46px; border-radius:4px; background:linear-gradient(150deg,#0f1923,#2c3e50); flex-shrink:0; position:relative; overflow:hidden;"><div style="position:absolute;inset:0;background:repeating-linear-gradient(135deg,transparent,transparent 4px,rgba(0,0,0,0.1) 4px,rgba(0,0,0,0.1) 8px);"></div></div>
+            <div style="flex:1; min-width:0;">
+              <p style="margin:0 0 1px; font-size:12px; font-weight:600; color:rgba(255,255,255,0.7); white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">The Sopranos</p>
+              <p style="margin:0; font-size:10.5px; color:rgba(255,255,255,0.3);">S4 E11 · 1h 2m left</p>
+            </div>
+            <div style="width:28px; height:28px; border-radius:50%; background:rgba(255,255,255,0.06); border:1px solid rgba(255,255,255,0.09); display:flex; align-items:center; justify-content:center; font-size:11px; color:rgba(255,255,255,0.45); cursor:pointer; flex-shrink:0; padding-left:2px;">▶</div>
+          </div>
+          <!-- Mini row: Rick & Morty -->
+          <div style="display:flex; align-items:center; gap:10px; padding:10px 18px; border-bottom:1px solid rgba(255,255,255,0.04); cursor:pointer;">
+            <div style="width:32px; height:46px; border-radius:4px; background:linear-gradient(150deg,#003d32,#00695c); flex-shrink:0; position:relative; overflow:hidden;"><div style="position:absolute;inset:0;background:repeating-linear-gradient(135deg,transparent,transparent 4px,rgba(0,0,0,0.1) 4px,rgba(0,0,0,0.1) 8px);"></div></div>
+            <div style="flex:1; min-width:0;">
+              <p style="margin:0 0 1px; font-size:12px; font-weight:600; color:rgba(255,255,255,0.7); white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">Rick and Morty</p>
+              <p style="margin:0; font-size:10.5px; color:rgba(255,255,255,0.3);">S9 E1 · 18 min left</p>
+            </div>
+            <div style="width:28px; height:28px; border-radius:50%; background:rgba(255,255,255,0.06); border:1px solid rgba(255,255,255,0.09); display:flex; align-items:center; justify-content:center; font-size:11px; color:rgba(255,255,255,0.45); cursor:pointer; flex-shrink:0; padding-left:2px;">▶</div>
+          </div>
+          <!-- Show more -->
+          <div style="flex:1; display:flex; align-items:center; justify-content:center; padding:12px;">
+            <button style="background:none; border:none; color:rgba(255,255,255,0.22); font-size:12px; font-family:inherit; cursor:pointer;">+ 2 more in progress</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- UP NEXT — Episode-first: episode title is the hero, show name is secondary -->
+      <div style="padding:22px 26px 24px;">
+        <div style="display:flex; align-items:baseline; justify-content:space-between; margin-bottom:16px;">
+          <div style="display:flex; align-items:baseline; gap:9px;">
+            <span style="font-size:15px; font-weight:700;">Up Next</span>
+            <span style="color:rgba(255,255,255,0.28); font-size:12.5px;">Shows you're still watching</span>
+          </div>
+          <button style="background:none; border:none; color:#7c3aed; font-size:12.5px; font-weight:600; cursor:pointer; font-family:inherit;">Browse series →</button>
+        </div>
+
+        <!-- Episode-first cards: wider, shorter, episode name prominent -->
+        <div style="display:flex; gap:10px;">
+
+          <!-- Wrexham — active -->
+          <div style="flex:1; min-width:0; background:rgba(124,58,237,0.08); border:1px solid rgba(124,58,237,0.18); border-radius:10px; padding:14px; position:relative; overflow:hidden;">
+            <div style="position:absolute; inset:0; background:linear-gradient(135deg, rgba(192,57,43,0.08) 0%, transparent 60%); pointer-events:none;"></div>
+            <div style="display:flex; gap:10px; align-items:flex-start; position:relative;">
+              <div style="width:40px; height:56px; border-radius:5px; background:linear-gradient(150deg,#7f1d1d,#c0392b); flex-shrink:0; position:relative; overflow:hidden;"><div style="position:absolute;inset:0;background:repeating-linear-gradient(135deg,transparent,transparent 4px,rgba(0,0,0,0.1) 4px,rgba(0,0,0,0.1) 8px);"></div></div>
+              <div style="flex:1; min-width:0; padding-right:38px;">
+                <p style="margin:0 0 1px; font-size:10px; font-weight:600; letter-spacing:0.06em; color:#a78bfa; text-transform:uppercase;">S05 · E04</p>
+                <p style="margin:0 0 3px; font-size:14px; font-weight:700; line-height:1.2; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">"The Beautiful Game"</p>
+                <p style="margin:0 0 10px; font-size:11px; color:rgba(255,255,255,0.4);">Welcome to Wrexham</p>
+                <div style="height:2px; background:rgba(255,255,255,0.08); border-radius:1px;"><div style="height:100%; width:30%; background:#7c3aed;"></div></div>
+              </div>
+            </div>
+            <button style="position:absolute; top:12px; right:12px; width:30px; height:30px; border-radius:50%; background:#7c3aed; border:none; color:white; font-size:12px; cursor:pointer; display:flex; align-items:center; justify-content:center; padding-left:2px; box-shadow:0 2px 10px rgba(124,58,237,0.5);">▶</button>
+          </div>
+
+          <!-- Sopranos -->
+          <div style="flex:1; min-width:0; background:rgba(255,255,255,0.03); border:1px solid rgba(255,255,255,0.06); border-radius:10px; padding:14px; position:relative;">
+            <div style="display:flex; gap:10px; align-items:flex-start;">
+              <div style="width:40px; height:56px; border-radius:5px; background:linear-gradient(150deg,#0f1923,#2c3e50); flex-shrink:0; position:relative; overflow:hidden;"><div style="position:absolute;inset:0;background:repeating-linear-gradient(135deg,transparent,transparent 4px,rgba(0,0,0,0.1) 4px,rgba(0,0,0,0.1) 8px);"></div></div>
+              <div style="flex:1; min-width:0; padding-right:38px;">
+                <p style="margin:0 0 1px; font-size:10px; font-weight:600; letter-spacing:0.06em; color:rgba(255,255,255,0.28); text-transform:uppercase;">S04 · E11</p>
+                <p style="margin:0 0 3px; font-size:14px; font-weight:700; line-height:1.2; color:rgba(255,255,255,0.8); white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">"Calling All Cars"</p>
+                <p style="margin:0 0 10px; font-size:11px; color:rgba(255,255,255,0.35);">The Sopranos</p>
+                <div style="height:2px; background:rgba(255,255,255,0.07); border-radius:1px;"><div style="height:100%; width:57%; background:rgba(255,255,255,0.25);"></div></div>
+              </div>
+            </div>
+            <button style="position:absolute; top:12px; right:12px; width:30px; height:30px; border-radius:50%; background:rgba(255,255,255,0.07); border:1px solid rgba(255,255,255,0.1); color:rgba(255,255,255,0.55); font-size:12px; cursor:pointer; display:flex; align-items:center; justify-content:center; padding-left:2px;">▶</button>
+          </div>
+
+          <!-- Rick & Morty -->
+          <div style="flex:1; min-width:0; background:rgba(255,255,255,0.03); border:1px solid rgba(255,255,255,0.06); border-radius:10px; padding:14px; position:relative;">
+            <div style="display:flex; gap:10px; align-items:flex-start;">
+              <div style="width:40px; height:56px; border-radius:5px; background:linear-gradient(150deg,#003d32,#00695c); flex-shrink:0; position:relative; overflow:hidden;"><div style="position:absolute;inset:0;background:repeating-linear-gradient(135deg,transparent,transparent 4px,rgba(0,0,0,0.1) 4px,rgba(0,0,0,0.1) 8px);"></div></div>
+              <div style="flex:1; min-width:0; padding-right:38px;">
+                <p style="margin:0 0 1px; font-size:10px; font-weight:600; letter-spacing:0.06em; color:rgba(255,255,255,0.28); text-transform:uppercase;">S09 · E01</p>
+                <p style="margin:0 0 3px; font-size:14px; font-weight:700; line-height:1.2; color:rgba(255,255,255,0.8); white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">"Another Rick"</p>
+                <p style="margin:0 0 10px; font-size:11px; color:rgba(255,255,255,0.35);">Rick and Morty</p>
+                <div style="height:2px; background:rgba(255,255,255,0.07); border-radius:1px;"><div style="height:100%; width:97%; background:rgba(255,255,255,0.25);"></div></div>
+              </div>
+            </div>
+            <button style="position:absolute; top:12px; right:12px; width:30px; height:30px; border-radius:50%; background:rgba(255,255,255,0.07); border:1px solid rgba(255,255,255,0.1); color:rgba(255,255,255,0.55); font-size:12px; cursor:pointer; display:flex; align-items:center; justify-content:center; padding-left:2px;">▶</button>
+          </div>
+
+          <!-- The Bear -->
+          <div style="flex:1; min-width:0; background:rgba(255,255,255,0.03); border:1px solid rgba(255,255,255,0.06); border-radius:10px; padding:14px; position:relative;">
+            <div style="display:flex; gap:10px; align-items:flex-start;">
+              <div style="width:40px; height:56px; border-radius:5px; background:linear-gradient(150deg,#2c1810,#5d3a2a); flex-shrink:0; position:relative; overflow:hidden;"><div style="position:absolute;inset:0;background:repeating-linear-gradient(135deg,transparent,transparent 4px,rgba(0,0,0,0.1) 4px,rgba(0,0,0,0.1) 8px);"></div></div>
+              <div style="flex:1; min-width:0; padding-right:38px;">
+                <p style="margin:0 0 1px; font-size:10px; font-weight:600; letter-spacing:0.06em; color:rgba(255,255,255,0.28); text-transform:uppercase;">S05 · E01</p>
+                <p style="margin:0 0 3px; font-size:14px; font-weight:700; line-height:1.2; color:rgba(255,255,255,0.8); white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">"System"</p>
+                <p style="margin:0 0 10px; font-size:11px; color:rgba(255,255,255,0.35);">The Bear</p>
+                <div style="height:2px; background:rgba(255,255,255,0.07); border-radius:1px;"><div style="height:100%; width:82%; background:rgba(255,255,255,0.25);"></div></div>
+              </div>
+            </div>
+            <button style="position:absolute; top:12px; right:12px; width:30px; height:30px; border-radius:50%; background:rgba(255,255,255,0.07); border:1px solid rgba(255,255,255,0.1); color:rgba(255,255,255,0.55); font-size:12px; cursor:pointer; display:flex; align-items:center; justify-content:center; padding-left:2px;">▶</button>
+          </div>
+
+          <!-- Euphoria -->
+          <div style="flex:1; min-width:0; background:rgba(255,255,255,0.03); border:1px solid rgba(255,255,255,0.06); border-radius:10px; padding:14px; position:relative;">
+            <div style="display:flex; gap:10px; align-items:flex-start;">
+              <div style="width:40px; height:56px; border-radius:5px; background:linear-gradient(150deg,#1a0838,#5b21b6); flex-shrink:0; position:relative; overflow:hidden;"><div style="position:absolute;inset:0;background:repeating-linear-gradient(135deg,transparent,transparent 4px,rgba(0,0,0,0.1) 4px,rgba(0,0,0,0.1) 8px);"></div></div>
+              <div style="flex:1; min-width:0; padding-right:38px;">
+                <p style="margin:0 0 1px; font-size:10px; font-weight:600; letter-spacing:0.06em; color:rgba(255,255,255,0.28); text-transform:uppercase;">S03 · E04</p>
+                <p style="margin:0 0 3px; font-size:14px; font-weight:700; line-height:1.2; color:rgba(255,255,255,0.8); white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">"Stuntin'"</p>
+                <p style="margin:0 0 10px; font-size:11px; color:rgba(255,255,255,0.35);">Euphoria</p>
+                <div style="height:2px; background:rgba(255,255,255,0.07); border-radius:1px;"><div style="height:100%; width:71%; background:rgba(255,255,255,0.25);"></div></div>
+              </div>
+            </div>
+            <button style="position:absolute; top:12px; right:12px; width:30px; height:30px; border-radius:50%; background:rgba(255,255,255,0.07); border:1px solid rgba(255,255,255,0.1); color:rgba(255,255,255,0.55); font-size:12px; cursor:pointer; display:flex; align-items:center; justify-content:center; padding-left:2px;">▶</button>
+          </div>
+
+        </div>
+      </div>
+    </div>
+  </section>
+  </sc-if>
+
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script>
+class Component extends DCLogic {
+  state = { show1a: true, show1b: true, show1c: true, show1d: true };
+
+  btnStyle(active) {
+    return active
+      ? 'background:#7c3aed;color:white;border:1px solid #7c3aed;padding:5px 14px;border-radius:20px;font-size:11px;font-weight:700;font-family:inherit;cursor:pointer;letter-spacing:0.05em;transition:all 0.15s;'
+      : 'background:rgba(255,255,255,0.04);color:rgba(255,255,255,0.35);border:1px solid rgba(255,255,255,0.09);padding:5px 14px;border-radius:20px;font-size:11px;font-weight:600;font-family:inherit;cursor:pointer;letter-spacing:0.05em;transition:all 0.15s;';
+  }
+
+  renderVals() {
+    const { show1a, show1b, show1c, show1d } = this.state;
+    return {
+      show1a, show1b, show1c, show1d,
+      btn1a: this.btnStyle(show1a),
+      btn1b: this.btnStyle(show1b),
+      btn1c: this.btnStyle(show1c),
+      btn1d: this.btnStyle(show1d),
+      toggle1a: () => this.setState(s => ({ show1a: !s.show1a })),
+      toggle1b: () => this.setState(s => ({ show1b: !s.show1b })),
+      toggle1c: () => this.setState(s => ({ show1c: !s.show1c })),
+      toggle1d: () => this.setState(s => ({ show1d: !s.show1d })),
+    };
+  }
+}
+</script>
+</body>
+</html>

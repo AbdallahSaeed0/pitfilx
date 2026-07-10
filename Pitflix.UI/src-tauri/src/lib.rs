@@ -8,8 +8,14 @@ use std::{
 
 use tauri::{image::Image, App, Emitter, Manager, RunEvent};
 
+mod browse;
 mod player;
 mod remote_player;
+
+use browse::{
+    browse_close, browse_navigate, browse_open, browse_resize, handle_download_protocol,
+    BrowseWebviewState,
+};
 
 use player::{playback_orchestrator, PlayerHost, PlayerHostState};
 #[cfg(windows)]
@@ -18,7 +24,11 @@ use player::libmpv_session::{
     LibMpvHostState,
 };
 #[cfg(windows)]
-use player::thumbs::{thumb_at, thumb_note_current, thumb_poster};
+use player::quality_enhancement::check_hdr_capability;
+#[cfg(windows)]
+use player::thumbs::{thumb_at, thumb_at_quick, thumb_note_current, thumb_poster};
+#[cfg(windows)]
+use player::player_export::{player2_export_clip, player2_export_screenshot};
 #[cfg(windows)]
 use player::playlist_window::{
     install_main_window_follower, playlist_window_close, playlist_window_open,
@@ -454,6 +464,8 @@ pub struct DeviceFsEntry {
     pub is_directory: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub media_kind: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub size_bytes: Option<u64>,
 }
 
 #[tauri::command]
@@ -468,7 +480,8 @@ fn device_read_dir(path: String) -> Result<Vec<DeviceFsEntry>, String> {
 
     for ent in read.flatten() {
         let meta = ent.metadata().ok();
-        let is_dir = meta.map(|m| m.is_dir()).unwrap_or(false);
+        let is_dir = meta.as_ref().map(|m| m.is_dir()).unwrap_or(false);
+        let size_bytes = meta.as_ref().filter(|m| !m.is_dir()).map(|m| m.len());
         let name = ent.file_name().to_string_lossy().into_owned();
         let full = ent.path();
         let ext = full
@@ -498,6 +511,7 @@ fn device_read_dir(path: String) -> Result<Vec<DeviceFsEntry>, String> {
             path: full.to_string_lossy().into_owned(),
             is_directory: is_dir,
             media_kind,
+            size_bytes,
         });
     }
 
@@ -510,6 +524,351 @@ fn device_read_dir(path: String) -> Result<Vec<DeviceFsEntry>, String> {
     Ok(out)
 }
 
+fn normalize_path_key(path: &str) -> String {
+    path.trim().trim_end_matches(['/', '\\']).to_string()
+}
+
+fn path_sep_for(path: &str) -> char {
+    if path.contains('\\') {
+        '\\'
+    } else {
+        '/'
+    }
+}
+
+fn is_path_inside(child: &str, parent: &str) -> bool {
+    let child_key = normalize_path_key(child).to_lowercase();
+    let parent_key = normalize_path_key(parent).to_lowercase();
+    if child_key.is_empty() || parent_key.is_empty() {
+        return false;
+    }
+    if child_key == parent_key {
+        return true;
+    }
+    let sep = path_sep_for(parent);
+    let prefix = format!("{parent_key}{sep}");
+    child_key.starts_with(&prefix)
+}
+
+fn copy_path_recursively(src: &std::path::Path, dst: &std::path::Path) -> Result<(), String> {
+    if src.is_dir() {
+        std::fs::create_dir_all(dst).map_err(|e| e.to_string())?;
+        for entry in std::fs::read_dir(src).map_err(|e| e.to_string())? {
+            let entry = entry.map_err(|e| e.to_string())?;
+            copy_path_recursively(&entry.path(), &dst.join(entry.file_name()))?;
+        }
+        Ok(())
+    } else {
+        std::fs::copy(src, dst)
+            .map(|_| ())
+            .map_err(|e| e.to_string())
+    }
+}
+
+fn is_cross_device_move_error(err: &std::io::Error) -> bool {
+    err.kind() == std::io::ErrorKind::CrossesDevices
+        || err.raw_os_error() == Some(17) // Windows ERROR_NOT_SAME_DEVICE
+        || err.raw_os_error() == Some(18) // EXDEV on Unix
+}
+
+fn move_path(src: &std::path::Path, target: &std::path::Path) -> Result<(), String> {
+    match std::fs::rename(src, target) {
+        Ok(()) => Ok(()),
+        Err(err) if is_cross_device_move_error(&err) => {
+            copy_path_recursively(src, target)?;
+            if src.is_dir() {
+                std::fs::remove_dir_all(src)
+                    .map_err(|e| format!("Copied but failed to remove source folder: {e}"))?;
+            } else {
+                std::fs::remove_file(src)
+                    .map_err(|e| format!("Copied but failed to remove source file: {e}"))?;
+            }
+            Ok(())
+        }
+        Err(err) => Err(format!("Failed to move: {err}")),
+    }
+}
+
+#[tauri::command]
+async fn device_move_entries(paths: Vec<String>, destination_dir: String) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || device_move_entries_sync(paths, destination_dir))
+        .await
+        .map_err(|e| format!("Move interrupted: {e}"))?
+}
+
+fn device_move_entries_sync(paths: Vec<String>, destination_dir: String) -> Result<(), String> {
+    let dest = PathBuf::from(destination_dir.trim());
+    if !dest.is_dir() {
+        return Err("Destination is not a directory".into());
+    }
+
+    let dest_key = normalize_path_key(&dest.to_string_lossy());
+
+    for path_str in paths {
+        let src = PathBuf::from(path_str.trim());
+        if !src.exists() {
+            return Err(format!("Path not found: {path_str}"));
+        }
+
+        let src_key = normalize_path_key(&src.to_string_lossy());
+        if src_key == dest_key {
+            return Err("Cannot move an item into itself".into());
+        }
+        if is_path_inside(&dest_key, &src_key) {
+            return Err(format!(
+                "Cannot move \"{}\" into one of its subfolders",
+                src.file_name()
+                    .map(|n| n.to_string_lossy().into_owned())
+                    .unwrap_or_else(|| path_str.clone())
+            ));
+        }
+
+        let file_name = src
+            .file_name()
+            .ok_or_else(|| format!("Invalid path: {path_str}"))?;
+        let target = dest.join(file_name);
+        if target.exists() {
+            return Err(format!(
+                "Already exists in destination: {}",
+                file_name.to_string_lossy()
+            ));
+        }
+
+        move_path(&src, &target).map_err(|e| {
+            format!(
+                "Failed to move \"{}\": {e}",
+                file_name.to_string_lossy()
+            )
+        })?;
+    }
+
+    Ok(())
+}
+
+#[tauri::command]
+async fn device_delete_entries(paths: Vec<String>) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || device_delete_entries_sync(paths))
+        .await
+        .map_err(|e| format!("Delete interrupted: {e}"))?
+}
+
+fn device_delete_entries_sync(paths: Vec<String>) -> Result<(), String> {
+    let mut targets: Vec<PathBuf> = Vec::with_capacity(paths.len());
+    for path_str in &paths {
+        let p = PathBuf::from(path_str.trim());
+        if !p.exists() {
+            return Err(format!("Path not found: {path_str}"));
+        }
+        targets.push(p);
+    }
+
+    // Move to the Recycle Bin instead of permanently deleting, so device-page deletes are undoable.
+    //
+    // If a file was just playing (or is still playing) in the embedded player, the mpv process can hold
+    // its handle open for a brief moment after the player page closes, which makes Windows' trash
+    // operation report "Some operations were aborted". Retry a few times with a short delay before
+    // giving up — this covers the just-closed-playback race without requiring the user to do anything.
+    let mut last_err = None;
+    for attempt in 0..4 {
+        if attempt > 0 {
+            std::thread::sleep(Duration::from_millis(400));
+        }
+        match trash::delete_all(&targets) {
+            Ok(()) => return Ok(()),
+            Err(e) => last_err = Some(e),
+        }
+    }
+
+    let e = last_err.expect("loop always sets last_err before exiting");
+    Err(format!(
+        "Failed to move to Recycle Bin: {e}\n\nThis usually means the file is still open — e.g. still playing, or the player was just closed. Close the player and try again."
+    ))
+}
+
+#[tauri::command]
+async fn device_copy_entries(paths: Vec<String>, destination_dir: String) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || device_copy_entries_sync(paths, destination_dir))
+        .await
+        .map_err(|e| format!("Copy interrupted: {e}"))?
+}
+
+fn device_copy_entries_sync(paths: Vec<String>, destination_dir: String) -> Result<(), String> {
+    let dest = PathBuf::from(destination_dir.trim());
+    if !dest.is_dir() {
+        return Err("Destination is not a directory".into());
+    }
+
+    let dest_key = normalize_path_key(&dest.to_string_lossy());
+
+    for path_str in paths {
+        let src = PathBuf::from(path_str.trim());
+        if !src.exists() {
+            return Err(format!("Path not found: {path_str}"));
+        }
+
+        let src_key = normalize_path_key(&src.to_string_lossy());
+        if src_key == dest_key {
+            return Err("Cannot copy an item into itself".into());
+        }
+        if is_path_inside(&dest_key, &src_key) {
+            return Err(format!(
+                "Cannot copy \"{}\" into one of its subfolders",
+                src.file_name()
+                    .map(|n| n.to_string_lossy().into_owned())
+                    .unwrap_or_else(|| path_str.clone())
+            ));
+        }
+
+        let file_name = src
+            .file_name()
+            .ok_or_else(|| format!("Invalid path: {path_str}"))?;
+        let target = dest.join(file_name);
+        if target.exists() {
+            return Err(format!(
+                "Already exists in destination: {}",
+                file_name.to_string_lossy()
+            ));
+        }
+
+        copy_path_recursively(&src, &target).map_err(|e| {
+            format!(
+                "Failed to copy \"{}\": {e}",
+                file_name.to_string_lossy()
+            )
+        })?;
+    }
+
+    Ok(())
+}
+
+#[tauri::command]
+fn device_rename_entry(path: String, new_name: String) -> Result<String, String> {
+    let src = PathBuf::from(path.trim());
+    if !src.exists() {
+        return Err("Path not found".into());
+    }
+
+    let name = new_name.trim();
+    if name.is_empty() {
+        return Err("Name cannot be empty".into());
+    }
+    if name.contains('/') || name.contains('\\') {
+        return Err("Name cannot contain path separators".into());
+    }
+
+    let parent = src.parent().ok_or_else(|| "Invalid path".to_string())?;
+    let dest = parent.join(name);
+    if dest.exists() {
+        return Err("A file or folder with that name already exists".into());
+    }
+
+    std::fs::rename(&src, &dest).map_err(|e| format!("Failed to rename: {e}"))?;
+    Ok(dest.to_string_lossy().into_owned())
+}
+
+#[tauri::command]
+fn device_create_folder(parent_dir: String, name: String) -> Result<String, String> {
+    let parent = PathBuf::from(parent_dir.trim());
+    if !parent.is_dir() {
+        return Err("Parent is not a directory".into());
+    }
+
+    let folder_name = name.trim();
+    if folder_name.is_empty() {
+        return Err("Name cannot be empty".into());
+    }
+    if folder_name.contains('/') || folder_name.contains('\\') {
+        return Err("Name cannot contain path separators".into());
+    }
+
+    let target = parent.join(folder_name);
+    if target.exists() {
+        return Err("A file or folder with that name already exists".into());
+    }
+
+    std::fs::create_dir(&target).map_err(|e| format!("Failed to create folder: {e}"))?;
+    Ok(target.to_string_lossy().into_owned())
+}
+
+#[derive(serde::Serialize)]
+pub struct DeviceEntryDetails {
+    pub name: String,
+    pub path: String,
+    pub is_directory: bool,
+    pub size_bytes: Option<u64>,
+    pub child_count: Option<u64>,
+    pub modified_ms: Option<i64>,
+    pub created_ms: Option<i64>,
+    pub media_kind: Option<String>,
+}
+
+#[tauri::command]
+fn device_entry_details(path: String) -> Result<DeviceEntryDetails, String> {
+    let p = PathBuf::from(path.trim());
+    if !p.exists() {
+        return Err("Path not found".into());
+    }
+
+    let meta = p.metadata().map_err(|e| e.to_string())?;
+    let is_directory = meta.is_dir();
+    let name = p
+        .file_name()
+        .map(|n| n.to_string_lossy().into_owned())
+        .unwrap_or_else(|| path.clone());
+
+    let ext = p
+        .extension()
+        .and_then(|x| x.to_str())
+        .unwrap_or("")
+        .to_lowercase();
+    let media_kind = if is_directory {
+        None
+    } else if matches!(
+        ext.as_str(),
+        "jpg" | "jpeg" | "png" | "gif" | "webp" | "bmp" | "avif" | "jfif"
+    ) {
+        Some("image".into())
+    } else if matches!(
+        ext.as_str(),
+        "mp4" | "mkv" | "avi" | "mov" | "webm" | "m4v" | "wmv" | "mpg" | "mpeg"
+    ) {
+        Some("video".into())
+    } else {
+        Some("other".into())
+    };
+
+    let modified_ms = meta
+        .modified()
+        .ok()
+        .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+        .map(|d| d.as_millis() as i64);
+    let created_ms = meta
+        .created()
+        .ok()
+        .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+        .map(|d| d.as_millis() as i64);
+
+    let (size_bytes, child_count) = if is_directory {
+        let count = std::fs::read_dir(&p)
+            .map(|read| read.flatten().count() as u64)
+            .unwrap_or(0);
+        (None, Some(count))
+    } else {
+        (Some(meta.len()), None)
+    };
+
+    Ok(DeviceEntryDetails {
+        name,
+        path: p.to_string_lossy().into_owned(),
+        is_directory,
+        size_bytes,
+        child_count,
+        modified_ms,
+        created_ms,
+        media_kind,
+    })
+}
+
 const PITFLIX_BUILD_MARKER: &str = "0.4.3";
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -517,6 +876,12 @@ pub fn run() {
     let app = tauri::Builder::default()
         .invoke_handler(tauri::generate_handler![
             device_read_dir,
+            device_move_entries,
+            device_delete_entries,
+            device_copy_entries,
+            device_rename_entry,
+            device_entry_details,
+            device_create_folder,
             prepare_update_exit,
             download_installer_with_progress,
             launch_downloaded_installer_and_exit,
@@ -559,9 +924,13 @@ pub fn run() {
             player2_libmpv_send,
             player2_libmpv_set_bounds,
             player2_libmpv_close,
+            check_hdr_capability,
             thumb_note_current,
+            thumb_at_quick,
             thumb_at,
             thumb_poster,
+            player2_export_screenshot,
+            player2_export_clip,
             playlist_window_open,
             playlist_window_close,
             playlist_window_resync,
@@ -569,7 +938,12 @@ pub fn run() {
             remote_play_pause,
             remote_seek,
             remote_close,
+            browse_open,
+            browse_navigate,
+            browse_resize,
+            browse_close,
         ])
+        .register_uri_scheme_protocol("pitflix-browse", handle_download_protocol)
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_fs::init())
@@ -579,6 +953,18 @@ pub fn run() {
         .plugin(
             tauri_plugin_autostart::Builder::new()
                 .app_name("Pitflix")
+                .build(),
+        )
+        // Disable WebView2's native context menu only — do NOT set Flags::CONTEXT_MENU,
+        // which injects JS that preventDefault()s every contextmenu event and breaks the
+        // embedded player's custom right-click (show controls) handlers.
+        .plugin(
+            tauri_plugin_prevent_default::Builder::new()
+                .with_flags(tauri_plugin_prevent_default::Flags::empty())
+                .platform(
+                    tauri_plugin_prevent_default::PlatformOptions::new()
+                        .default_context_menus(false),
+                )
                 .build(),
         )
         .setup(|app| {
@@ -634,6 +1020,7 @@ pub fn run() {
                 }
             }
             app.manage(ApiChild(Mutex::new(child)));
+            app.manage(BrowseWebviewState::default());
             app.manage(playback_orchestrator::PlaybackOrchestratorState::default());
             if let Ok(mut pol) = app.state::<playback_orchestrator::PlaybackOrchestratorState>().0.lock() {
                 pol.set_app_paths(app.handle());

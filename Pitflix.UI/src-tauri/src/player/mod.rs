@@ -15,9 +15,15 @@ pub mod libmpv;
 #[cfg(windows)]
 pub mod libmpv_session;
 #[cfg(windows)]
+pub mod input_bridge;
+#[cfg(windows)]
+pub mod player_export;
+#[cfg(windows)]
 pub mod thumbs;
 #[cfg(windows)]
 pub mod playlist_window;
+#[cfg(windows)]
+pub mod quality_enhancement;
 
 use std::sync::Mutex;
 

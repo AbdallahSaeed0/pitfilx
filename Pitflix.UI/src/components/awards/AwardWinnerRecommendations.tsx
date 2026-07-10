@@ -1,6 +1,6 @@
 import { useQuery } from "@tanstack/react-query";
-import { ExternalLink, Sparkles } from "lucide-react";
-import { Link } from "react-router-dom";
+import { Sparkles } from "lucide-react";
+import { Link, useNavigate } from "react-router-dom";
 import type { AwardEdition, AwardNominee } from "../../api/awards";
 import { fetchRecommendations } from "../../api/recommendations";
 import type { LibraryTmdbIndex } from "../../hooks/useLibraryTmdbIndex";
@@ -28,6 +28,7 @@ export type AwardWinnerRecommendationsProps = {
 };
 
 export function AwardWinnerRecommendations({ edition, library }: AwardWinnerRecommendationsProps) {
+  const navigate = useNavigate();
   const spotlight = pickSpotlightWinner(edition);
   const kind = spotlight ? nomineeMediaKind(spotlight.mediaType) : "movie";
 
@@ -111,18 +112,24 @@ export function AwardWinnerRecommendations({ edition, library }: AwardWinnerReco
                 {meta}
               </Link>
             ) : (
-              <a
+              <button
                 key={`${item.mediaType}-${item.tmdbId}`}
-                href={`https://www.themoviedb.org/${item.mediaType}/${item.tmdbId}`}
-                target="_blank"
-                rel="noreferrer"
-                className="group shrink-0"
+                type="button"
+                onClick={() =>
+                  navigate("/stream-details", {
+                    state: {
+                      tmdbId: item.tmdbId,
+                      mediaType: item.mediaType === "tv" ? "Series" : "Movie",
+                      title: item.title,
+                      posterUrl: item.posterUrl,
+                      year: item.year != null ? String(item.year) : null,
+                    },
+                  })
+                }
+                className="group shrink-0 text-left"
               >
                 {meta}
-                <p className="mt-1 flex items-center gap-1 text-[10px] text-pitflix-muted">
-                  TMDB <ExternalLink className="h-3 w-3 opacity-70" />
-                </p>
-              </a>
+              </button>
             );
           })}
         </HorizontalDragScroll>

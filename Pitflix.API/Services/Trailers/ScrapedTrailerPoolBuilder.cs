@@ -195,27 +195,39 @@ public static class ScrapedTrailerPoolBuilder
 
         var seenKeys = new HashSet<string>(StringComparer.Ordinal);
         var resolved = new List<TmdbDiscoverItem>();
-        foreach (var r in mergedRaw.OrderByDescending(x => x.PublishedAtUtc ?? DateTime.MinValue))
+        var orderedRaw = mergedRaw
+            .OrderByDescending(x => x.PublishedAtUtc ?? DateTime.MinValue)
+            .ToList();
+        var resolveConcurrency = Math.Clamp(
+            configuration.GetValue("TrailerDiscovery:MaxTmdbResolveConcurrency", 4), 1, 8);
+
+        for (var i = 0; i < orderedRaw.Count && resolved.Count < maxResolve; i += resolveConcurrency)
         {
-            if (resolved.Count >= maxResolve)
-                break;
-
-            TmdbDiscoverItem? row = null;
-            try
+            workCt.ThrowIfCancellationRequested();
+            var chunk = orderedRaw.Skip(i).Take(resolveConcurrency).ToList();
+            var chunkRows = await Task.WhenAll(chunk.Select(async r =>
             {
-                row = await ScrapedTrailerTmdbResolver.TryResolveAsync(r, tmdb, workCt).ConfigureAwait(false);
-            }
-            catch
-            {
-                continue;
-            }
+                try
+                {
+                    return await ScrapedTrailerTmdbResolver.TryResolveAsync(r, tmdb, workCt).ConfigureAwait(false);
+                }
+                catch
+                {
+                    return null;
+                }
+            })).ConfigureAwait(false);
 
-            if (row == null)
-                continue;
-            var k = $"{row.MediaType}:{row.Id}";
-            if (!seenKeys.Add(k))
-                continue;
-            resolved.Add(row);
+            foreach (var row in chunkRows)
+            {
+                if (resolved.Count >= maxResolve)
+                    break;
+                if (row == null)
+                    continue;
+                var k = $"{row.MediaType}:{row.Id}";
+                if (!seenKeys.Add(k))
+                    continue;
+                resolved.Add(row);
+            }
         }
 
         var diagnostics = new TrailerRssDiscoveryDiagnostics(

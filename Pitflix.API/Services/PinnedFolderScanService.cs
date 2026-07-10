@@ -13,14 +13,16 @@ public sealed class PinnedFolderScanService : BackgroundService
     private readonly IServiceScopeFactory _scopes;
     private readonly ScanRuntime _scanRuntime;
     private readonly RatingsRefreshQueue _ratingsRefreshQueue;
+    private readonly ITmdbClientFactory _tmdbClientFactory;
     private readonly ILogger<PinnedFolderScanService> _logger;
 
     public PinnedFolderScanService(IServiceScopeFactory scopes, ScanRuntime scanRuntime, RatingsRefreshQueue ratingsRefreshQueue,
-        ILogger<PinnedFolderScanService> logger)
+        ITmdbClientFactory tmdbClientFactory, ILogger<PinnedFolderScanService> logger)
     {
         _scopes = scopes;
         _scanRuntime = scanRuntime;
         _ratingsRefreshQueue = ratingsRefreshQueue;
+        _tmdbClientFactory = tmdbClientFactory;
         _logger = logger;
     }
 
@@ -66,7 +68,7 @@ public sealed class PinnedFolderScanService : BackgroundService
 
     private async Task RunPinnedScanAsync(CancellationToken cancellationToken)
     {
-        var tmdb = TmdbClientFactory.Create();
+        var tmdb = _tmdbClientFactory.Create();
         if (tmdb == null)
         {
             _logger.LogWarning("Pinned folder auto-scan skipped: TMDB API key is not configured.");
@@ -102,6 +104,47 @@ public sealed class PinnedFolderScanService : BackgroundService
             return;
         }
 
+        // ── Incremental filter ────────────────────────────────────────────────
+        // Same approach as LibraryAutoScanService: since this runs every 2 minutes,
+        // only process files that are new or modified since the last pinned scan,
+        // instead of re-matching every file under the pinned folders every pass.
+        var lastScanAt = await repo.GetLastPinnedScanAtAsync(cancellationToken).ConfigureAwait(false);
+        if (lastScanAt.HasValue)
+        {
+            LibraryPathPresenceIndex? presenceIndex = null;
+            try
+            {
+                presenceIndex = await repo.CreateLibraryPathPresenceIndexAsync(cancellationToken)
+                    .ConfigureAwait(false);
+            }
+            catch { /* fall back to full list if index fails */ }
+
+            if (presenceIndex != null)
+            {
+                var cutoff = lastScanAt.Value.AddMinutes(-2);
+                var before = distinct.Count;
+                distinct = distinct.Where(f =>
+                {
+                    var norm = MediaPathNormalizer.PreferredPhysicalPath(f);
+                    if (!string.IsNullOrEmpty(norm) && !presenceIndex.IsPhysicalPathInLibrary(norm))
+                        return true;
+                    try { return File.GetLastWriteTimeUtc(f) > cutoff; }
+                    catch { return true; }
+                }).ToList();
+
+                _logger.LogInformation(
+                    "Pinned folder scan incremental filter: {Before} → {After} files (last scan {LastScanAt:u}).",
+                    before, distinct.Count, lastScanAt.Value);
+            }
+        }
+
+        if (distinct.Count == 0)
+        {
+            await repo.SetLastPinnedScanAtAsync(DateTime.UtcNow, cancellationToken).ConfigureAwait(false);
+            return;
+        }
+        // ─────────────────────────────────────────────────────────────────────
+
         var notifyDesktop = await repo.GetLibraryScanDesktopToastsEnabledAsync(cancellationToken).ConfigureAwait(false);
         var pipeline = new ScanPipeline(new FileScanner(), tmdb, repo);
         var progress = new Progress<ScanProgress>(p =>
@@ -120,6 +163,7 @@ public sealed class PinnedFolderScanService : BackgroundService
         var result = await pipeline.RunScanOnFilesAsync(distinct, progress, cancellationToken,
                 libraryNotifications: notifyDesktop, skipUnchangedUnmatchedScanLogs: true)
             .ConfigureAwait(false);
+        await repo.SetLastPinnedScanAtAsync(DateTime.UtcNow, cancellationToken).ConfigureAwait(false);
         _ratingsRefreshQueue.TryEnqueueStaleSweep();
 
         if (result.Matched > 0 || result.Unmatched > 0)

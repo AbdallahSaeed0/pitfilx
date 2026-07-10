@@ -1,4 +1,5 @@
 import { useQuery } from "@tanstack/react-query";
+import { getWatchedTmdbIds } from "../../api/history";
 import { getStreamDiscover, type DiscoverCategory } from "../../api/stream";
 import { HorizontalScrollRow } from "../ui/HorizontalScrollRow";
 import { StreamMediaCard } from "./StreamMediaCard";
@@ -9,6 +10,7 @@ type Props = {
 };
 
 const SKELETON_COUNT = 7;
+const EMPTY_IDS: number[] = [];
 
 export function ContentSection({ title, category }: Props) {
   const { data, isLoading } = useQuery({
@@ -16,6 +18,18 @@ export function ContentSection({ title, category }: Props) {
     queryFn: () => getStreamDiscover(category),
     staleTime: 10 * 60 * 1000,
   });
+  const { data: watchedMovieIds } = useQuery({
+    queryKey: ["watched-tmdb-ids", "Movie"],
+    queryFn: () => getWatchedTmdbIds("Movie"),
+    staleTime: 5 * 60 * 1000,
+  });
+  const { data: watchedSeriesIds } = useQuery({
+    queryKey: ["watched-tmdb-ids", "Series"],
+    queryFn: () => getWatchedTmdbIds("Series"),
+    staleTime: 5 * 60 * 1000,
+  });
+  const watchedMovieSet = new Set(watchedMovieIds ?? EMPTY_IDS);
+  const watchedSeriesSet = new Set(watchedSeriesIds ?? EMPTY_IDS);
 
   return (
     <div className="mb-8">
@@ -33,7 +47,13 @@ export function ContentSection({ title, category }: Props) {
       ) : !data?.length ? null : (
         <HorizontalScrollRow hideHeader className="mb-0" contentClassName="gap-3 pb-1">
           {data.map((item) => (
-            <StreamMediaCard key={`${item.mediaType}-${item.id}`} item={item} />
+            <StreamMediaCard
+              key={`${item.mediaType}-${item.id}`}
+              item={item}
+              isWatched={
+                item.mediaType === "Movie" ? watchedMovieSet.has(item.id) : watchedSeriesSet.has(item.id)
+              }
+            />
           ))}
         </HorizontalScrollRow>
       )}

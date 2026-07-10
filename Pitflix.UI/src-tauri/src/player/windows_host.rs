@@ -1469,8 +1469,11 @@ fn cmd_to_mpv_ipc(cmd: &PlayerCommand) -> Value {
     PlayerCommand::Play => json!({"command":["set","pause","no"]}),
     PlayerCommand::Pause => json!({"command":["set","pause","yes"]}),
     PlayerCommand::SetPaused(v) => json!({"command":["set","pause", if *v { "yes" } else { "no" }]}),
-    PlayerCommand::SeekRelative(sec) => json!({"command":["seek", *sec, "relative"]}),
-    PlayerCommand::SeekAbsolute(sec) => json!({"command":["seek", *sec, "absolute"]}),
+    PlayerCommand::SeekRelative { seconds, exact } => {
+      let precision = if *exact { "exact" } else { "keyframes" };
+      json!({"command":["seek", *seconds, "relative", precision]})
+    }
+    PlayerCommand::SeekAbsolute(sec) => json!({"command":["seek", *sec, "absolute", "exact"]}),
     PlayerCommand::SetMute(v) => json!({"command":["set_property","mute", *v]}),
     PlayerCommand::SetVolume(v) => json!({"command":["set_property","volume", *v]}),
     PlayerCommand::SetSubVisibility(v) => json!({"command":["set_property","sub-visibility", *v]}),

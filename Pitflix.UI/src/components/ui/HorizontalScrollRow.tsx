@@ -25,10 +25,6 @@ export function HorizontalScrollRow({
   const scrollerRef = useRef<HTMLDivElement>(null);
   const [canLeft, setCanLeft] = useState(false);
   const [canRight, setCanRight] = useState(false);
-  const drag = useRef<{ x: number; left: number } | null>(null);
-  const moved = useRef(false);
-  const lastDragAt = useRef(0);
-  const [grabbing, setGrabbing] = useState(false);
 
   const updateArrows = useCallback(() => {
     const el = scrollerRef.current;
@@ -55,44 +51,6 @@ export function HorizontalScrollRow({
       ro.disconnect();
     };
   }, [updateArrows]);
-
-  // Click-drag scroll — mouse wheel is intentionally not wired up; left/right
-  // buttons and drag are the only supported ways to move this row.
-  useEffect(() => {
-    if (!grabbing) return;
-    const onMove = (e: MouseEvent) => {
-      const d = drag.current;
-      const el = scrollerRef.current;
-      if (d == null || el == null) return;
-      if (!moved.current && Math.abs(e.clientX - d.x) > 6) moved.current = true;
-      if (!moved.current) return;
-      e.preventDefault();
-      el.scrollLeft = d.left - (e.clientX - d.x);
-    };
-    const onUp = () => {
-      drag.current = null;
-      if (moved.current) lastDragAt.current = Date.now();
-      moved.current = false;
-      setGrabbing(false);
-    };
-    document.addEventListener("mousemove", onMove);
-    document.addEventListener("mouseup", onUp);
-    return () => {
-      document.removeEventListener("mousemove", onMove);
-      document.removeEventListener("mouseup", onUp);
-    };
-  }, [grabbing]);
-
-  const onMouseDown = useCallback((e: React.MouseEvent<HTMLDivElement>) => {
-    if (e.button !== 0) return;
-    const el = scrollerRef.current;
-    if (!el) return;
-    const targ = e.target as HTMLElement;
-    if (targ.closest("a,button,input,select,textarea,[data-no-drag-scroll]")) return;
-    drag.current = { x: e.clientX, left: el.scrollLeft };
-    moved.current = false;
-    setGrabbing(true);
-  }, []);
 
   const scrollByDir = (dir: -1 | 1) => {
     const el = scrollerRef.current;
@@ -133,21 +91,7 @@ export function HorizontalScrollRow({
         ) : null}
         <div
           ref={scrollerRef}
-          role="presentation"
-          onMouseDown={onMouseDown}
-          onClickCapture={(e) => {
-            // If the user dragged to scroll, suppress the click that would open a card.
-            if (Date.now() - lastDragAt.current < 350) {
-              e.preventDefault();
-              e.stopPropagation();
-            }
-          }}
-          className={cn(
-            "scroll-row-x flex cursor-grab gap-5 pb-4 pl-0 pr-0 sm:px-11",
-            "scroll-smooth",
-            grabbing && "cursor-grabbing select-none",
-            contentClassName,
-          )}
+          className={cn("scroll-row-x flex gap-5 pb-4 scroll-smooth", contentClassName)}
         >
           {children}
         </div>

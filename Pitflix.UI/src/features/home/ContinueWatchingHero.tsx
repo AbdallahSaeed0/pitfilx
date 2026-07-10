@@ -21,14 +21,14 @@ export function continueLabel(nextUpLabel?: string | null) {
 }
 
 /** Parse S##E## from a nextUpLabel string like "S1 E5 — Title" → { season: 1, episodeNumber: 5 }. */
-function parseSeEp(label: string | null | undefined): { season?: number; episodeNumber?: number } {
+export function parseSeEp(label: string | null | undefined): { season?: number; episodeNumber?: number } {
   if (!label) return {};
   const m = label.match(/S\s*(\d+)\s*E\s*(\d+)/i);
   if (!m) return {};
   return { season: Number(m[1]), episodeNumber: Number(m[2]) };
 }
 
-function continueReturnContext(item: WatchHistoryRow): PlayContext {
+export function continueReturnContext(item: WatchHistoryRow): PlayContext {
   // Do NOT hardcode returnTo — let usePlayback capture the current location
   // (home page / wherever the user is) so closing the player returns them here.
   const { season, episodeNumber } = parseSeEp(item.nextUpLabel);
@@ -41,7 +41,7 @@ function continueReturnContext(item: WatchHistoryRow): PlayContext {
   };
 }
 
-function episodeInfoLine(item: WatchHistoryRow): string | null {
+export function episodeInfoLine(item: WatchHistoryRow): string | null {
   const label = item.nextUpLabel;
   if (!label) return null;
   // "S1 E5 — Next up" → "S1 E5"  or  "S1E5 — Title" → "S1E5 · Title"
@@ -52,6 +52,26 @@ function episodeInfoLine(item: WatchHistoryRow): string | null {
     return title ? `${ep} · ${title}` : ep;
   }
   return label;
+}
+
+export function continueWatchingHeadline(item: WatchHistoryRow): string {
+  if (item.mediaType !== "Series") return item.title;
+
+  const fromApi = item.episodeTitle?.trim();
+  if (fromApi) return fromApi;
+
+  const parts = item.title.split(/\s*[·•]\s*/).map((p) => p.trim()).filter(Boolean);
+  const seIdx = parts.findIndex((p) => /S\s*\d+\s*E\s*\d+/i.test(p));
+  if (seIdx >= 0 && seIdx + 1 < parts.length) {
+    return parts.slice(seIdx + 1).join(" · ");
+  }
+
+  const m =
+    item.title.match(/S\s*(\d+)\s*E\s*(\d+)/i) ??
+    item.nextUpLabel?.match(/S\s*(\d+)\s*E\s*(\d+)/i);
+  if (m) return `Episode ${m[2]}`;
+
+  return item.title;
 }
 
 // ─── Manage dialog (kept from old design) ───────────────────────────────────
@@ -260,6 +280,7 @@ export function ContinueWatchingHero({
   const showProgress = head > 30 && dur > 0;
 
   const epInfo = episodeInfoLine(featured);
+  const headline = continueWatchingHeadline(featured);
 
   const detailPath =
     featured.libraryMovieId != null
@@ -375,7 +396,7 @@ export function ContinueWatchingHero({
 
             {/* Title */}
             <h2 className="line-clamp-2 text-3xl font-bold leading-tight text-white sm:text-4xl md:text-[42px]">
-              {featured.title}
+              {headline}
             </h2>
 
             {/* Episode / movie info */}

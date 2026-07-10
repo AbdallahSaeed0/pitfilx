@@ -20,6 +20,7 @@ type StreamSearchRow = {
   year?: string;
   posterUrl: string | null;
   mediaType: "Movie" | "Series";
+  voteAverage: number;
 };
 
 function mapSearchRows(data: unknown, fallback: SearchKind): StreamSearchRow[] {
@@ -44,7 +45,8 @@ function mapSearchRows(data: unknown, fallback: SearchKind): StreamSearchRow[] {
     } else {
       mediaType = "Movie";
     }
-    return { id, title, year, posterUrl, mediaType };
+    const voteAverage = Number(r.voteAverage ?? r.vote_average ?? 0) || 0;
+    return { id, title, year, posterUrl, mediaType, voteAverage };
   });
   return rows.filter((x) => x.id > 0 && x.title);
 }
@@ -237,6 +239,11 @@ export function OnlineStreamPage() {
                         <span className="absolute left-1.5 top-1.5 rounded bg-black/65 px-1.5 py-0.5 text-[9px] font-bold uppercase text-white">
                           {row.mediaType === "Movie" ? "Movie" : "TV"}
                         </span>
+                        {row.voteAverage > 0 && (
+                          <span className="absolute right-1.5 top-1.5 rounded bg-black/70 px-1.5 py-0.5 text-[9px] font-semibold text-yellow-400">
+                            ★ {row.voteAverage.toFixed(1)}
+                          </span>
+                        )}
                       </button>
 
                       <div className="flex flex-1 flex-col gap-1.5 p-2.5">

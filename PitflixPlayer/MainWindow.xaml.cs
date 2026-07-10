@@ -19,6 +19,13 @@ public partial class MainWindow : Window
     // ── IPC client ────────────────────────────────────────────────────────────
     private MpvIpcClient? _ipc;
 
+    // ── Taskbar thumbnail toolbar (Previous / Play-Pause / Next) ─────────────
+#if WINDOWS
+    private TaskbarThumbButtons? _taskbarThumbButtons;
+    private List<string>         _taskbarPlaylistFiles = new();
+    private int                  _taskbarPlaylistIndex = -1;
+#endif
+
     // ── Keyboard / mute state ─────────────────────────────────────────────────
     private bool   _isMuted    = false;
     private double _lastVolume = 80;
@@ -47,6 +54,11 @@ public partial class MainWindow : Window
     // new session so leftover state from a previous video doesn't bleed
     // through.  +ve means audio plays LATER than video, -ve EARLIER.
     private double  _audioDelay;
+
+    // ── Subtitle search overlay state ─────────────────────────────────────────
+    private PlayerSession?          _currentSession;
+    private SubtitleSearchOverlay?  _subtitleOverlay;
+    private string                  _subtitleSearchTitle = "";
 
     // ── Pre-warm state (issue: cold-start dominated open time) ───────────────
     //
@@ -85,6 +97,13 @@ public partial class MainWindow : Window
             if (WindowState != WindowState.Minimized) RefitVideoChild();
         };
     }
+
+    /// <summary>Public entry point for callers outside MainWindow (e.g. the
+    /// ControlsWindow context menu) to force the mpv child window to re-sync
+    /// after a change that doesn't trigger StateChanged, such as toggling
+    /// Topmost — without this the video frame can go stale/frozen since
+    /// VideoHwndHost only re-pokes mpv on an actual resize.</summary>
+    public void RefitVideoChildExternal() => RefitVideoChild();
 
     private void RefitVideoChild()
     {
@@ -150,6 +169,10 @@ public partial class MainWindow : Window
                 Close();
             });
         }
+
+#if WINDOWS
+        InitializeTaskbarThumbButtons();
+#endif
     }
 
     private async Task OnLoadedCore()
@@ -225,6 +248,27 @@ public partial class MainWindow : Window
             _controls.ShowLoadingOverlay(FileBasename(session.FilePath));
             _controls.Show();
             _controls.ForceSyncFromOwner();
+            // This is the cold-start path: by the time AttachAsync's network
+            // round-trip finishes and we get here, whatever brief foreground
+            // boost MainWindow.OnLoaded gave itself has long since expired.
+            // If the user is alt-tabbed into another app (IDE/browser) at
+            // this moment, neither MainWindow nor this owned ControlsWindow
+            // is guaranteed to come out on top of it — Windows doesn't let a
+            // background process steal foreground just by calling Show().
+            // That's the "control bar shows the IDE through it" bug: it's not
+            // transparency, it's the IDE window genuinely sitting ABOVE us in
+            // z-order.  Force both windows to the front the same way
+            // OnLoaded/ExitPreWarmHideAsync already do elsewhere.
+            Topmost = true;
+            Activate();
+            _controls.Topmost = true;
+            _controls.Activate();
+            _ = Dispatcher.InvokeAsync(async () =>
+            {
+                await Task.Delay(400).ConfigureAwait(true);
+                Topmost = false;
+                if (_controls is not null) _controls.Topmost = false;
+            }, System.Windows.Threading.DispatcherPriority.Background);
         });
 
         App.Log("Calling AttachAsync");
@@ -340,6 +384,8 @@ public partial class MainWindow : Window
 
         // 4. Wire up the controls overlay (already created above with the LOADING
         //    screen; reuse it so the loading view stays continuous into playback).
+        _currentSession = session;
+        _subtitleSearchTitle = FileBasename(session.FilePath);
         Dispatcher.Invoke(() =>
         {
             _controls ??= new ControlsWindow { Owner = this };
@@ -361,6 +407,15 @@ public partial class MainWindow : Window
             // never "changed", so the sync hook misses it.  Explicit nudge:
             _controls.ForceSyncFromOwner();
             _controls.StartHideTimer();
+            // ContentRendered only fires on the FIRST show of this window's
+            // lifetime; the player is reused warm across videos, so kick the
+            // layered-surface recomposite here too — otherwise the second and
+            // later opens can come up with the transparent-bar glitch.
+            _controls.ForceLayeredRepaint();
+            _ = Dispatcher.BeginInvoke(new Action(() => _controls?.ForceLayeredRepaint()),
+                                   System.Windows.Threading.DispatcherPriority.ApplicationIdle);
+            _ = _controls.Dispatcher.BeginInvoke(new Action(() => _controls.ShowControls(animate: false)),
+                                   System.Windows.Threading.DispatcherPriority.Render);
         });
 
         // Subtitle tracks are fetched on-demand when the CC button is clicked.
@@ -395,59 +450,14 @@ public partial class MainWindow : Window
         // 5. Start WebSocket
         StartWebSocket();
 
-        // The backend launches mpv with --pause=yes specifically so it does
-        // NOT play audio out of the speakers before our window has actually
-        // rendered.  mpv is also already seeked to the resume position via
-        // --start.  If the user was previously partway through this file, show
-        // the "Pick up where you left off" overlay and KEEP mpv paused until
-        // they choose; otherwise just unpause now (audio + video at the same
-        // moment — fixes the "I hear the video before I see it" complaint).
-        const double ResumeThresholdSeconds = 30.0;
-        double resumePos = session.Position;
-        double resumeDur = session.Duration;
-        bool meaningfulResume =
-            resumePos > ResumeThresholdSeconds &&
-            (resumeDur <= 0 || resumePos < resumeDur - 15.0);
-
-        if (meaningfulResume && _controls is not null)
-        {
-            Dispatcher.Invoke(() =>
-            {
-                _controls!.HideLoadingOverlay();
-                _controls!.ShowResumeOverlay(
-                    resumePos, resumeDur,
-                    // Resume: mpv is already at the resume point — just unpause.
-                    onResume: () => { _ = _ipc?.SendAsync("set_property", "pause", false); },
-                    // Start Over: seek to 0, then unpause.
-                    onStartOver: () =>
-                    {
-                        _ = Task.Run(async () =>
-                        {
-                            try
-                            {
-                                if (_ipc is not null)
-                                {
-                                    await _ipc.SendAsync("set_property", "start", "0").ConfigureAwait(false);
-                                    await _ipc.SendAsync("seek", 0, "absolute").ConfigureAwait(false);
-                                    await _ipc.SendAsync("set_property", "pause", false).ConfigureAwait(false);
-                                }
-                            }
-                            catch (Exception ex) { App.Log($"Start Over failed: {ex.Message}"); }
-                        });
-                    },
-                    // Cancel: abandon playback and close the player.
-                    onCancel: () =>
-                    {
-                        _ = PlayerApiClient.StopAsync();
-                        Dispatcher.Invoke(Close);
-                    });
-            });
-        }
-        else
-        {
-            _ = _ipc?.SendAsync("set_property", "pause", false);
-            Dispatcher.Invoke(() => _controls?.HideLoadingOverlay());
-        }
+        // The backend launches mpv with --pause=yes so audio does not play before
+        // our window renders.  mpv is already seeked to the resume position via
+        // --start — unpause immediately (no "pick up where you left off" prompt).
+        _ = _ipc?.SendAsync("set_property", "pause", false);
+        Dispatcher.Invoke(() => _controls?.HideLoadingOverlay());
+#if WINDOWS
+        Dispatcher.Invoke(UpdateTaskbarPlaybackState);
+#endif
 
         App.Log("OnLoadedCore complete");
     }
@@ -495,6 +505,11 @@ public partial class MainWindow : Window
         _ipc = null;
         _lastFilePathSeen  = null;
         _initialApplyDone  = false;
+#if WINDOWS
+        _taskbarPlaylistFiles = new();
+        _taskbarPlaylistIndex = -1;
+        UpdateTaskbarPlaybackState();
+#endif
         _controls?.DisposeThumbServer();  // release the warm hover-thumbnail mpv
 
         // Hide both windows.  Hide() keeps the HWND alive and process running.
@@ -571,6 +586,8 @@ public partial class MainWindow : Window
         _ = _ipc.SendAsync("set_property", "sub-margin-y", 110);
 
         // Update ControlsWindow with the new session data.
+        _currentSession = session;
+        _subtitleSearchTitle = FileBasename(session.FilePath);
         if (_controls is not null)
         {
             _controls.SetIpc(_ipc);
@@ -580,6 +597,11 @@ public partial class MainWindow : Window
             _controls.Show();
             _controls.ForceSyncFromOwner();
             _controls.StartHideTimer();
+            _controls.ForceLayeredRepaint();
+            _ = Dispatcher.BeginInvoke(new Action(() => _controls?.ForceLayeredRepaint()),
+                                   System.Windows.Threading.DispatcherPriority.ApplicationIdle);
+            _ = _controls.Dispatcher.BeginInvoke(new Action(() => _controls.ShowControls(animate: false)),
+                                   System.Windows.Threading.DispatcherPriority.Render);
         }
 
         // Rebuild folder playlist for the new file.
@@ -647,6 +669,11 @@ public partial class MainWindow : Window
             if (siblings.Count <= 1)
             {
                 App.Log("BuildFolderPlaylist: only 1 video; leaving prev/next hidden");
+#if WINDOWS
+                _taskbarPlaylistFiles = new();
+                _taskbarPlaylistIndex = -1;
+                await Dispatcher.InvokeAsync(UpdateTaskbarPlaybackState);
+#endif
                 return;   // nothing to navigate to — leave prev/next hidden
             }
 
@@ -692,6 +719,11 @@ public partial class MainWindow : Window
             {
                 _controls?.SetPlaylist(siblings, normCurrent);
                 _controls?.SetPlaylistNavVisible(true);
+#if WINDOWS
+                _taskbarPlaylistFiles = siblings;
+                _taskbarPlaylistIndex = currentIdx;
+                UpdateTaskbarPlaybackState();
+#endif
             });
         }
         catch (Exception ex)
@@ -730,6 +762,10 @@ public partial class MainWindow : Window
             _mouseHookHandle = IntPtr.Zero;
         }
         _ipc?.Dispose();
+#if WINDOWS
+        _taskbarThumbButtons?.Dispose();
+        _taskbarThumbButtons = null;
+#endif
         _wsCts?.Cancel();
         _ws?.Dispose();
         _controls?.Close();
@@ -823,9 +859,25 @@ public partial class MainWindow : Window
 
             if (_controls is not null)
             {
+                _currentSession = session;
                 _ = Dispatcher.InvokeAsync(() =>
                 {
                     _controls.UpdateFromSession(session);
+#if WINDOWS
+                    if (!string.IsNullOrEmpty(session.FilePath))
+                    {
+                        string normPath;
+                        try { normPath = System.IO.Path.GetFullPath(session.FilePath); }
+                        catch { normPath = session.FilePath; }
+                        if (_taskbarPlaylistFiles.Count > 1)
+                        {
+                            int idx = _taskbarPlaylistFiles.FindIndex(
+                                f => string.Equals(f, normPath, StringComparison.OrdinalIgnoreCase));
+                            if (idx >= 0) _taskbarPlaylistIndex = idx;
+                        }
+                    }
+                    UpdateTaskbarPlaybackState();
+#endif
                     // Propagate filename changes so the Playlist popup
                     // re-highlights when mpv steps to next/prev or when
                     // the user clicks an entry to jump.
@@ -844,6 +896,8 @@ public partial class MainWindow : Window
                         _controls.UpdateCurrentPlaylistFile(norm);
                         _controls.SetSessionFilePath(norm);
                         _controls.SetTitle(FileBasename(norm));
+                        if (fileChanged)
+                            _subtitleSearchTitle = FileBasename(norm);
 
                         // File changed → re-apply the persisted subtitle
                         // preference so episodes consistently start with the
@@ -893,9 +947,59 @@ public partial class MainWindow : Window
     private const int MAIN_HTCAPTION    = 2;
     private const int TITLEBAR_DRAG_HEIGHT_PX = 40;
 
+    // WM_WINDOWPOSCHANGED — fires synchronously, once per frame, during a
+    // live OS resize-drag (mouse held on the edge/corner).  We use it to
+    // re-sync ControlsWindow's geometry instead of relying solely on the
+    // WPF Owner.SizeChanged event: SizeChanged is dispatched through the
+    // managed layout/event queue and lags the native resize loop by a frame
+    // or more.  Because ControlsWindow is a separate top-level window (it
+    // has to be — see the airspace-conflict comment on VideoHwndHost), that
+    // lag let ControlsWindow's transparent overlay briefly sit larger than
+    // MainWindow's just-shrunk bounds, exposing whatever was behind the app
+    // through the overlay's (normally click-through) excess area — the
+    // "gap on the side while resizing" bug.  Resyncing on this message
+    // keeps the two windows in lock-step.
+    private const int MAIN_WM_WINDOWPOSCHANGED = 0x0047;
+
     private IntPtr MainHitTestHook(IntPtr hwnd, int msg, IntPtr wParam, IntPtr lParam,
                                     ref bool handled)
     {
+        if (msg == NativeMethods.WM_GETMINMAXINFO)
+        {
+            // Clamp the native maximize bounds to the EXACT monitor rect.
+            // Without this, a borderless+resizable window maximizes a few
+            // pixels off-screen on each edge (room reserved for the invisible
+            // resize border); the overhang gets clipped by the monitor, but
+            // ControlsWindow.SyncFromOwner reads the unclipped DWM rect and
+            // ends up offset from where MainWindow is actually painted —
+            // the persistent (non-resize) edge gap that exposes the desktop.
+            // Full monitor rect (not work area) matches this app's existing
+            // "maximize = true fullscreen, covers taskbar" behavior.
+            var monitor = NativeMethods.MonitorFromWindow(hwnd, NativeMethods.MONITOR_DEFAULTTONEAREST);
+            if (monitor != IntPtr.Zero)
+            {
+                var mi = new NativeMethods.MONITORINFO
+                { cbSize = (uint)Marshal.SizeOf<NativeMethods.MONITORINFO>() };
+                if (NativeMethods.GetMonitorInfo(monitor, ref mi))
+                {
+                    var mmi = Marshal.PtrToStructure<NativeMethods.MINMAXINFO>(lParam);
+                    mmi.ptMaxPosition.X = mi.rcMonitor.Left;
+                    mmi.ptMaxPosition.Y = mi.rcMonitor.Top;
+                    mmi.ptMaxSize.X = mi.rcMonitor.Right  - mi.rcMonitor.Left;
+                    mmi.ptMaxSize.Y = mi.rcMonitor.Bottom - mi.rcMonitor.Top;
+                    Marshal.StructureToPtr(mmi, lParam, true);
+                    handled = true;
+                }
+            }
+            return IntPtr.Zero;
+        }
+
+        if (msg == MAIN_WM_WINDOWPOSCHANGED)
+        {
+            _controls?.ForceSyncFromOwner();
+            return IntPtr.Zero;
+        }
+
         if (msg != MAIN_WM_NCHITTEST) return IntPtr.Zero;
 
         // Don't override resize behaviour when the window is maximized — the
@@ -1080,10 +1184,13 @@ public partial class MainWindow : Window
                 });
                 break;
 
-            // FIX 7 — Screenshot.  `screenshot video` writes the un-rendered
-            // video frame (no OSD/subs) to mpv's screenshot-directory.  The
-            // overlay confirms it happened.
-            case 0x53: // S — screenshot
+            // FIX 7 — Screenshot (plain S) or subtitle search (Shift+S).
+            case 0x53: // S
+                if ((NativeMethods.GetAsyncKeyState(NativeMethods.VK_SHIFT) & 0x8000) != 0)
+                {
+                    _ = Dispatcher.InvokeAsync(OpenSubtitleSearchOverlay);
+                    break;
+                }
                 _ = Dispatcher.InvokeAsync(() =>
                 {
                     _ = _ipc?.SendAsync("async", "screenshot", "video");
@@ -1388,6 +1495,18 @@ public partial class MainWindow : Window
                     string display = string.IsNullOrWhiteSpace(info.Subtitle)
                         ? info.Title
                         : $"{info.Title}  ·  {info.Subtitle}";
+                    // Search title: "Show Name S1E8" when season/episode known.
+                    string searchTitle = info.Title;
+                    if (!string.IsNullOrWhiteSpace(info.Subtitle))
+                    {
+                        var parts = info.Subtitle.Split('·', StringSplitOptions.TrimEntries);
+                        if (parts.Length > 0)
+                        {
+                            var se = parts[0].Replace(" ", "", StringComparison.Ordinal);
+                            searchTitle = $"{info.Title} {se}";
+                        }
+                    }
+                    _subtitleSearchTitle = searchTitle;
                     await Dispatcher.InvokeAsync(() =>
                     {
                         _controls?.SetTitle(display);
@@ -1403,6 +1522,7 @@ public partial class MainWindow : Window
                     string display = string.IsNullOrWhiteSpace(info.Subtitle)
                         ? info.Title
                         : $"{info.Title}  ({info.Subtitle})";
+                    _subtitleSearchTitle = info.Title;
                     await Dispatcher.InvokeAsync(() =>
                     {
                         _controls?.SetTitle(display);
@@ -1435,4 +1555,79 @@ public partial class MainWindow : Window
 
     private static string DescribeSkipSegment(SkipSegment? seg) =>
         seg is null ? "null" : $"[{seg.Start:F1}-{seg.End:F1}s conf={seg.Confidence:F2} src={seg.Source}]";
+
+    private void OpenSubtitleSearchOverlay()
+    {
+        if (_ipc is null || _currentSession is null) return;
+
+        if (_subtitleOverlay is { IsVisible: true })
+        {
+            _subtitleOverlay.Activate();
+            return;
+        }
+
+        string title = string.IsNullOrWhiteSpace(_subtitleSearchTitle)
+            ? FileBasename(_currentSession.FilePath)
+            : _subtitleSearchTitle;
+
+        _subtitleOverlay = new SubtitleSearchOverlay(
+            this,
+            _ipc,
+            title,
+            imdbId: null,
+            _currentSession.EpisodeId,
+            _currentSession.MediaId,
+            _currentSession.FilePath);
+        _subtitleOverlay.Closed += (_, _) => _subtitleOverlay = null;
+        _subtitleOverlay.Show();
+    }
+
+#if WINDOWS
+    private void InitializeTaskbarThumbButtons()
+    {
+        if (!TaskbarThumbButtons.IsSupported)
+        {
+            App.Log("TaskbarThumbButtons: not supported on this OS");
+            return;
+        }
+
+        try
+        {
+            _taskbarThumbButtons = new TaskbarThumbButtons(this);
+            _taskbarThumbButtons.OnPrevious = () =>
+            {
+                _controls?.AbortThumbBulk();
+                _ = _ipc?.SendAsync("playlist-prev");
+            };
+            _taskbarThumbButtons.OnPlayPause = () =>
+            {
+                if (_controls is null) return;
+                _controls.OptimisticTogglePause();
+                _ = _ipc?.SendAsync("cycle", "pause");
+                UpdateTaskbarPlaybackState();
+            };
+            _taskbarThumbButtons.OnNext = () =>
+            {
+                _controls?.AbortThumbBulk();
+                _ = _ipc?.SendAsync("playlist-next");
+            };
+            UpdateTaskbarPlaybackState();
+        }
+        catch (Exception ex)
+        {
+            App.Log($"InitializeTaskbarThumbButtons failed: {ex.Message}");
+        }
+    }
+
+    private void UpdateTaskbarPlaybackState()
+    {
+        if (_taskbarThumbButtons is null) return;
+
+        bool isPlaying = _controls is not null && !_controls.IsPaused;
+        bool hasPrev   = _taskbarPlaylistIndex > 0;
+        bool hasNext   = _taskbarPlaylistIndex >= 0
+                      && _taskbarPlaylistIndex < _taskbarPlaylistFiles.Count - 1;
+        _taskbarThumbButtons.UpdatePlaybackState(isPlaying, hasPrev, hasNext);
+    }
+#endif
 }

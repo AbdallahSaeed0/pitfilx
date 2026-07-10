@@ -5,6 +5,12 @@ pub struct PlayerOpen {
   pub path: String,
   #[serde(default)]
   pub start_seconds: Option<f64>,
+  /// Opt-in playback quality settings (embedded/libmpv path only). `hdr_mode`: "auto" | "true_hdr" |
+  /// "tonemap_sdr". Both default to the safe/off behavior when absent, so existing callers are unaffected.
+  #[serde(default)]
+  pub hdr_mode: Option<String>,
+  #[serde(default)]
+  pub audio_passthrough: Option<bool>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -13,7 +19,11 @@ pub enum PlayerCommand {
   Play,
   Pause,
   SetPaused(bool),
-  SeekRelative(f64),
+  /// `exact` trades speed for precision: mpv's default keyframe-snapping seek is fast but
+  /// can overshoot on long-GOP footage (10-bit HEVC especially); `exact` decodes forward to
+  /// land on the precise frame, at the cost of a visible pause. Callers pick per use case —
+  /// e.g. coarse skip-5s wants speed, fine 1s nudges want precision.
+  SeekRelative { seconds: f64, exact: bool },
   SeekAbsolute(f64),
   SetMute(bool),
   SetVolume(f64),

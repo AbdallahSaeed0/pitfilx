@@ -1,6 +1,5 @@
 using Microsoft.Extensions.Logging;
 using Pitflix.Core.Api;
-using Pitflix.Core.Config;
 using Pitflix.Core.Database;
 using Pitflix.Core.Models;
 
@@ -8,23 +7,29 @@ namespace Pitflix.API.Services;
 
 public sealed record RatingsEnrichmentResult(RatingsSnapshot? Snapshot, string? FailureReason);
 
-/// <summary>Phase 2 — builds and persists <see cref="RatingsSnapshot"/> from TMDB (anchor), OMDb (primary external), PHP IMDb (IMDb-only fallback).</summary>
+/// <summary>Phase 2 — builds and persists <see cref="RatingsSnapshot"/> from TMDB (anchor), MDBList (primary external), PHP IMDb (IMDb-only fallback).</summary>
 public sealed class RatingsEnrichmentService
 {
     private readonly RatingsSnapshotRepository _snapshots;
-    private readonly OmdbRatingClient _omdb;
+    private readonly MdbListService _mdbList;
     private readonly PhpImdbGrabberClient _phpImdb;
+    private readonly ITmdbClientFactory _tmdbClientFactory;
+    private readonly IResolvedApiKeysAccessor _apiKeys;
     private readonly ILogger<RatingsEnrichmentService> _log;
 
     public RatingsEnrichmentService(
         RatingsSnapshotRepository snapshots,
-        OmdbRatingClient omdb,
+        MdbListService mdbList,
         PhpImdbGrabberClient phpImdb,
+        ITmdbClientFactory tmdbClientFactory,
+        IResolvedApiKeysAccessor apiKeys,
         ILogger<RatingsEnrichmentService> log)
     {
         _snapshots = snapshots;
-        _omdb = omdb;
+        _mdbList = mdbList;
         _phpImdb = phpImdb;
+        _tmdbClientFactory = tmdbClientFactory;
+        _apiKeys = apiKeys;
         _log = log;
     }
 
@@ -35,8 +40,8 @@ public sealed class RatingsEnrichmentService
         if (mt == null || tmdbId <= 0)
             return new RatingsEnrichmentResult(null, "invalid_input");
 
-        var apiKey = AppSettings.ResolvedTmdbApiKey;
-        var tmdb = TmdbClientFactory.Create();
+        var apiKey = _apiKeys.ResolvedTmdbApiKey;
+        var tmdb = _tmdbClientFactory.Create();
         if (tmdb == null || string.IsNullOrEmpty(apiKey))
         {
             _log.LogDebug("Ratings enrichment: TMDB unavailable for {Media} {Id}", mt, tmdbId);
@@ -66,53 +71,29 @@ public sealed class RatingsEnrichmentService
         string? rtCritics = null;
         string? rtAudience = null;
 
-        OmdbTitleResult? omdbResult = null;
-        if (_omdb.IsConfigured)
+        MdbListRatings? mdbResult = null;
+        try
         {
-            if (!string.IsNullOrEmpty(imdbId))
+            mdbResult = await _mdbList.GetRatingsAsync(imdbId, tmdbId, ct).ConfigureAwait(false);
+        }
+        catch (Exception ex)
+        {
+            _log.LogWarning(ex, "Ratings enrichment: MDBList lookup failed for {Media} {Id}", mt, tmdbId);
+        }
+
+        if (mdbResult != null)
+        {
+            sourceMask |= RatingsSourceMask.Mdblist;
+            if (mdbResult.ImdbScore is { } imdbVal)
             {
-                try
-                {
-                    omdbResult = await _omdb.TryGetByImdbIdAsync(imdbId, ct).ConfigureAwait(false);
-                }
-                catch (Exception ex)
-                {
-                    _log.LogWarning(ex, "Ratings enrichment: OMDb by IMDb id failed for {Imdb}", imdbId);
-                }
+                imdbRating = imdbVal.ToString("0.0", System.Globalization.CultureInfo.InvariantCulture);
+                imdbVotes = mdbResult.ImdbVotes?.ToString(System.Globalization.CultureInfo.InvariantCulture);
             }
 
-            if (omdbResult == null && !string.IsNullOrWhiteSpace(anchor.Title))
-            {
-                var omdbType = mt == "Movie" ? "movie" : "series";
-                try
-                {
-                    var (byTitle, _) = await _omdb
-                        .TryGetByTitleYearTypeAsync(anchor.Title, anchor.Year, omdbType, ct)
-                        .ConfigureAwait(false);
-                    omdbResult = byTitle;
-                }
-                catch (Exception ex)
-                {
-                    _log.LogWarning(ex, "Ratings enrichment: OMDb title match failed for {Title}", anchor.Title);
-                }
-            }
-
-            if (omdbResult != null)
-            {
-                sourceMask |= RatingsSourceMask.Omdb;
-                if (!string.IsNullOrWhiteSpace(omdbResult.ImdbRatingOutOf10))
-                {
-                    imdbRating = omdbResult.ImdbRatingOutOf10.Trim();
-                    imdbVotes = string.IsNullOrWhiteSpace(omdbResult.ImdbVoteCount) ? null : omdbResult.ImdbVoteCount.Trim();
-                }
-
-                rtCritics = string.IsNullOrWhiteSpace(omdbResult.RottenTomatoesCriticsPercent)
-                    ? null
-                    : omdbResult.RottenTomatoesCriticsPercent.Trim();
-                rtAudience = string.IsNullOrWhiteSpace(omdbResult.AudiencePercent)
-                    ? null
-                    : omdbResult.AudiencePercent.Trim();
-            }
+            if (mdbResult.RottenTomatoesScore is { } rt)
+                rtCritics = rt.ToString("0", System.Globalization.CultureInfo.InvariantCulture) + "%";
+            if (mdbResult.RottenTomatoesAudience is { } rta)
+                rtAudience = rta.ToString("0", System.Globalization.CultureInfo.InvariantCulture) + "%";
         }
 
         if (string.IsNullOrWhiteSpace(imdbRating) && !string.IsNullOrEmpty(imdbId))

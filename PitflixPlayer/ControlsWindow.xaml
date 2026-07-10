@@ -448,12 +448,18 @@
         </Grid>
 
         <!-- ══ CONTROLS (bottom 52 px, single-row compact layout) ═══════════
-             Solid #F0000000 backdrop, no gradient.  Every gradient I tried
-             still rendered a visible alpha-transition band — over a dark
-             video it reads as a thin gray strip even with the transition
-             compressed to <5 %.  A flat opaque bar sized to exactly fit the
-             button row eliminates any visible band entirely.  Height 52 =
-             button row (~40 px) + 6 px top breathing room + 6 px bottom.  -->
+             Solid #FF000000 (fully opaque) backdrop, no gradient.  Used to be
+             #F0000000 (94% opaque) to let a faint hint of video show through,
+             but that meant this strip's correctness depended on the layered
+             window's per-pixel-alpha compositing actually blending that 6%
+             correctly every frame — which was the root cause of the
+             "control bar shows the desktop/another app through it"  bug
+             (z-order/compositing glitches on an AllowsTransparency window).
+             MainWindow.xaml now insets the video so it never extends behind
+             this strip, so full opacity costs nothing visually (this is
+             solid black either way) while removing any dependency on alpha
+             blending being correct.  Height 52 = button row (~40 px) + 6 px
+             top breathing room + 6 px bottom.  -->
         <!-- Two-row controls layout (compact):
              Row 0 = transport buttons (32 px)
              Row 1 = full-width timeline + position/remaining labels (22 px)
@@ -461,7 +467,7 @@
         <Grid x:Name="ControlsOverlay"
               VerticalAlignment="Bottom" Height="54"
               IsHitTestVisible="True" Cursor="Arrow"
-              Background="#F0000000">
+              Background="#FF000000">
             <Grid.RowDefinitions>
                 <RowDefinition Height="32"/>   <!-- buttons row -->
                 <RowDefinition Height="*"/>     <!-- timeline row -->

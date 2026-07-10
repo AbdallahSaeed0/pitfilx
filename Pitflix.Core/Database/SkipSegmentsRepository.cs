@@ -91,8 +91,11 @@ public sealed class SkipSegmentsRepository
             existing.OutroEndSeconds = segment.OutroEndSeconds;
             existing.OutroConfidence = segment.OutroConfidence;
             existing.OutroSource = segment.OutroSource;
+            existing.OutroSecondsBeforeEndStart = segment.OutroSecondsBeforeEndStart;
+            existing.OutroSecondsBeforeEndEnd = segment.OutroSecondsBeforeEndEnd;
             existing.SampleEpisodeCount = segment.SampleEpisodeCount;
             existing.ComputedAt = segment.ComputedAt;
+            existing.DetectionSource = segment.DetectionSource;
             segment = existing;
         }
 
@@ -100,19 +103,14 @@ public sealed class SkipSegmentsRepository
         return segment;
     }
 
-    /// <summary>Merges a fingerprint-correlation result into the existing row, if any — unlike
-    /// <see cref="UpsertSeasonSegmentAsync"/> this never overwrites an existing chapter/anilist-sourced
-    /// segment (confidence 1.0, a real marker in the file) with a fingerprint guess, and leaves a segment
-    /// untouched (rather than nulling it) when fingerprinting itself found nothing confident enough —
-    /// a prior heuristic guess for that segment, hidden in the UI already, is harmless to leave behind.</summary>
-    public async Task<SeasonSkipSegment> UpsertFingerprintResultAsync(
+    /// <summary>Merges a Tier-3 (chromaprint / blackframe / silence) result into the existing row.
+    /// Never overwrites chapter/anilist segments. Sets <see cref="SeasonSkipSegment.DetectionSource"/>
+    /// when any Tier-3 segment is stored.</summary>
+    public async Task<SeasonSkipSegment> UpsertTier3ResultAsync(
         int showId, int seasonNumber,
-        (double Start, double End, double Confidence)? introResult,
-        // Outro carries both an absolute fallback (computed from whichever sampled episode's
-        // duration was known) and the duration-independent seconds-before-end pair — see
-        // SeasonSkipSegment doc. The fallback is only correct for episodes whose runtime
-        // matches the one used to compute it; serve-time resolution prefers SecondsBeforeEnd.
-        (double Start, double End, double Confidence, double SecondsBeforeEndStart, double SecondsBeforeEndEnd)? outroResult,
+        (double Start, double End, double Confidence, string Source)? introResult,
+        (double Start, double End, double Confidence, string Source, double SecondsBeforeEndStart, double SecondsBeforeEndEnd)? outroResult,
+        string? detectionSource,
         int sampleEpisodeCount,
         CancellationToken cancellationToken = default)
     {
@@ -123,23 +121,35 @@ public sealed class SkipSegmentsRepository
         var isNew = existing == null;
         existing ??= new SeasonSkipSegment { ShowId = showId, SeasonNumber = seasonNumber };
 
-        if (introResult is { } ir && existing.IntroSource != "chapter" && existing.IntroSource != "anilist")
+        static string IntroOutroSource(string tier3Source) => tier3Source switch
+        {
+            "chromaprint" => "fingerprint",
+            _ => tier3Source,
+        };
+
+        if (introResult is { } ir && existing.IntroSource is not ("chapter" or "anilist"))
         {
             existing.IntroStartSeconds = ir.Start;
             existing.IntroEndSeconds = ir.End;
             existing.IntroConfidence = ir.Confidence;
-            existing.IntroSource = "fingerprint";
+            existing.IntroSource = IntroOutroSource(ir.Source);
         }
 
-        if (outroResult is { } or && existing.OutroSource != "chapter" && existing.OutroSource != "anilist")
+        if (outroResult is { } or && existing.OutroSource is not ("chapter" or "anilist"))
         {
             existing.OutroStartSeconds = or.Start;
             existing.OutroEndSeconds = or.End;
             existing.OutroConfidence = or.Confidence;
-            existing.OutroSource = "fingerprint";
-            existing.OutroSecondsBeforeEndStart = or.SecondsBeforeEndStart;
-            existing.OutroSecondsBeforeEndEnd = or.SecondsBeforeEndEnd;
+            existing.OutroSource = IntroOutroSource(or.Source);
+            if (or.Source is "chromaprint" or "blackframe" or "silence")
+            {
+                existing.OutroSecondsBeforeEndStart = or.SecondsBeforeEndStart;
+                existing.OutroSecondsBeforeEndEnd = or.SecondsBeforeEndEnd;
+            }
         }
+
+        if (!string.IsNullOrEmpty(detectionSource))
+            existing.DetectionSource = detectionSource;
 
         existing.SampleEpisodeCount = Math.Max(existing.SampleEpisodeCount, sampleEpisodeCount);
         existing.ComputedAt = DateTime.UtcNow;
@@ -149,6 +159,39 @@ public sealed class SkipSegmentsRepository
 
         await _db.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
         return existing;
+    }
+
+    /// <summary>Clears Tier-3 fingerprint/visual detection so a rescan can re-run the job.
+    /// Chapter/anilist segments are left intact.</summary>
+    public async Task ClearTier3DetectionAsync(int showId, int seasonNumber,
+        CancellationToken cancellationToken = default)
+    {
+        var existing = await _db.SeasonSkipSegments
+            .FirstOrDefaultAsync(s => s.ShowId == showId && s.SeasonNumber == seasonNumber, cancellationToken)
+            .ConfigureAwait(false);
+        if (existing == null) return;
+
+        if (existing.IntroSource is "fingerprint" or "blackframe" or "silence")
+        {
+            existing.IntroStartSeconds = null;
+            existing.IntroEndSeconds = null;
+            existing.IntroConfidence = null;
+            existing.IntroSource = null;
+        }
+
+        if (existing.OutroSource is "fingerprint" or "blackframe" or "silence")
+        {
+            existing.OutroStartSeconds = null;
+            existing.OutroEndSeconds = null;
+            existing.OutroConfidence = null;
+            existing.OutroSource = null;
+            existing.OutroSecondsBeforeEndStart = null;
+            existing.OutroSecondsBeforeEndEnd = null;
+        }
+
+        existing.DetectionSource = null;
+        existing.ComputedAt = DateTime.UtcNow;
+        await _db.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
     }
 
     /// <summary>Insert or replace the override row for one episode (at most one per episode —

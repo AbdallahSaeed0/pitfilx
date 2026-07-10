@@ -43,4 +43,8 @@ public class SeasonSkipSegment
     /// <summary>How many episodes contributed to a fingerprint result. 0 for chapter/anilist/heuristic sources.</summary>
     public int SampleEpisodeCount { get; set; }
     public DateTime ComputedAt { get; set; }
+
+    /// <summary>Tier-3 diagnostic: "chromaprint" | "blackframe" | "silence" (chapter/anilist/heuristic
+    /// seasons leave this null). When non-null, the background fingerprint job skips re-detection.</summary>
+    public string? DetectionSource { get; set; }
 }

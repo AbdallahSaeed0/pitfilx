@@ -1,6 +1,6 @@
 import { useCallback, useRef, useState } from "react";
 
-const HOVER_DELAY_MS = 700;
+const HOVER_DELAY_MS = 3000;
 
 /**
  * Returns event handlers and open state for a "hover card" that appears after

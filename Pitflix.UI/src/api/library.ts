@@ -12,8 +12,9 @@ export type LibraryTitleRow = {
   id: number;
   title: string;
   year?: number | null;
-  /** Poster URL returned by the search endpoint (may be absent on older API versions). */
   posterUrl?: string | null;
+  overview?: string | null;
+  voteAverage?: number | null;
 };
 
 export const cleanupLibrary = () =>
@@ -67,6 +68,10 @@ export type RematchMovieResult = { success: boolean; libraryId?: number; error?:
 export const rematchMovieFromFile = (libraryId: number) =>
   api.post<RematchMovieResult>(`/library/movies/${libraryId}/rematch-from-file`).then((r) => r.data);
 
+/** Moves a movie's loose video file (and subtitle sidecars) into its own folder named after the movie. */
+export const wrapMovieFile = (libraryId: number) =>
+  api.post<WrapSeasonResult>(`/library/movies/${libraryId}/wrap-file`).then((r) => r.data);
+
 export const matchLibraryMovieTmdb = (libraryId: number, tmdbId: number) =>
   api
     .post<RematchMovieResult>(`/library/movies/${libraryId}/match-tmdb`, { tmdbId })
@@ -110,6 +115,19 @@ export const matchLibraryEpisodeTmdb = (episodeId: number, tmdbId: number) =>
 
 export const rematchEpisodeFromFile = (episodeId: number) =>
   api.post<RematchEpisodeResult>(`/library/episodes/${episodeId}/rematch-from-file`).then((r) => r.data);
+
+export type WrapSeasonResult = {
+  success: boolean;
+  message: string;
+  movedCount: number;
+  targetFolder: string | null;
+};
+
+/** Moves a season's loose episode files (and subtitle sidecars) into one folder named after the show. */
+export const wrapSeasonEpisodes = (showId: number, season: number) =>
+  api
+    .post<WrapSeasonResult>(`/library/series/${showId}/season/${season}/wrap-episodes`)
+    .then((r) => r.data);
 
 /** One NDJSON line from <c>POST /api/library/prefetch-metadata</c>. */
 export type PrefetchProgressLine =
@@ -240,7 +258,7 @@ export const refreshMovieMetadata = (libraryId: number) =>
 export const refreshShowMetadata = (libraryId: number) =>
   api.post<RefreshMetadataResult>(`/library/series/${libraryId}/refresh-metadata`).then((r) => r.data);
 
-export type LibraryWatchTargetResponse = { matched: boolean; movieId?: number; episodeId?: number };
+export type LibraryWatchTargetResponse = { matched: boolean; movieId?: number; showId?: number; episodeId?: number };
 
 /** Resolve TMDB id (+ S/E for TV) to a matched library row for updating watch status from online streaming. */
 export const getLibraryWatchTarget = (params: {

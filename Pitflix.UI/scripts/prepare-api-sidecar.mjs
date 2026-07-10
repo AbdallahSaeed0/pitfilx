@@ -61,6 +61,7 @@ function main() {
     "-p:IncludeNativeLibrariesForSelfExtract=true",
     "-p:IncludeAllContentForSelfExtract=true",
     "-p:PublishTrimmed=false",
+    "-p:EnableCompressionInSingleFile=true",
     "-p:DebugType=None",
     "-o",
     stage,

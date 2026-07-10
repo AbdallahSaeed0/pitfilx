@@ -1,0 +1,26 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "Pitflix.UI",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": ["run", "dev"],
+      "cwd": "Pitflix.UI",
+      "port": 4173,
+      "autoPort": true
+    },
+    {
+      "name": "tvtime-review",
+      "runtimeExecutable": "node",
+      "runtimeArgs": ["C:/Users/Abd Allah/Desktop/TVTime-vs-Letterboxd/server.js"],
+      "port": 4173
+    },
+    {
+      "name": "PitflixAndroid",
+      "runtimeExecutable": "flutter",
+      "runtimeArgs": ["run", "-d", "web-server", "--web-port", "5959"],
+      "cwd": "PitflixAndroid",
+      "port": 5959
+    }
+  ]
+}

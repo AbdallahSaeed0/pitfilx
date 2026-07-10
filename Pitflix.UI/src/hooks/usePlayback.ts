@@ -1,5 +1,4 @@
 import { isTauri, invoke } from "@tauri-apps/api/core";
-import { getCurrentWindow } from "@tauri-apps/api/window";
 import { useQueryClient } from "@tanstack/react-query";
 import { useAppPrefsStore } from "../store/appPrefsStore";
 import { useCallback, useEffect } from "react";
@@ -8,8 +7,8 @@ import api from "../api/client";
 import { addHistory, getHistory, historyStopped } from "../api/history";
 import { getSettings } from "../api/settings";
 import { playbackResumeHintsForKey } from "../playback/playbackApi";
-import { playMedia } from "../api/player";
-import type { PlaybackLaunchState, PlayerReturnTo } from "../types/playback";
+import { normalizePlayerEngine, usesPlayerPage } from "../playback/playerEngine";
+import type { LiveChannelEntry, PlaybackLaunchState, PlayerReturnTo } from "../types/playback";
 import { trustedResumeHeadFromRow, type HistoryResumeFields } from "../utils/trustedResume";
 
 let currentHistoryId: number | null = null;
@@ -61,6 +60,8 @@ export type PlayContext = {
   returnTo?: PlayerReturnTo;
   /** Omit from Continue watching strip; playback still resumes using full history fetch. */
   suppressContinueWatching?: boolean;
+  /** Full ordered list of live IPTV channels — populates the in-player channel playlist. */
+  liveChannels?: LiveChannelEntry[];
 };
 
 export function usePlayback() {
@@ -85,73 +86,79 @@ export function usePlayback() {
       currentHistoryId = null;
       perfLog("play:start");
 
-      const historyRows = (await getHistory(200, { includeSuppressed: true, lite: true })) as HistoryResumeFields[];
-      perfLog("getHistory:done");
-      const inferredResume = findResumeSeconds(historyRows, filePath);
-      const preferred = Number.isFinite(preferredResumeSeconds ?? NaN) ? Math.max(0, preferredResumeSeconds ?? 0) : 0;
-
-      let localCheckpoint = 0;
-      if (isTauri()) {
-        const key =
-          context.libraryEpisodeId != null && context.libraryEpisodeId > 0
-            ? `ep:${context.libraryEpisodeId}`
-            : `file:${normalizePath(filePath)}`;
-        try {
-          const hints = await playbackResumeHintsForKey(key);
-          if (hints.shouldOfferResume && Number.isFinite(hints.resumeSeconds)) {
-            localCheckpoint = Math.floor(Math.max(0, hints.resumeSeconds));
-          }
-        } catch {
-          /* POL / disk optional */
-        }
-      }
-      perfLog("resumeHints:done");
-
-      // Priority: explicit caller override > local disk checkpoint (most recent stop) > server inferred.
-      // Do NOT take Math.max — that would ignore intentional rewinds by always picking the highest position.
-      const resume = preferred > 0 ? preferred : localCheckpoint > 0 ? localCheckpoint : inferredResume;
-      if (import.meta.env.DEV) {
-        console.debug("[playback-resume]", {
-          filePath: normalizePath(filePath),
-          preferred,
-          inferredResume,
-          localCheckpoint,
-          chosen: resume,
-        });
-      }
-      // 10 s threshold: ignore near-zero positions (file just opened, no real progress),
-      // but always honour explicit seeks even if they land under 1 minute.
-      const startSeconds = resume > 10 ? resume : undefined;
-
-      const { id } = (await addHistory({
+      // getHistory/addHistory/getSettings don't depend on each other's results — fire them
+      // concurrently instead of one after another to shave latency off every play() call.
+      const historyPromise = getHistory(200, { includeSuppressed: true, lite: true }) as Promise<
+        HistoryResumeFields[]
+      >;
+      const addHistoryPromise = addHistory({
         filePath,
         title,
         posterPath: posterPath ?? undefined,
         mediaType,
         durationSeconds,
         ...(context.suppressContinueWatching === true ? { suppressContinueWatching: true } : {}),
-      })) as { id: number };
+      }) as Promise<{ id: number }>;
+      const settingsPromise = getSettings();
+
+      const preferred = Number.isFinite(preferredResumeSeconds ?? NaN) ? Math.max(0, preferredResumeSeconds ?? 0) : 0;
+
+      // When the caller already knows where to resume (the "Resume from X:XX" modal, or an
+      // explicit Start Over), skip waiting on history/resume-hint lookups entirely — they'd
+      // only be used to derive a value we're about to override anyway.
+      let resume = preferred;
+      if (preferred <= 0) {
+        const resumeHintsPromise =
+          isTauri()
+            ? playbackResumeHintsForKey(
+                context.libraryEpisodeId != null && context.libraryEpisodeId > 0
+                  ? `ep:${context.libraryEpisodeId}`
+                  : `file:${normalizePath(filePath)}`,
+              ).catch(() => null)
+            : Promise.resolve(null);
+
+        const [historyRows, hints] = await Promise.all([historyPromise, resumeHintsPromise]);
+        perfLog("history+resumeHints:done");
+        const inferredResume = findResumeSeconds(historyRows, filePath);
+        const localCheckpoint =
+          hints?.shouldOfferResume && Number.isFinite(hints.resumeSeconds)
+            ? Math.floor(Math.max(0, hints.resumeSeconds))
+            : 0;
+        // Priority: local disk checkpoint (most recent stop) > server inferred.
+        resume = localCheckpoint > 0 ? localCheckpoint : inferredResume;
+        if (import.meta.env.DEV) {
+          console.debug("[playback-resume]", {
+            filePath: normalizePath(filePath),
+            preferred,
+            inferredResume,
+            localCheckpoint,
+            chosen: resume,
+          });
+        }
+      } else {
+        perfLog("resume:preferred-fast-path");
+      }
+      // 10 s threshold: ignore near-zero positions (file just opened, no real progress),
+      // but always honour explicit seeks even if they land under 1 minute.
+      const startSeconds = resume > 10 ? resume : undefined;
+
+      const { id } = await addHistoryPromise;
 
       currentHistoryId = id;
       perfLog("addHistory:done");
 
-      const settings = await getSettings();
+      const settings = await settingsPromise;
       perfLog("getSettings:done");
       const useBuiltin = isTauri() && settings.useBuiltinPlayer !== false;
 
-      // Player-engine preference: localStorage-backed, default "pitflix".
-      // "pitflix"  → /api/player/play → PitflixPlayer (the new desktop window)
-      // "embedded" → skip the API and navigate straight to PlayerPage
-      // The setting is read each play so toggling in Settings takes effect
-      // instantly without a reload.
-      // Two supported engines: in-app libmpv (default) and the external mpv-with-scripts window.
-      // Stale localStorage values from earlier builds (pitflix2 / embedded) map to libmpv-embedded.
+      // Player-engine preference (Settings → Playback):
+      //   libmpv-embedded — video inside the app (PlayerPage + libmpv)
+      //   external-mpv    — detached mpv window + PlayerPage companion (episodes, shortcuts)
       const rawEngine =
         (typeof localStorage !== "undefined" && localStorage.getItem("pitflix-player-engine")) || "";
-      const playerEngine =
-        rawEngine === "pitflix" ? "pitflix" : "libmpv-embedded";
-      const forceEmbedded = playerEngine === "libmpv-embedded";
+      const playerEngine = normalizePlayerEngine(rawEngine);
       const useLibMpv = playerEngine === "libmpv-embedded";
+      const usePlayerPage = usesPlayerPage(playerEngine);
       const captureScrollForReturn = (): Pick<PlayerReturnTo, "scrollY" | "mainScrollTop"> => {
         if (typeof window === "undefined" || typeof document === "undefined") return {};
         const main = document.querySelector("main");
@@ -163,76 +170,7 @@ export function usePlayback() {
         };
       };
 
-      // ── New backend player service ──────────────────────────────────────────
-      // Try the ASP.NET player microservice first. addHistory() was already
-      // called above so the history row exists before this attempt.
-      // On any failure, fall through to the existing Tauri / external paths.
-      // SKIPPED entirely when the user has chosen the embedded engine in
-      // Settings (forceEmbedded), so they can test the React PlayerPage
-      // directly without needing to stop Pitflix.API.
-      if (!forceEmbedded) try {
-        perfLog("playMedia:start");
-        await playMedia({
-          filePath,
-          mediaId: context.libraryMovieId ?? context.libraryShowId ?? 0,
-          episodeId: context.libraryEpisodeId,
-          startPosition: startSeconds ?? 0,
-          player: playerEngine,   // "pitflix" | "pitflix2" → backend picks the companion exe
-        });
-        perfLog("playMedia:done (backend StartAsync returned — PitflixPlayer attach/mpv spawn happens next, outside this timeline)");
-        // Minimize the Tauri shell so the companion window is visible.
-        // Mirrors what player3_open does on the Rust side.
-        if (isTauri()) void getCurrentWindow().minimize();
-
-        void qc.invalidateQueries({ queryKey: ["home-history"] });
-        void qc.invalidateQueries({ queryKey: ["home-featured-fallback"] });
-        void qc.invalidateQueries({ predicate: (q) => q.queryKey[0] === "home-section" });
-        void qc.invalidateQueries({ queryKey: ["history"] });
-
-        // Refresh-on-close: Pitflix.API's PlayerService writes the user's
-        // final position into WatchHistory via SaveProgressToHistoryAsync the
-        // moment mpv exits (PitflixPlayer being closed → mpv exits → backend
-        // hook fires).  That means by the time the user is back in the React
-        // app, the DB already has the up-to-date resume position — but React
-        // Query is still serving the cached row from before they pressed
-        // Play.  Without this, "Continue Watching" shows the OLD minute
-        // until the user manually refreshes the page (the user's reported
-        // bug).  Hook into the window-focus event: when the Tauri app
-        // regains focus (which happens automatically when PitflixPlayer's
-        // window closes), invalidate every history-dependent query.  No
-        // historyStopped() call needed — backend has already persisted the
-        // final position.
-        clearPlaybackFocusListener();
-        const refreshOnReturn = () => {
-          clearPlaybackFocusListener();
-          // Restore the Tauri window when the companion closes and focus returns.
-          if (isTauri()) {
-            void getCurrentWindow().unminimize();
-            void getCurrentWindow().setFocus();
-          }
-          // PitflixPlayer's OnClosed calls /api/player/save-progress-now
-          // SYNCHRONOUSLY before its window closes — so by the time Tauri's
-          // main window regains focus and this listener fires, the WatchHistory
-          // row is already updated.  Use refetchQueries (which fires the
-          // network request immediately, even if no observers) instead of
-          // invalidateQueries (which just marks stale + observers re-fetch
-          // later) so Continue Watching snaps to the new minute the moment
-          // PitflixPlayer's window closes — sub-second update.
-          void qc.refetchQueries({ queryKey: ["home-history"] });
-          void qc.refetchQueries({ queryKey: ["home-watching-currently"] });
-          void qc.refetchQueries({ queryKey: ["home-featured-fallback"] });
-          void qc.refetchQueries({ predicate: (q) => q.queryKey[0] === "home-section" });
-          void qc.refetchQueries({ queryKey: ["history"] });
-        };
-        focusListener = refreshOnReturn;
-        window.addEventListener("focus", refreshOnReturn);
-        return;
-      } catch {
-        // new player service not available or failed — fall through to existing invoke() path
-      }
-      // ── End new player service ───────────────────────────────────────────────
-
-      if (useBuiltin) {
+      if (useBuiltin && usePlayerPage) {
         const scrollCapture = captureScrollForReturn();
         const launchState: PlaybackLaunchState = {
           historyId: id,
@@ -255,6 +193,7 @@ export function usePlayback() {
           },
           ...(context.suppressContinueWatching === true ? { suppressContinueWatching: true } : {}),
           ...(useLibMpv ? { useLibMpv: true } : {}),
+          ...(context.liveChannels?.length ? { liveChannels: context.liveChannels } : {}),
         };
         if (playerMode === "remote") {
           navigate("/player-remote", { state: launchState });

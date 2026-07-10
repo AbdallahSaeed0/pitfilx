@@ -62,8 +62,8 @@ public sealed class RatingsPersistedReadService
             ImdbRatingSource: InferImdbSource(s),
             RottenTomatoesCritics: s.RottenTomatoesCritics,
             RottenTomatoesAudience: s.RottenTomatoesAudience,
-            OmdbResolvedVia: "persisted",
-            OmdbMatchKind: wasSeeded ? "persisted_seeded" : "persisted",
+            SecondarySourceVia: "persisted",
+            SecondarySourceMatchKind: wasSeeded ? "persisted_seeded" : "persisted",
             FromSnapshot: true,
             IsStale: isStale);
 
@@ -72,8 +72,8 @@ public sealed class RatingsPersistedReadService
         if (string.IsNullOrWhiteSpace(s.ImdbRating))
             return null;
         var m = s.SourceMask;
-        if ((m & RatingsSourceMask.Omdb) != 0)
-            return "omdb";
+        if ((m & RatingsSourceMask.Mdblist) != 0)
+            return "mdblist";
         if ((m & RatingsSourceMask.PhpImdb) != 0)
             return "php-imdb-detail";
         return "tmdb";

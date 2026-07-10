@@ -14,8 +14,13 @@ export type PitflixSettings = {
   tmdbApiKey: string;
   openSubtitlesApiKey?: string;
   subDlApiKey?: string;
+  subSourceApiKey?: string;
   mdblistApiKey?: string;
   tvdbApiKey?: string;
+  letterboxdUsername?: string;
+  qbittorrentBaseUrl?: string;
+  qbittorrentUsername?: string;
+  qbittorrentPassword?: string;
   libraryPaths: string[];
   /** Folders scanned automatically every ~2 minutes (in addition to the hourly full library pass). */
   pinnedScanPaths?: string[];
@@ -29,6 +34,10 @@ export type PitflixSettings = {
   useBuiltinPlayer?: boolean;
   /** How the built-in player opens: 'detached' (default) = separate mpv window; 'embedded' = mpv inside the app window. */
   playerMode?: 'detached' | 'embedded';
+  /** Embedded-player HDR mode. 'auto' (default) tonemaps unless capability + OS HDR are both on. */
+  hdrMode?: 'auto' | 'true_hdr' | 'tonemap_sdr';
+  /** Embedded-player Dolby/DTS audio passthrough. Off by default. */
+  audioPassthrough?: boolean;
   /** When true (default), show corner toasts when pinned/hourly auto-scan matches or flags a file. */
   libraryScanDesktopToasts?: boolean;
   setupComplete?: boolean;
@@ -62,13 +71,20 @@ export const saveSettings = (body: {
   openSubtitlesApiKey?: string;
   openSubtitlesAppName?: string;
   subDlApiKey?: string;
+  subSourceApiKey?: string;
   mdblistApiKey?: string;
   tvdbApiKey?: string;
+  letterboxdUsername?: string;
+  qbittorrentBaseUrl?: string;
+  qbittorrentUsername?: string;
+  qbittorrentPassword?: string;
   libraryPaths?: string[];
   mediaPlayerPath?: string;
   useBuiltinPlayer?: boolean;
   playerMode?: 'detached' | 'embedded';
   libraryScanDesktopToasts?: boolean;
+  hdrMode?: 'auto' | 'true_hdr' | 'tonemap_sdr';
+  audioPassthrough?: boolean;
 }) => api.post("/settings", body).then((r) => r.data);
 
 export const addLibraryPath = (path: string) =>
@@ -102,6 +118,11 @@ export const verifyOpenSubtitlesKey = (key: string) =>
 export const verifySubDlKey = (key: string) =>
   api
     .get<{ valid: boolean; error?: string | null }>("/settings/verify-subdl", { params: { key } })
+    .then((r) => r.data);
+
+export const verifySubSourceKey = (key: string) =>
+  api
+    .get<{ valid: boolean; error?: string | null }>("/settings/verify-subsource", { params: { key } })
     .then((r) => r.data);
 
 export const verifyMdblistKey = (key: string) =>

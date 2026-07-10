@@ -1,0 +1,3 @@
+httpx
+pydantic
+serializd-py @ git+https://github.com/Velocidensity/serializd-py

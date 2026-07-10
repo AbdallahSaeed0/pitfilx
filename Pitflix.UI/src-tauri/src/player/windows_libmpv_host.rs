@@ -55,6 +55,7 @@ enum LibMpvStateDelta {
   TimePos(f64),
   Duration(f64),
   Volume(f64),
+  EofReached,
 }
 
 fn parse_libmpv_property_change(prop: &mpv_event_property) -> Option<LibMpvStateDelta> {
@@ -105,6 +106,16 @@ fn parse_libmpv_property_change(prop: &mpv_event_property) -> Option<LibMpvState
       let v = unsafe { *(data_ptr as *const f64) };
       v.is_finite().then_some(LibMpvStateDelta::Volume(v))
     }
+    "eof-reached" => {
+      if data_ptr.is_null() || fmt == mpv_format::MPV_FORMAT_NONE as i32 {
+        return None;
+      }
+      if fmt != mpv_format::MPV_FORMAT_FLAG as i32 {
+        return None;
+      }
+      let v = unsafe { *(data_ptr as *const i32) } != 0;
+      v.then_some(LibMpvStateDelta::EofReached)
+    }
     _ => None,
   }
 }
@@ -137,6 +148,12 @@ fn spawn_libmpv_state_apply_thread(
           }
           LibMpvStateDelta::Volume(v) => {
             st.volume = v;
+          }
+          LibMpvStateDelta::EofReached => {
+            st.ended = true;
+            st.paused = true;
+            st.playing = false;
+            st.loading = false;
           }
         }
         st.clone()
@@ -272,6 +289,8 @@ pub fn create_embedded_libmpv_session(
   // which corrupts the stack → STATUS_STACK_BUFFER_OVERRUN.
   let _ = mpv.set_option_string("vo", "libmpv");
   let _ = mpv.set_option_string("hwdec", "no");
+  let _ = mpv.set_option_string("keep-open", "yes");
+  let _ = mpv.set_option_string("keep-open-pause", "yes");
 
   // 3b) Now initialize mpv core (render ctx exists).
   mpv.initialize()?;
@@ -288,6 +307,7 @@ pub fn create_embedded_libmpv_session(
   mpv.observe_property(2, "time-pos", mpv_format::MPV_FORMAT_DOUBLE)?;
   mpv.observe_property(3, "duration", mpv_format::MPV_FORMAT_DOUBLE)?;
   mpv.observe_property(4, "volume", mpv_format::MPV_FORMAT_DOUBLE)?;
+  mpv.observe_property(10, "eof-reached", mpv_format::MPV_FORMAT_FLAG)?;
   // Episode nav / uOSC buttons set `user-data/pitflix-shortcut` from Lua — mirror external IPC bridge.
   mpv.observe_property(12, "user-data/pitflix-shortcut", mpv_format::MPV_FORMAT_STRING)?;
   mpv.observe_property(99, "video-params", mpv_format::MPV_FORMAT_NODE)?;
@@ -406,11 +426,15 @@ pub fn create_embedded_libmpv_session(
             PlayerCommand::SetPaused(v) => {
               let _ = mpv_ev.set_pause(v);
             }
-            PlayerCommand::SeekRelative(sec) => {
-              let _ = mpv_ev.command(&["seek", &format!("{}", sec), "relative"]);
+            PlayerCommand::SeekRelative { seconds, exact } => {
+              // "exact" forces a precise decode-to-position seek instead of mpv's
+              // default keyframe-snapping, which on long-GOP 10-bit HEVC rips can
+              // overshoot a "5 second" nudge by several seconds. Caller decides.
+              let precision = if exact { "exact" } else { "keyframes" };
+              let _ = mpv_ev.command(&["seek", &format!("{}", seconds), "relative", precision]);
             }
             PlayerCommand::SeekAbsolute(sec) => {
-              let _ = mpv_ev.command(&["seek", &format!("{}", sec), "absolute"]);
+              let _ = mpv_ev.command(&["seek", &format!("{}", sec), "absolute", "exact"]);
             }
             PlayerCommand::SetVolume(v) => {
               let _ = mpv_ev.command(&["set_property", "volume", &format!("{}", v)]);

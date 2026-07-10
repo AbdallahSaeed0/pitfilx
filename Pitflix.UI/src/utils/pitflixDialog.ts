@@ -1,19 +1,7 @@
-import { isTauri } from "@tauri-apps/api/core";
-import { confirm } from "@tauri-apps/plugin-dialog";
+import { usePitflixConfirmStore } from "../store/pitflixConfirmStore";
 
-/** Native-style OK/Cancel when running in Tauri (matches Windows “Pitflix” dialog); falls back to `confirm` in the browser. */
-export async function pitflixConfirm(message: string): Promise<boolean> {
-  if (isTauri()) {
-    try {
-      return await confirm(message, {
-        title: "Pitflix",
-        kind: "info",
-        okLabel: "OK",
-        cancelLabel: "Cancel",
-      });
-    } catch {
-      return window.confirm(message);
-    }
-  }
-  return window.confirm(message);
+/** Themed in-app OK/Cancel prompt (renders via `<PitflixConfirmHost />` in `MainLayout`),
+ * matching the app's own dialog style instead of a native OS message box. */
+export function pitflixConfirm(message: string): Promise<boolean> {
+  return usePitflixConfirmStore.getState().ask(message);
 }

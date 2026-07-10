@@ -46,6 +46,10 @@
 
   <ItemGroup>
     <!-- Embed the icon as a WPF resource so Window.Icon can reference it -->
-    <Resource Include="PitflixPlayer.ico"/>
+    <Resource Include="PitflixPlayer.ico" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="System.Drawing.Common" Version="8.0.0" />
   </ItemGroup>
 </Project>

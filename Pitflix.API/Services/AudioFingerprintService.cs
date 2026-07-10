@@ -10,64 +10,27 @@ namespace Pitflix.API.Services;
 /// no embedded chapters (the common case for unscripted/documentary shows like the one that
 /// originally surfaced this gap).
 ///
-/// Implementation history (the spec asked this judgment call to be documented, and it changed
-/// once real testing started, so the "why" is worth keeping):
-///
-/// v1 correlated raw 4kHz PCM samples directly. Real-world testing on Game of Thrones showed
-/// two problems: (a) independently-encoded episode files drift by a fraction of a second, not
-/// a whole one, capping whole-second-granularity correlation at ~0.55 when the true alignment
-/// (found by manually testing with numpy outside the app) scored 0.85; (b) even after fixing
-/// that, raw-amplitude correlation is sensitive to per-file gain/mastering differences that
-/// have nothing to do with whether the content is actually the same.
-///
-/// v2 (current) correlates a normalized RMS-energy envelope instead — 50ms frames, z-scored
-/// over the whole clip so absolute loudness/mastering differences between files cancel out.
-/// This also happens to dissolve problem (a): a 50ms frame already absorbs the sub-second
-/// drift that needed a dedicated fine-grained search pass in v1, so that pass is gone. The
-/// envelope is ~400x smaller than raw PCM for the same clip, which is what makes a much wider
-/// lag search (handling shows with long, variable "Previously on..." recaps before the title
-/// sequence) computationally affordable instead of needing yet another optimization pass.
-///
-/// Still not chromaprint/fpcalc — nothing in this codebase depends on it, and an energy
-/// envelope is enough to answer "is this region of audio the same in episode A and episode B,"
-/// which is all an intro/outro reuse signal needs to be.
+/// Tier 3 tries, per segment independently: chromaprint (energy-envelope correlation) →
+/// black-frame detection → silence detection. Visual signals live in
+/// <see cref="SkipSignalDetector"/>.
 /// </summary>
 public sealed class AudioFingerprintService
 {
     private const int SampleRate = 4000;
-    private const double HeadClipSeconds = 300;
-    // Real-world testing found outro matches getting truncated right at the 300s clip
-    // boundary (start=0.0 for two different episodes — a clipping artifact, not real
-    // agreement) because the actual credits run longer than 300s for some episodes once
-    // post-credits/teaser content is included. Tail gets more headroom than head.
+    // Intro correlation only needs the opening — searching 300s let false "Previously on"
+    // matches at ~3min beat the real title sequence near the start (GoT S1 testing).
+    private const double HeadIntroClipSeconds = 180;
     private const double TailClipSeconds = 450;
 
-    // Envelope: RMS energy per 50ms frame, z-score normalized over the whole clip.
     private const double EnvelopeFrameSeconds = 0.05;
-    private static readonly int EnvelopeRate = (int)Math.Round(1.0 / EnvelopeFrameSeconds); // 20 frames/sec
+    private static readonly int EnvelopeRate = (int)Math.Round(1.0 / EnvelopeFrameSeconds);
 
     private const double WindowSeconds = 5;
     private const double StepSeconds = 1;
-    // Now searched at full envelope resolution (no separate coarse/fine pass needed — see
-    // class doc) and wide enough to cover a multi-minute cold-open/recap before the title
-    // sequence, since the envelope is cheap enough to afford it.
     private const double LagSearchSeconds = 150;
 
-    // Recalibrated for envelope-domain correlation, which behaves differently than raw-PCM
-    // correlation — these are starting points pending real-world testing, not final values.
     private const double MatchCorrelationThreshold = 0.6;
-    // Was 8s, then 20s. Real-world testing against actual playback (not just correlation
-    // scores) found a confident, well-correlated (corr 0.98-1.00) 27s match that was 144s away
-    // from the real intro and 243s away from the real credits — strong correlation only proves
-    // "this exact audio repeats across episodes," not that it's the actual title sequence. A
-    // real TV title sequence is a long structural unit (GoT's is ~95s); 60s is still short of
-    // that but well above any short sting/ident/transition cue that could coincidentally repeat.
     private const double MinMatchSeconds = 60;
-    // Real TV title sequences and credits rolls don't run past ~2 minutes — a "match" longer
-    // than this is almost certainly two distinct matching bursts stitched together by gap
-    // tolerance (confirmed: episode 5 correctly resolved to a clean [0-102s] run matching the
-    // real intro almost exactly, while episodes 2-4 produced 161-278s runs that don't correspond
-    // to anything real). Reject rather than trust an implausibly long run.
     private const double MaxMatchSeconds = 130;
     private const double ConfidenceThreshold = 0.75;
     private const int MinSampleEpisodes = 3;
@@ -85,6 +48,15 @@ public sealed class AudioFingerprintService
 
     public async Task RunForSeasonAsync(int showId, int seasonNumber, CancellationToken ct)
     {
+        var existing = await _repo.GetSeasonSegmentAsync(showId, seasonNumber, ct).ConfigureAwait(false);
+        if (!string.IsNullOrEmpty(existing?.DetectionSource))
+        {
+            _logger.LogDebug(
+                "Skip fingerprinting: skipping ShowId={ShowId} Season={Season} — DetectionSource={Source} already set",
+                showId, seasonNumber, existing.DetectionSource);
+            return;
+        }
+
         var ffmpeg = ChapterDetectorService.ResolveFfmpeg();
         if (ffmpeg == null)
         {
@@ -93,29 +65,145 @@ public sealed class AudioFingerprintService
                 _warnedMissingFfmpeg = true;
                 _logger.LogWarning(
                     "Skip fingerprinting: ffmpeg not found on PATH — install it to enable audio-based " +
-                    "intro/outro detection for shows without embedded chapter markers. This is a new " +
-                    "dependency for this feature specifically; nothing else in the backend required it before.");
+                    "intro/outro detection for shows without embedded chapter markers.");
             }
             return;
         }
 
-        var episodes = (await _repo.GetSeasonEpisodesAsync(showId, seasonNumber, take: 5, ct).ConfigureAwait(false))
+        var sampleEpisodes = (await _repo.GetSeasonEpisodesAsync(showId, seasonNumber, take: 5, ct).ConfigureAwait(false))
             .Where(e => File.Exists(e.FilePath))
             .ToList();
-        if (episodes.Count < MinSampleEpisodes)
+        if (sampleEpisodes.Count < MinSampleEpisodes)
             return;
 
+        var chromaprint = await RunChromaprintCorrelationAsync(ffmpeg, showId, seasonNumber, sampleEpisodes, ct)
+            .ConfigureAwait(false);
+
+        var introResult = chromaprint.Intro;
+        var outroResult = chromaprint.Outro;
+        var introSource = introResult != null ? "chromaprint" : (string?)null;
+        var outroSource = outroResult != null ? "chromaprint" : (string?)null;
+
+        var needVisualSignals = introResult == null || outroResult == null;
+        if (needVisualSignals)
+        {
+            var seasonEpisodes = (await _repo.GetSeasonEpisodesAsync(showId, seasonNumber, take: 50, ct).ConfigureAwait(false))
+                .Where(e => File.Exists(e.FilePath))
+                .ToList();
+
+            if (seasonEpisodes.Count >= MinSampleEpisodes)
+            {
+                var detector = new SkipSignalDetector(_logger);
+                async Task<double?> ResolveDuration(Episode ep, CancellationToken token) =>
+                    await _repo.TryGetKnownDurationSecondsAsync(ep.FilePath, token).ConfigureAwait(false)
+                    ?? await ChapterDetectorService.GetDurationSecondsAsync(ep.FilePath, token).ConfigureAwait(false);
+
+                if (introResult == null || outroResult == null)
+                {
+                    var black = await detector.DetectBlackFramesForSeasonAsync(
+                        ffmpeg, seasonEpisodes, ResolveDuration, ct).ConfigureAwait(false);
+
+                    if (introResult == null && black.Intro is { } bi)
+                    {
+                        introResult = (bi.IntroStart, bi.IntroEnd, bi.Confidence);
+                        introSource = "blackframe";
+                        _logger.LogInformation(
+                            "Skip fingerprinting: blackframe intro ShowId={ShowId} Season={Season} [{Start:F1}-{End:F1}s conf={Conf:F2}]",
+                            showId, seasonNumber, bi.IntroStart, bi.IntroEnd, bi.Confidence);
+                    }
+
+                    if (outroResult == null && black.Outro is { } bo)
+                    {
+                        outroResult = await BuildOutroResultAsync(bo.OutroStart, bo.OutroEnd, bo.Confidence, seasonEpisodes, ct)
+                            .ConfigureAwait(false);
+                        outroSource = "blackframe";
+                        _logger.LogInformation(
+                            "Skip fingerprinting: blackframe outro ShowId={ShowId} Season={Season} start={Start:F1}s conf={Conf:F2}",
+                            showId, seasonNumber, bo.OutroStart, bo.Confidence);
+                    }
+                }
+
+                if (introResult == null || outroResult == null)
+                {
+                    var silence = await detector.DetectSilenceForSeasonAsync(
+                        ffmpeg, seasonEpisodes, ResolveDuration, ct).ConfigureAwait(false);
+
+                    if (introResult == null && silence.Intro is { } si)
+                    {
+                        introResult = (si.IntroStart, si.IntroEnd, si.Confidence);
+                        introSource = "silence";
+                        _logger.LogInformation(
+                            "Skip fingerprinting: silence intro ShowId={ShowId} Season={Season} [{Start:F1}-{End:F1}s conf={Conf:F2}]",
+                            showId, seasonNumber, si.IntroStart, si.IntroEnd, si.Confidence);
+                    }
+
+                    if (outroResult == null && silence.Outro is { } so)
+                    {
+                        outroResult = await BuildOutroResultAsync(so.OutroStart, so.OutroEnd, so.Confidence, seasonEpisodes, ct)
+                            .ConfigureAwait(false);
+                        outroSource = "silence";
+                        _logger.LogInformation(
+                            "Skip fingerprinting: silence outro ShowId={ShowId} Season={Season} start={Start:F1}s conf={Conf:F2}",
+                            showId, seasonNumber, so.OutroStart, so.Confidence);
+                    }
+                }
+            }
+        }
+
+        var introTier3 = introResult is { } ir
+            ? ((double, double, double, string)?)(ir.Start, ir.End, ir.Confidence, introSource!)
+            : null;
+        var outroTier3 = outroResult is { } or
+            ? ((double, double, double, string, double, double)?)(or.Start, or.End, or.Confidence, outroSource!, or.SecondsBeforeEndStart, or.SecondsBeforeEndEnd)
+            : null;
+
+        var detectionSource =
+            introSource == "chromaprint" || outroSource == "chromaprint" ? "chromaprint"
+            : introSource == "blackframe" || outroSource == "blackframe" ? "blackframe"
+            : introSource == "silence" || outroSource == "silence" ? "silence"
+            : null;
+
+        if (introTier3 == null && outroTier3 == null)
+        {
+            _logger.LogInformation(
+                "Skip fingerprinting: no confident intro/outro match for ShowId={ShowId} Season={Season} " +
+                "(sampled {Count} episodes) — storing the attempt so this season isn't re-queued every view.",
+                showId, seasonNumber, sampleEpisodes.Count);
+        }
+
+        await _repo.UpsertTier3ResultAsync(
+            showId, seasonNumber, introTier3, outroTier3, detectionSource, sampleEpisodes.Count, ct)
+            .ConfigureAwait(false);
+    }
+
+    private async Task<(double Start, double End, double Confidence, double SecondsBeforeEndStart, double SecondsBeforeEndEnd)?>
+        BuildOutroResultAsync(double outroStart, double outroEnd, double confidence, List<Episode> episodes, CancellationToken ct)
+    {
+        foreach (var ep in episodes)
+        {
+            var dur = await _repo.TryGetKnownDurationSecondsAsync(ep.FilePath, ct).ConfigureAwait(false)
+                ?? await ChapterDetectorService.GetDurationSecondsAsync(ep.FilePath, ct).ConfigureAwait(false);
+            if (dur is not { } d) continue;
+
+            var end = Math.Min(outroEnd, d);
+            if (!SkipSignalBoundingWindow.ValidateOutro(outroStart, end, d))
+                return null;
+
+            return (outroStart, end, confidence, d - outroStart, d - end);
+        }
+        return null;
+    }
+
+    private async Task<ChromaprintSeasonResult> RunChromaprintCorrelationAsync(
+        string ffmpeg, int showId, int seasonNumber, List<Episode> episodes, CancellationToken ct)
+    {
         var reference = episodes[0];
         var others = episodes.Skip(1).ToList();
 
-        var refHead = await ExtractEnvelopeAsync(ffmpeg, reference.FilePath, HeadClipSeconds, fromEnd: false, ct).ConfigureAwait(false);
+        var refHead = await ExtractEnvelopeAsync(ffmpeg, reference.FilePath, HeadIntroClipSeconds, fromEnd: false, ct).ConfigureAwait(false);
         var refTail = await ExtractEnvelopeAsync(ffmpeg, reference.FilePath, TailClipSeconds, fromEnd: true, ct).ConfigureAwait(false);
 
         var introCandidates = new List<(Episode Ep, double Start, double End)>();
-        // Coordinates here are "seconds from the start of the tail clip", i.e. distance from
-        // (duration - TailClipSeconds) — converted to an absolute timestamp per-episode using
-        // that episode's own duration (see SeasonSkipSegment.OutroSecondsBeforeEnd* doc — episode
-        // runtimes vary, so one shared conversion is wrong for episodes whose length differs).
         var outroCandidatesClipLocal = new List<(Episode Ep, double Start, double End)>();
 
         var refName = Path.GetFileName(reference.FilePath);
@@ -131,14 +219,14 @@ public sealed class AudioFingerprintService
 
             if (refHead != null)
             {
-                var head = await ExtractEnvelopeAsync(ffmpeg, ep.FilePath, HeadClipSeconds, fromEnd: false, ct).ConfigureAwait(false);
+                var head = await ExtractEnvelopeAsync(ffmpeg, ep.FilePath, HeadIntroClipSeconds, fromEnd: false, ct).ConfigureAwait(false);
                 if (head == null)
                 {
                     _logger.LogInformation("Skip fingerprinting: intro head extraction failed for {EpName}", epName);
                 }
                 else
                 {
-                    var attempt = FindMatchingRun(refHead, head);
+                    var attempt = FindMatchingRun(refHead, head, preferEarliestQualifyingRun: true);
                     _logger.LogInformation(
                         "Skip fingerprinting: intro vs {EpName} bestCorr={BestCorr:F2} atPos={BestPos:F1}s longestRun={RunSec:F1}s matched={Matched} start={Start:F1} end={End:F1}",
                         epName, attempt.BestCorrelation, attempt.BestPositionSeconds, attempt.LongestRunSeconds, attempt.Matched, attempt.Start, attempt.End);
@@ -168,18 +256,22 @@ public sealed class AudioFingerprintService
         if (refTail == null) _logger.LogInformation("Skip fingerprinting: reference outro tail extraction failed for {RefName}", refName);
 
         var totalOthers = others.Count;
+        var refDuration = await _repo.TryGetKnownDurationSecondsAsync(reference.FilePath, ct).ConfigureAwait(false)
+            ?? await ChapterDetectorService.GetDurationSecondsAsync(reference.FilePath, ct).ConfigureAwait(false)
+            ?? await FirstKnownDurationAsync(others, ct).ConfigureAwait(false)
+            ?? HeadIntroClipSeconds;
 
-        // ── Intro: cluster, and write a per-episode override for anyone outside the cluster
-        // rather than silently dropping a genuinely different (but real) measurement — e.g. an
-        // episode with a shorter cold-open than the rest of the season.
-        var introCluster = FindLargestCluster(introCandidates);
-        var introResult = SummarizeCluster(introCluster, totalOthers);
+        var introCluster = FindBestIntroCluster(introCandidates);
+        var introSummary = SummarizeCluster(introCluster, totalOthers);
         _logger.LogInformation(
             "Skip fingerprinting: intro candidates={Count} result={Result}",
-            introCandidates.Count, introResult is { } ir ? $"[{ir.Start:F1}-{ir.End:F1}s conf={ir.Confidence:F2}]" : "null");
+            introCandidates.Count, introSummary is { } ir ? $"[{ir.Start:F1}-{ir.End:F1}s conf={ir.Confidence:F2}]" : "null");
 
-        if (introResult != null)
+        (double Start, double End, double Confidence)? introResult = null;
+        if (introSummary is { } intro && intro.Confidence >= ConfidenceThreshold
+            && SkipSignalBoundingWindow.ValidateIntro(intro.Start, intro.End, refDuration))
         {
+            introResult = (intro.Start, intro.End, intro.Confidence);
             foreach (var outlier in introCandidates.Where(c => !introCluster.Contains(c)))
             {
                 await _repo.UpsertEpisodeOverrideAsync(new EpisodeSkipOverride
@@ -191,13 +283,16 @@ public sealed class AudioFingerprintService
                 }, ct).ConfigureAwait(false);
                 _logger.LogInformation(
                     "Skip fingerprinting: intro override for EpisodeId={EpisodeId} ({EpName}) — measured [{Start:F1}-{End:F1}s], season cluster says [{ClusterStart:F1}-{ClusterEnd:F1}s]",
-                    outlier.Ep.Id, Path.GetFileName(outlier.Ep.FilePath), outlier.Start, outlier.End, introResult.Value.Start, introResult.Value.End);
+                    outlier.Ep.Id, Path.GetFileName(outlier.Ep.FilePath), outlier.Start, outlier.End, intro.Start, intro.End);
             }
         }
+        else if (introSummary != null)
+        {
+            _logger.LogInformation(
+                "Skip fingerprinting: intro rejected — confidence={Conf:F2} or outside bounding window (runtime={Dur:F0}s)",
+                introSummary.Value.Confidence, refDuration);
+        }
 
-        // ── Outro: same clustering, but the cluster's (Start, End) are clip-local — convert to
-        // seconds-before-end (duration-independent) for the season row, and to an absolute
-        // per-episode override for anyone outside the cluster, using each outlier's own duration.
         (double Start, double End, double Confidence, double SecondsBeforeEndStart, double SecondsBeforeEndEnd)? outroResult = null;
         var outroCluster = FindLargestCluster(outroCandidatesClipLocal);
         var outroClusterSummary = SummarizeCluster(outroCluster, totalOthers);
@@ -205,54 +300,59 @@ public sealed class AudioFingerprintService
             "Skip fingerprinting: outro candidates={Count} clipLocalResult={Result}",
             outroCandidatesClipLocal.Count, outroClusterSummary is { } oc ? $"[{oc.Start:F1}-{oc.End:F1}s conf={oc.Confidence:F2}]" : "null");
 
-        if (outroClusterSummary != null)
+        if (outroClusterSummary is { } outro && outro.Confidence >= ConfidenceThreshold)
         {
-            var secondsBeforeEndStart = TailClipSeconds - outroClusterSummary.Value.Start;
-            var secondsBeforeEndEnd = TailClipSeconds - outroClusterSummary.Value.End;
+            var secondsBeforeEndStart = TailClipSeconds - outro.Start;
+            var secondsBeforeEndEnd = TailClipSeconds - outro.End;
+            var duration = refDuration;
+            var absoluteStart = Math.Max(0, duration - TailClipSeconds) + outro.Start;
+            var absoluteEnd = Math.Max(0, duration - TailClipSeconds) + outro.End;
 
-            var duration = await _repo.TryGetKnownDurationSecondsAsync(reference.FilePath, ct).ConfigureAwait(false)
-                ?? await FirstKnownDurationAsync(others, ct).ConfigureAwait(false);
-            // Absolute fallback (used only until an episode's own duration is resolvable at
-            // serve time) — computed from whatever duration happened to be known here.
-            var absoluteStart = duration is { } d ? Math.Max(0, d - TailClipSeconds) + outroClusterSummary.Value.Start : 0;
-            var absoluteEnd = duration is { } d2 ? Math.Max(0, d2 - TailClipSeconds) + outroClusterSummary.Value.End : 0;
-
-            outroResult = (absoluteStart, absoluteEnd, outroClusterSummary.Value.Confidence, secondsBeforeEndStart, secondsBeforeEndEnd);
-
-            foreach (var outlier in outroCandidatesClipLocal.Where(c => !outroCluster.Contains(c)))
+            if (SkipSignalBoundingWindow.ValidateOutro(absoluteStart, absoluteEnd, duration))
             {
-                var epDuration = await _repo.TryGetKnownDurationSecondsAsync(outlier.Ep.FilePath, ct).ConfigureAwait(false)
-                    ?? await ChapterDetectorService.GetDurationSecondsAsync(outlier.Ep.FilePath, ct).ConfigureAwait(false);
-                if (epDuration is not { } epDur) continue; // can't place this episode's outro absolutely — leave it on the (wrong-for-it) season fallback rather than guess further
-
-                var clipOffset = Math.Max(0, epDur - TailClipSeconds);
-                var epStart = clipOffset + outlier.Start;
-                var epEnd = clipOffset + outlier.End;
-
-                await _repo.UpsertEpisodeOverrideAsync(new EpisodeSkipOverride
+                outroResult = (absoluteStart, absoluteEnd, outro.Confidence, secondsBeforeEndStart, secondsBeforeEndEnd);
+                foreach (var outlier in outroCandidatesClipLocal.Where(c => !outroCluster.Contains(c)))
                 {
-                    EpisodeId = outlier.Ep.Id,
-                    OutroStartSeconds = epStart,
-                    OutroEndSeconds = epEnd,
-                    Source = "validation_mismatch",
-                }, ct).ConfigureAwait(false);
+                    var epDuration = await _repo.TryGetKnownDurationSecondsAsync(outlier.Ep.FilePath, ct).ConfigureAwait(false)
+                        ?? await ChapterDetectorService.GetDurationSecondsAsync(outlier.Ep.FilePath, ct).ConfigureAwait(false);
+                    if (epDuration is not { } epDur) continue;
+
+                    var clipOffset = Math.Max(0, epDur - TailClipSeconds);
+                    var epStart = clipOffset + outlier.Start;
+                    var epEnd = clipOffset + outlier.End;
+
+                    await _repo.UpsertEpisodeOverrideAsync(new EpisodeSkipOverride
+                    {
+                        EpisodeId = outlier.Ep.Id,
+                        OutroStartSeconds = epStart,
+                        OutroEndSeconds = epEnd,
+                        Source = "validation_mismatch",
+                    }, ct).ConfigureAwait(false);
+                    _logger.LogInformation(
+                        "Skip fingerprinting: outro override for EpisodeId={EpisodeId} ({EpName}) — measured [{Start:F1}-{End:F1}s] using its own duration={Dur:F0}s",
+                        outlier.Ep.Id, Path.GetFileName(outlier.Ep.FilePath), epStart, epEnd, epDur);
+                }
+            }
+            else
+            {
                 _logger.LogInformation(
-                    "Skip fingerprinting: outro override for EpisodeId={EpisodeId} ({EpName}) — measured [{Start:F1}-{End:F1}s] using its own duration={Dur:F0}s",
-                    outlier.Ep.Id, Path.GetFileName(outlier.Ep.FilePath), epStart, epEnd, epDur);
+                    "Skip fingerprinting: outro rejected — outside bounding window (runtime={Dur:F0}s, start={Start:F1}s)",
+                    duration, absoluteStart);
             }
         }
-
-        if (introResult == null && outroResult == null)
+        else if (outroClusterSummary != null)
         {
             _logger.LogInformation(
-                "Skip fingerprinting: no confident intro/outro match for ShowId={ShowId} Season={Season} " +
-                "(sampled {Count} episodes) — storing the attempt so this season isn't re-queued every view.",
-                showId, seasonNumber, episodes.Count);
+                "Skip fingerprinting: outro rejected — confidence={Conf:F2}",
+                outroClusterSummary.Value.Confidence);
         }
 
-        await _repo.UpsertFingerprintResultAsync(showId, seasonNumber, introResult, outroResult, episodes.Count, ct)
-            .ConfigureAwait(false);
+        return new ChromaprintSeasonResult(introResult, outroResult);
     }
+
+    private readonly record struct ChromaprintSeasonResult(
+        (double Start, double End, double Confidence)? Intro,
+        (double Start, double End, double Confidence, double SecondsBeforeEndStart, double SecondsBeforeEndEnd)? Outro);
 
     private async Task<int?> FirstKnownDurationAsync(List<Episode> episodes, CancellationToken ct)
     {
@@ -264,10 +364,6 @@ public sealed class AudioFingerprintService
         return null;
     }
 
-    /// <summary>Decodes a <paramref name="clipSeconds"/>-long clip (from the start, or from
-    /// end-of-file via ffmpeg's <c>-sseof</c>) to mono 4kHz PCM, then reduces it to a normalized
-    /// RMS-energy envelope (see class doc). Never throws — returns null on any failure (missing
-    /// audio track, corrupt file, ffmpeg timeout, etc.).</summary>
     private static async Task<double[]?> ExtractEnvelopeAsync(string ffmpeg, string filePath, double clipSeconds, bool fromEnd, CancellationToken ct)
     {
         try
@@ -317,13 +413,10 @@ public sealed class AudioFingerprintService
                 envelope[f] = Math.Sqrt(sumSq / frameLen);
             }
 
-            // Z-score normalize over the whole clip so absolute loudness/mastering differences
-            // between files (different encode batches, different normalization passes) don't
-            // affect correlation — only the shape of the energy contour over time matters.
             var mean = envelope.Average();
             var variance = envelope.Sum(v => (v - mean) * (v - mean)) / envelope.Length;
             var std = Math.Sqrt(variance);
-            if (std < 1e-9) return null; // dead silence / no dynamic range — nothing to correlate
+            if (std < 1e-9) return null;
             for (var f = 0; f < envelope.Length; f++)
                 envelope[f] = (envelope[f] - mean) / std;
 
@@ -335,26 +428,14 @@ public sealed class AudioFingerprintService
         }
     }
 
-    /// <summary>Diagnostic result of one clip-vs-clip comparison — kept even on a miss so the
-    /// caller can log how close it got (best correlation seen, longest run found) instead of
-    /// just pass/fail.</summary>
     private readonly record struct MatchAttempt(double BestCorrelation, double BestPositionSeconds, double LongestRunSeconds, double? Start, double? End)
     {
         public bool Matched => Start is not null;
     }
 
-    // Was 1 window (1s), then 5s. 5s correctly recovered a clean, accurate match for one episode
-    // (the real ~102s intro) but over-merged for three others into 161-278s runs spanning past
-    // the real title sequence into unrelated content. 3s splits the difference — combined with
-    // MaxMatchSeconds rejecting anything that still ends up implausibly long despite that.
     private const int MaxGapWindows = 3;
 
-    /// <summary>Slides a <see cref="WindowSeconds"/> window across both energy envelopes (full
-    /// ±<see cref="LagSearchSeconds"/> lag search at native 50ms envelope resolution — cheap
-    /// enough at this scale that no separate coarse/fine pass is needed) and returns the
-    /// longest contiguous run of windows whose correlation clears
-    /// <see cref="MatchCorrelationThreshold"/>, if it's at least <see cref="MinMatchSeconds"/> long.</summary>
-    private static MatchAttempt FindMatchingRun(double[] a, double[] b)
+    private static MatchAttempt FindMatchingRun(double[] a, double[] b, bool preferEarliestQualifyingRun = false)
     {
         var len = Math.Min(a.Length, b.Length);
         var windowLen = (int)(WindowSeconds * EnvelopeRate);
@@ -381,8 +462,7 @@ public sealed class AudioFingerprintService
             matched.Add(best >= MatchCorrelationThreshold);
         }
 
-        var bestRunStart = -1;
-        var bestRunLen = 0;
+        var qualifyingRuns = new List<(double Start, double End)>();
         var curStart = -1;
         var curLen = 0;
         var gapWindows = 0;
@@ -401,21 +481,32 @@ public sealed class AudioFingerprintService
             }
             else
             {
-                if (curLen > bestRunLen) { bestRunLen = curLen; bestRunStart = curStart; }
+                TryAddQualifyingRun(qualifyingRuns, positions, curStart, curLen);
                 curStart = -1;
                 curLen = 0;
                 gapWindows = 0;
             }
         }
-        if (curLen > bestRunLen) { bestRunLen = curLen; bestRunStart = curStart; }
+        TryAddQualifyingRun(qualifyingRuns, positions, curStart, curLen);
 
-        if (bestRunStart < 0) return new MatchAttempt(overallBest, overallBestPos, 0, null, null);
-        var startSec = positions[bestRunStart];
-        var endSec = positions[bestRunStart + bestRunLen - 1] + WindowSeconds;
+        if (qualifyingRuns.Count == 0) return new MatchAttempt(overallBest, overallBestPos, 0, null, null);
+
+        var picked = preferEarliestQualifyingRun
+            ? qualifyingRuns.OrderBy(r => r.Start).First()
+            : qualifyingRuns.OrderByDescending(r => r.End - r.Start).First();
+        var runLen = picked.End - picked.Start;
+        return new MatchAttempt(overallBest, overallBestPos, runLen, picked.Start, picked.End);
+    }
+
+    private static void TryAddQualifyingRun(
+        List<(double Start, double End)> runs, List<double> positions, int curStart, int curLen)
+    {
+        if (curStart < 0 || curLen <= 0) return;
+        var startSec = positions[curStart];
+        var endSec = positions[curStart + curLen - 1] + WindowSeconds;
         var runLen = endSec - startSec;
-        return runLen is < MinMatchSeconds or > MaxMatchSeconds
-            ? new MatchAttempt(overallBest, overallBestPos, runLen, null, null)
-            : new MatchAttempt(overallBest, overallBestPos, runLen, startSec, endSec);
+        if (runLen is >= MinMatchSeconds and <= MaxMatchSeconds)
+            runs.Add((startSec, endSec));
     }
 
     private static double NormalizedCorrelation(double[] a, int aStart, double[] b, int bStart, int len)
@@ -438,19 +529,8 @@ public sealed class AudioFingerprintService
         return num / Math.Sqrt(denA * denB);
     }
 
-    // Was 1.0s. Real-world testing found genuine matches (corr~0.98, run length 30-100s+) with
-    // start positions spread across a ~12s neighborhood (133.0, 145.0, 134.0) rather than tight
-    // agreement — the "longest contiguous run" boundary is sensitive to exactly where correlation
-    // crosses the threshold near the edges of an otherwise strongly-matching region, which jitters
-    // more than a whole-second-level clustering tolerance can absorb. 15s still clearly separates
-    // a real cluster from a true outlier (343.0 in that same test, ~200s away from the rest).
     private const double ClusterToleranceSeconds = 15.0;
 
-    /// <summary>Finds the largest group of candidates whose Start values fall within
-    /// <see cref="ClusterToleranceSeconds"/> of each other — the majority consensus. Returned
-    /// as the actual candidate list (not just an average) so the caller can identify which
-    /// episodes fell outside it and write a per-episode override for them instead of silently
-    /// dropping a real, just-different measurement.</summary>
     private static List<(Episode Ep, double Start, double End)> FindLargestCluster(
         List<(Episode Ep, double Start, double End)> candidates)
     {
@@ -463,11 +543,30 @@ public sealed class AudioFingerprintService
         return best;
     }
 
-    /// <summary>Requires the cluster plus the reference episode itself to cover at least
-    /// <see cref="MinSampleEpisodes"/> episodes, and the resulting confidence (cluster size over
-    /// total comparisons) to clear <see cref="ConfidenceThreshold"/> — otherwise returns null
-    /// rather than a weak guess. Confidence is capped at 0.95: 1.0 is reserved for an actual
-    /// chapter marker, never for a statistical inference.</summary>
+    /// <summary>Intro clustering: only consider early-window candidates, then prefer the
+    /// earliest agreeing cluster — late false positives (e.g. GoT ~3min in) must not beat
+    /// the real title sequence near the start.</summary>
+    private static List<(Episode Ep, double Start, double End)> FindBestIntroCluster(
+        List<(Episode Ep, double Start, double End)> candidates)
+    {
+        var early = candidates
+            .Where(c => c.Start <= SkipSignalBoundingWindow.ForRuntime(3600).MaxIntroStartSeconds)
+            .ToList();
+        if (early.Count == 0) return [];
+
+        (List<(Episode Ep, double Start, double End)> Cluster, double AvgStart)? best = null;
+        foreach (var c in early)
+        {
+            var cluster = early.Where(o => Math.Abs(o.Start - c.Start) <= ClusterToleranceSeconds).ToList();
+            var avgStart = cluster.Average(x => x.Start);
+            if (best == null
+                || cluster.Count > best.Value.Cluster.Count
+                || (cluster.Count == best.Value.Cluster.Count && avgStart < best.Value.AvgStart))
+                best = (cluster, avgStart);
+        }
+        return best?.Cluster ?? [];
+    }
+
     private static (double Start, double End, double Confidence)? SummarizeCluster(
         List<(Episode Ep, double Start, double End)> cluster, int totalOthers)
     {

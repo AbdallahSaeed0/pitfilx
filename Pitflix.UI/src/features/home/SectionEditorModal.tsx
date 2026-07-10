@@ -24,6 +24,7 @@ const SOURCE_OPTIONS: { value: HomeSourceType; label: string }[] = [
   { value: "movie_night", label: "Movie night (shuffle)" },
   { value: "genre_spotlight", label: "Genre spotlight" },
   { value: "hidden_gems", label: "Hidden gems" },
+  { value: "trakt_recommendations", label: "Trakt personalized recommendations" },
   { value: "favorites_list", label: "Favorites list" },
   { value: "list_spotlight", label: "Custom list" },
   { value: "arabic_picks", label: "Arabic picks" },

@@ -17,6 +17,8 @@ public sealed class WatchingCurrentlyApiRow
     public int TotalEpisodes { get; init; }
     public double ProgressFraction { get; init; }
     public DateTime LastPlayedAtUtc { get; init; }
+    /// <summary>False when the next episode has aired on TMDB but isn't downloaded yet.</summary>
+    public bool NextEpisodeDownloaded { get; init; } = true;
 
     public static WatchingCurrentlyApiRow From(CurrentlyWatchingRow r, string? posterUrl) => new()
     {
@@ -33,5 +35,6 @@ public sealed class WatchingCurrentlyApiRow
         TotalEpisodes = r.TotalEpisodes,
         ProgressFraction = r.ProgressFraction,
         LastPlayedAtUtc = r.LastPlayedAtUtc,
+        NextEpisodeDownloaded = r.NextEpisodeDownloaded,
     };
 }

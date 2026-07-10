@@ -2,8 +2,11 @@ import { useQuery } from "@tanstack/react-query";
 import { useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { browseByDecade } from "../api/browse";
+import { LibraryPosterGrid } from "../components/ui/LibraryPosterGrid";
 import { PosterCard } from "../components/ui/PosterCard";
 import { Spinner } from "../components/ui/Spinner";
+import { LibraryContextMenuLayer } from "../features/library/LibraryContextMenuLayer";
+import { useLibraryPosterCards } from "../features/library/useLibraryPosterCards";
 import type { MediaCard } from "../types/media";
 
 type Tab = "all" | "movies" | "series";
@@ -26,6 +29,7 @@ export function DecadeBrowsePage() {
   const movies = allItems.filter((i) => i.tmdbMediaType === "Movie");
   const series = allItems.filter((i) => i.tmdbMediaType === "Series");
   const displayed = tab === "movies" ? movies : tab === "series" ? series : allItems;
+  const { menu, closeMenu, runAction, cardExtras } = useLibraryPosterCards(displayed);
 
   const heroItem = movies[0] ?? series[0];
   const heroBackdrop =
@@ -109,15 +113,23 @@ export function DecadeBrowsePage() {
       )}
 
       {!isLoading && displayed.length > 0 && (
-        <div className="grid grid-cols-3 gap-3 sm:grid-cols-4 md:grid-cols-5 lg:grid-cols-6 xl:grid-cols-7 2xl:grid-cols-8">
-          {displayed.map((item) => (
-            <PosterCard
-              key={`${item.tmdbMediaType}-${item.id}`}
-              item={item}
-              mediaType={item.tmdbMediaType === "Series" ? "Series" : "Movie"}
-            />
-          ))}
-        </div>
+        <>
+          <LibraryPosterGrid>
+            {displayed.map((item) => {
+              const extras = cardExtras(item);
+              return (
+                <PosterCard
+                  key={`${item.tmdbMediaType}-${item.id}`}
+                  item={item}
+                  mediaType={extras.mediaType}
+                  imdbRating={extras.imdbRating}
+                  onContextMenu={extras.onContextMenu}
+                />
+              );
+            })}
+          </LibraryPosterGrid>
+          <LibraryContextMenuLayer menu={menu} onClose={closeMenu} onAction={(a) => void runAction(a)} />
+        </>
       )}
     </div>
   );

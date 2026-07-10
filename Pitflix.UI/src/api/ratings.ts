@@ -7,12 +7,12 @@ export type RatingsAggregate = {
   imdbId: string | null;
   imdbRatingDisplay: string | null;
   imdbVoteCountDisplay: string | null;
-  /** e.g. php-imdb-detail, omdb */
+  /** e.g. php-imdb-detail, mdblist */
   imdbRatingSource?: string | null;
   rottenTomatoesCritics: string | null;
   rottenTomatoesAudience: string | null;
-  omdbResolvedVia?: string | null;
-  omdbMatchKind?: string | null;
+  secondarySourceVia?: string | null;
+  secondarySourceMatchKind?: string | null;
   /** Present when row came from persisted snapshot (aggregate endpoint). */
   fromSnapshot?: boolean;
   isStale?: boolean;
@@ -24,12 +24,12 @@ export type RatingsPanelData = RatingsAggregate & {
   seeded?: boolean;
 };
 
-const SOURCE_MASK_OMDB = 2;
+const SOURCE_MASK_MDBLIST = 2;
 const SOURCE_MASK_PHP = 4;
 
 function imdbSourceFromSnapshot(sourceMask: number, hasImdbRating: boolean): string | null {
   if (!hasImdbRating) return null;
-  if ((sourceMask & SOURCE_MASK_OMDB) !== 0) return "omdb";
+  if ((sourceMask & SOURCE_MASK_MDBLIST) !== 0) return "mdblist";
   if ((sourceMask & SOURCE_MASK_PHP) !== 0) return "php-imdb-detail";
   return "tmdb";
 }
@@ -66,8 +66,8 @@ function mapPersistedToPanel(d: PersistedOk): RatingsPanelData {
     imdbRatingSource: imdbSourceFromSnapshot(d.sourceMask, hasImdb),
     rottenTomatoesCritics: d.rtCritics,
     rottenTomatoesAudience: d.rtAudience,
-    omdbResolvedVia: "persisted",
-    omdbMatchKind: d.seeded ? "persisted_seeded" : "persisted",
+    secondarySourceVia: "persisted",
+    secondarySourceMatchKind: d.seeded ? "persisted_seeded" : "persisted",
     fromSnapshot: true,
     isStale: d.isStale,
     seeded: d.seeded,

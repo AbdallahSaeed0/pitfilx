@@ -5,21 +5,23 @@ import { GripVertical, Pencil, RefreshCw, Eye, EyeOff } from "lucide-react";
 import { Link } from "react-router-dom";
 import { postHomeSectionQuery } from "../../api/homeLayout";
 import { HorizontalScrollRow } from "../../components/ui/HorizontalScrollRow";
+import { LibraryPosterGrid } from "../../components/ui/LibraryPosterGrid";
 import { PosterCard } from "../../components/ui/PosterCard";
 import { ScrollReveal } from "../../components/ui/ScrollReveal";
 import { useHomeCustomizeStore } from "../../store/homeCustomizeStore";
 import type { HomeSectionConfig, WatchHistoryRow } from "../../types/homeSection";
 import type { MediaCard } from "../../types/media";
 import { cn } from "../../utils/cn";
-import { formatRating } from "../../utils/format";
-import { LandscapeHomeCard } from "./LandscapeHomeCard";
 import { posterMetaFromConfig } from "./posterMetaFromConfig";
+import { LibraryContextMenuLayer } from "../library/LibraryContextMenuLayer";
+import { useLibraryPosterCards } from "../library/useLibraryPosterCards";
 import { sectionQueryKey, sectionToQueryBody } from "./homeQueryMapper";
 import { ContinueWatchingRow } from "./ContinueWatchingRow";
 import { ComingSoonSection } from "./ComingSoonSection";
 import { NextEpisodesSection } from "./NextEpisodesSection";
 import { LatestTrailersSection } from "./LatestTrailersSection";
 import { ComingSoonTrailersSection } from "./ComingSoonTrailersSection";
+import { LandscapeHomeCard } from "./LandscapeHomeCard";
 function seeAllHref(section: HomeSectionConfig): string | null {
   if (section.sourceType === "watching_currently") return "/series";
   if (section.sourceType === "next_episodes") return "/next-episodes";
@@ -27,6 +29,7 @@ function seeAllHref(section: HomeSectionConfig): string | null {
   if (section.sourceType === "latest_trailers") return "/trailers?mode=latest";
   if (section.sourceType === "coming_soon_trailers" || section.sourceType === "upcoming_trending_trailers")
     return "/trailers?mode=upcoming";
+  if (section.sourceType === "trakt_recommendations") return "/online-stream";
   if (section.sourceType === "coming_soon") return null;
   if (section.mediaType === "series") return "/series";
   if (section.mediaType === "movie") return "/movies";
@@ -140,10 +143,6 @@ function GridSkeleton() {
   );
 }
 
-function mediaTypeOf(card: MediaCard): "Movie" | "Series" {
-  return card.tmdbMediaType === "Series" ? "Series" : "Movie";
-}
-
 export function HomeSectionRenderer({
   section,
   isEditing,
@@ -185,6 +184,7 @@ export function HomeSectionRenderer({
   const cards = (dataQ.data ?? []) as MediaCard[];
   const metaHints = posterMetaFromConfig(section);
   const size = section.cardVariant === "compact" || section.layoutStyle === "ranked-row" ? "sm" : "md";
+  const { menu, closeMenu, runAction, cardExtras } = useLibraryPosterCards(cards);
 
   const refreshShuffle =
     section.sourceType === "movie_night" || section.sourceType === "genre_spotlight" ? (
@@ -278,79 +278,108 @@ export function HomeSectionRenderer({
     );
   }
 
+  if (section.sourceType === "trakt_recommendations" && !dataQ.isLoading && cards.length === 0) {
+    return null;
+  }
+
   if (section.layoutStyle === "grid") {
     return shell(
-      <div className="grid grid-cols-2 gap-4 md:grid-cols-4">
-        {cards.map((card, i) => (
-          <div key={`${section.id}-${i}-${card.id}-${card.tmdbMediaType}`} className="relative">
-            {section.metadata?.showRating !== false ? (
-              <span className="absolute left-2 top-2 z-20 rounded-md bg-black/80 px-2 py-0.5 text-xs font-bold text-amber-300 ring-1 ring-amber-500/40">
-                ★ {formatRating(card.voteAverage)}
-              </span>
-            ) : null}
-            <PosterCard
-              item={card}
-              mediaType={mediaTypeOf(card)}
-              className="!w-full"
-              metaHints={metaHints}
-              size={size}
-            />
-          </div>
-        ))}
-      </div>,
+      <>
+        <LibraryPosterGrid className="gap-4">
+          {cards.map((card, i) => {
+            const extras = cardExtras(card);
+            return (
+              <PosterCard
+                key={`${section.id}-${i}-${card.id}-${card.tmdbMediaType}`}
+                item={card}
+                mediaType={extras.mediaType}
+                metaHints={metaHints}
+                size={size}
+                imdbRating={extras.imdbRating}
+                onContextMenu={extras.onContextMenu}
+              />
+            );
+          })}
+        </LibraryPosterGrid>
+        <LibraryContextMenuLayer menu={menu} onClose={closeMenu} onAction={(a) => void runAction(a)} />
+      </>,
     );
   }
 
   if (section.layoutStyle === "landscape-row") {
     return shell(
-      <HorizontalScrollRow hideHeader className="mb-0" contentClassName="gap-3">
-        <>
-          {cards.map((card, i) => (
-            <LandscapeHomeCard
-              key={`${section.id}-${i}-${card.id}`}
-              item={card}
-              mediaType={mediaTypeOf(card)}
-            />
-          ))}
-        </>
-      </HorizontalScrollRow>,
+      <>
+        <HorizontalScrollRow hideHeader className="mb-0" contentClassName="gap-3">
+          <>
+            {cards.map((card, i) => {
+              const extras = cardExtras(card);
+              return (
+                <LandscapeHomeCard
+                  key={`${section.id}-${i}-${card.id}`}
+                  item={card}
+                  mediaType={extras.mediaType}
+                  imdbRating={extras.imdbRating}
+                  onContextMenu={extras.onContextMenu}
+                />
+              );
+            })}
+          </>
+        </HorizontalScrollRow>
+        <LibraryContextMenuLayer menu={menu} onClose={closeMenu} onAction={(a) => void runAction(a)} />
+      </>,
     );
   }
 
   if (section.layoutStyle === "ranked-row") {
     return shell(
-      <HorizontalScrollRow hideHeader className="mb-0" contentClassName="gap-3">
-        <>
-          {cards.map((card, i) => (
-            <PosterCard
-              key={`${section.id}-${i}-${card.id}`}
-              item={card}
-              mediaType={mediaTypeOf(card)}
-              rank={i + 1}
-              className="!w-40"
-              metaHints={metaHints}
-              size="sm"
-            />
-          ))}
-        </>
-      </HorizontalScrollRow>,
+      <>
+        <HorizontalScrollRow hideHeader className="mb-0" contentClassName="gap-3">
+          <>
+            {cards.map((card, i) => {
+              const extras = cardExtras(card);
+              return (
+                <PosterCard
+                  key={`${section.id}-${i}-${card.id}`}
+                  item={card}
+                  mediaType={extras.mediaType}
+                  rank={i + 1}
+                  className="!w-40"
+                  metaHints={metaHints}
+                  size="sm"
+                  imdbRating={extras.imdbRating}
+                  onContextMenu={extras.onContextMenu}
+                />
+              );
+            })}
+          </>
+        </HorizontalScrollRow>
+        <LibraryContextMenuLayer menu={menu} onClose={closeMenu} onAction={(a) => void runAction(a)} />
+      </>,
     );
   }
 
   return shell(
-    <HorizontalScrollRow hideHeader className="mb-0" contentClassName="gap-4">
-      <>
-        {cards.map((card, i) => (
-          <PosterCard
-            key={`${section.id}-${i}-${card.id}-${card.tmdbMediaType}`}
-            item={card}
-            mediaType={mediaTypeOf(card)}
-            className={section.cardVariant === "compact" ? "!w-36" : "!w-44"}
-            metaHints={metaHints}
-            size={size}
-          />
-        ))}
-      </>
-    </HorizontalScrollRow>,
+    <>
+      <HorizontalScrollRow hideHeader className="mb-0" contentClassName="gap-4">
+        <>
+          {cards.map((card, i) => {
+            const extras = cardExtras(card);
+            return (
+              <PosterCard
+                key={`${section.id}-${i}-${card.id}-${card.tmdbMediaType}`}
+                item={card}
+                mediaType={extras.mediaType}
+                className={section.cardVariant === "compact" ? "!w-36" : "!w-44"}
+                metaHints={metaHints}
+                size={size}
+                imdbRating={extras.imdbRating}
+                onContextMenu={extras.onContextMenu}
+              />
+            );
+          })}
+        </>
+      </HorizontalScrollRow>
+      <LibraryContextMenuLayer menu={menu} onClose={closeMenu} onAction={(a) => void runAction(a)} />
+    </>,
   );
 }

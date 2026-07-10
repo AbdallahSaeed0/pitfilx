@@ -77,6 +77,8 @@ export function useScanStream() {
               void qc.invalidateQueries({ queryKey: ["stats"] });
               void qc.invalidateQueries({ queryKey: ["home-movies"] });
               void qc.invalidateQueries({ queryKey: ["home-series"] });
+              // A scan can drop new episodes onto an already-finished show — refresh Up Next so it resurfaces.
+              void qc.invalidateQueries({ queryKey: ["home-watching-currently"] });
             }
           } else if (type === "libraryUpdated") {
             // Lightweight broadcast from auto-scan when new files are indexed (no toast shown)
@@ -86,6 +88,7 @@ export function useScanStream() {
             void qc.invalidateQueries({ queryKey: ["stats"] });
             void qc.invalidateQueries({ queryKey: ["home-movies"] });
             void qc.invalidateQueries({ queryKey: ["home-series"] });
+            void qc.invalidateQueries({ queryKey: ["home-watching-currently"] });
           } else if (type === "cancelled") {
             setProgress({ isRunning: false });
           } else if (type === "libraryNotification") {
@@ -102,6 +105,7 @@ export function useScanStream() {
               void qc.invalidateQueries({ queryKey: ["movies"] });
               void qc.invalidateQueries({ queryKey: ["series"] });
               void qc.invalidateQueries({ queryKey: ["unmatched"] });
+              void qc.invalidateQueries({ queryKey: ["home-watching-currently"] });
             }
           }
         } catch {

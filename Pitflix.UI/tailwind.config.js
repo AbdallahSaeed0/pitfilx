@@ -60,11 +60,16 @@ export default {
           "0%": { transform: "translateY(1rem)", opacity: "0" },
           "100%": { transform: "translateY(0)", opacity: "1" },
         },
+        "volume-osd-in": {
+          "0%": { transform: "scale(0.88)", opacity: "0" },
+          "100%": { transform: "scale(1)", opacity: "1" },
+        },
       },
       animation: {
         "match-indeterminate": "match-indeterminate 1.1s ease-in-out infinite",
         "fade-in": "fade-in 0.25s ease-out",
         "slide-in-from-bottom": "slide-in-from-bottom 0.3s ease-out",
+        "volume-osd-in": "volume-osd-in 0.18s cubic-bezier(0.22,1,0.36,1)",
       },
       transitionDuration: {
         "250": "250ms",

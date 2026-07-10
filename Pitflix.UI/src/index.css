@@ -40,7 +40,72 @@
   }
 }
 
+/* My Device — context menu pop animation */
+@keyframes deviceMenuPop {
+  from { opacity: 0; transform: scale(0.94) translateY(-4px); }
+  to   { opacity: 1; transform: scale(1)    translateY(0);    }
+}
+
+/* My Device — thumbnail skeleton shimmer */
+@keyframes deviceThumbShimmer {
+  0%   { transform: translateX(-100%); }
+  100% { transform: translateX(200%);  }
+}
+.device-thumb-shimmer {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  background: #1C1C1C;
+}
+.device-thumb-shimmer::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(
+    90deg,
+    transparent 0%,
+    rgba(139, 92, 246, 0.08) 40%,
+    rgba(139, 92, 246, 0.14) 50%,
+    rgba(139, 92, 246, 0.08) 60%,
+    transparent 100%
+  );
+  animation: deviceThumbShimmer 1.6s ease-in-out infinite;
+}
+
+/* My Device — card hover effects for video play overlay and move-here hint */
+button:hover .device-play-overlay {
+  opacity: 1 !important;
+}
+button:hover .device-move-hint {
+  opacity: 1 !important;
+}
+button:hover .device-card-name {
+  color: #fff !important;
+}
+
+/* My Device configure modal — hide native number spinners (custom steppers instead) */
+.device-number-input {
+  -moz-appearance: textfield;
+  appearance: textfield;
+}
+.device-number-input::-webkit-outer-spin-button,
+.device-number-input::-webkit-inner-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+
 @layer utilities {
+  @keyframes floatingDockIn {
+    from {
+      opacity: 0;
+      transform: translateY(18px);
+    }
+    to {
+      opacity: 1;
+      transform: translateY(0);
+    }
+  }
+
   /** Custom title bar: clicks must not be eaten by the drag region (Windows / WebView2). */
   .titlebar-no-drag {
     -webkit-app-region: no-drag;
@@ -70,5 +135,28 @@
 
   .scroll-row-x::-webkit-scrollbar {
     display: none;
+  }
+
+  .pitflix-sub-track-scroll {
+    scrollbar-width: thin;
+    scrollbar-color: rgba(255, 255, 255, 0.35) #000000;
+  }
+
+  .pitflix-sub-track-scroll::-webkit-scrollbar {
+    width: 8px;
+  }
+
+  .pitflix-sub-track-scroll::-webkit-scrollbar-track {
+    background: #000000;
+  }
+
+  .pitflix-sub-track-scroll::-webkit-scrollbar-thumb {
+    background: rgba(255, 255, 255, 0.35);
+    border-radius: 4px;
+    border: 2px solid #000000;
+  }
+
+  .pitflix-sub-track-scroll::-webkit-scrollbar-thumb:hover {
+    background: rgba(255, 255, 255, 0.55);
   }
 }

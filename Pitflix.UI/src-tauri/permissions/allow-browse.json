@@ -1,0 +1,18 @@
+{
+  "default": null,
+  "permission": [
+    {
+      "identifier": "allow-browse",
+      "description": "Browse tab: open/navigate/resize/close the embedded child webview",
+      "commands": {
+        "allow": [
+          "browse_open",
+          "browse_navigate",
+          "browse_resize",
+          "browse_close"
+        ],
+        "deny": []
+      }
+    }
+  ]
+}

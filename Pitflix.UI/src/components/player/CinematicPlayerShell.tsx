@@ -10,7 +10,7 @@ export function CinematicPlayerShell({ children, className }: CinematicPlayerShe
   return (
     <div
       className={cn(
-        "flex min-h-screen flex-col bg-pitflix-bg-base",
+        "flex min-h-screen flex-col overflow-y-auto bg-pitflix-bg-base",
         className
       )}
     >

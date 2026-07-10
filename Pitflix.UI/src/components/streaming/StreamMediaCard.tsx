@@ -10,9 +10,10 @@ type Props = {
   className?: string;
   returnSeedQuery?: string;
   returnSeedKind?: "Both" | "Movie" | "Series";
+  isWatched?: boolean;
 };
 
-export function StreamMediaCard({ item, className, returnSeedQuery, returnSeedKind }: Props) {
+export function StreamMediaCard({ item, className, returnSeedQuery, returnSeedKind, isWatched }: Props) {
   const navigate = useNavigate();
 
   const goToDetails = (autoPlay = false) => {
@@ -51,6 +52,13 @@ export function StreamMediaCard({ item, className, returnSeedQuery, returnSeedKi
         {item.voteAverage > 0 ? (
           <span className="absolute right-1.5 top-1.5 rounded bg-black/70 px-1.5 py-0.5 text-[9px] font-semibold text-yellow-400">
             ★ {item.voteAverage.toFixed(1)}
+          </span>
+        ) : null}
+
+        {/* Watched badge */}
+        {isWatched ? (
+          <span className="absolute bottom-1.5 left-1.5 rounded-md bg-green-500/90 px-1.5 py-0.5 text-[9px] text-white">
+            ✓ Watched
           </span>
         ) : null}
 

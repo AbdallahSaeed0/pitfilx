@@ -2,9 +2,11 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { CalendarClock, Pin, Trash2, Video } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 import { getComingSoon as getPinnedComingSoon, unpinComingSoon, type ComingSoonItem } from "../../api/comingSoon";
+import { AirDateCountdown } from "../../components/ui/AirDateCountdown";
 import { HorizontalScrollRow } from "../../components/ui/HorizontalScrollRow";
 import { MediaImage } from "../../components/ui/MediaImage";
 import type { StreamPlayerLocationState } from "../../pages/StreamPlayerPage";
+import type { StreamingDetailsLocationState } from "../../pages/StreamingDetailsPage";
 
 function youtubeEmbedUrl(raw: string | null | undefined): string | null {
   if (!raw) return null;
@@ -25,23 +27,12 @@ function releaseDateLabel(date: string | null | undefined): string {
   }
 }
 
-function daysUntil(date: string | null | undefined): number | null {
-  if (!date) return null;
-  try {
-    const d = new Date(date);
-    if (Number.isNaN(d.getTime())) return null;
-    return Math.ceil((d.getTime() - Date.now()) / 86_400_000);
-  } catch {
-    return null;
-  }
-}
-
 function PinnedCard({ item, onUnpin }: { item: ComingSoonItem; onUnpin: () => void }) {
   const navigate = useNavigate();
-  const days = daysUntil(item.releaseDate);
   const embedUrl = youtubeEmbedUrl(item.trailerUrl);
 
-  function handleTrailer() {
+  function handleTrailer(e: React.MouseEvent) {
+    e.stopPropagation();
     if (!embedUrl) return;
     const state: StreamPlayerLocationState = {
       streamUrl: embedUrl,
@@ -51,8 +42,26 @@ function PinnedCard({ item, onUnpin }: { item: ComingSoonItem; onUnpin: () => vo
     navigate("/stream-player", { state });
   }
 
+  function openDetails() {
+    const mediaType = item.mediaType.toLowerCase() === "movie" ? "Movie" : "Series";
+    const state: StreamingDetailsLocationState = {
+      tmdbId: item.tmdbId,
+      mediaType,
+      title: item.title,
+      posterUrl: item.posterUrl,
+      year: item.releaseDate?.slice(0, 4) ?? null,
+    };
+    navigate("/stream-details", { state });
+  }
+
   return (
-    <div className="group relative w-[160px] shrink-0 overflow-hidden rounded-xl border border-pitflix-card/60 bg-pitflix-surface/50 shadow-md shadow-black/20 transition-shadow hover:shadow-pitflix-primary/10">
+    <div
+      role="button"
+      tabIndex={0}
+      onClick={openDetails}
+      onKeyDown={(e) => e.key === "Enter" && openDetails()}
+      className="group relative w-[160px] shrink-0 cursor-pointer overflow-hidden rounded-xl border border-pitflix-card/60 bg-pitflix-surface/50 shadow-md shadow-black/20 transition-shadow hover:shadow-pitflix-primary/10"
+    >
       <div className="relative">
         <MediaImage
           src={item.posterUrl ?? undefined}
@@ -63,7 +72,10 @@ function PinnedCard({ item, onUnpin }: { item: ComingSoonItem; onUnpin: () => vo
         {/* Unpin button */}
         <button
           type="button"
-          onClick={onUnpin}
+          onClick={(e) => {
+            e.stopPropagation();
+            onUnpin();
+          }}
           title="Unpin"
           className="absolute right-1 top-1 z-10 flex h-6 w-6 items-center justify-center rounded-full bg-black/60 text-white opacity-0 transition-opacity hover:bg-red-600/80 group-hover:opacity-100"
         >
@@ -85,10 +97,10 @@ function PinnedCard({ item, onUnpin }: { item: ComingSoonItem; onUnpin: () => vo
       <div className="space-y-1 p-2">
         <p className="line-clamp-2 text-xs font-semibold text-white">{item.title}</p>
         <p className="text-[10px] text-pitflix-subtle">{releaseDateLabel(item.releaseDate)}</p>
-        {days !== null ? (
-          <p className={`text-[10px] font-semibold ${days <= 14 ? "text-amber-300" : "text-pitflix-muted"}`}>
-            {days <= 0 ? "Out now!" : `In ${days}d`}
-          </p>
+        {item.releaseDate ? (
+          <div className="w-full min-w-0">
+            <AirDateCountdown airDate={item.releaseDate} layout="inline" compact />
+          </div>
         ) : null}
         <p className="text-[10px] uppercase text-pitflix-muted">{item.mediaType}</p>
       </div>

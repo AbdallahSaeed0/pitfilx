@@ -1,5 +1,5 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { LayoutGrid, List } from "lucide-react";
 import { Link, useSearchParams } from "react-router-dom";
 import {
@@ -12,10 +12,14 @@ import { getListTmdbIds, getLists } from "../api/lists";
 import { getStats } from "../api/stats";
 import { useSeriesList } from "../hooks/useSeries";
 import { useDebounce } from "../hooks/useDebounce";
+import { useScrollRestoration } from "../hooks/useScrollRestoration";
+import { LibraryContextMenuLayer } from "../features/library/LibraryContextMenuLayer";
+import { useLibraryPosterCards } from "../features/library/useLibraryPosterCards";
 import { PosterCard } from "../components/ui/PosterCard";
 import { LibraryListRow } from "../components/ui/LibraryListRow";
 import { Pagination } from "../components/ui/Pagination";
 import { LibraryGridSkeleton } from "../components/ui/LibraryGridSkeleton";
+import { LibraryPosterGrid } from "../components/ui/LibraryPosterGrid";
 import { LibrarySearchField } from "../components/ui/LibrarySearchField";
 import { ScrollReveal } from "../components/ui/ScrollReveal";
 import type { MediaCard } from "../types/media";
@@ -44,16 +48,39 @@ export function SeriesPage() {
     },
     [setSearchParams],
   );
-  const [lang, setLang] = useState<"en" | "ar">("en");
-  const [search, setSearch] = useState("");
+  // Filters live in the URL (not local state) so they survive navigating into a detail page and back.
+  const updateFilterParam = useCallback(
+    (key: string, value: string, defaultValue: string) => {
+      setSearchParams(
+        (prev) => {
+          const n = new URLSearchParams(prev);
+          if (value === defaultValue) n.delete(key);
+          else n.set(key, value);
+          n.delete("page");
+          return n;
+        },
+        { replace: true },
+      );
+    },
+    [setSearchParams],
+  );
+
+  const lang = (searchParams.get("lang") === "ar" ? "ar" : "en") as "en" | "ar";
+  const setLang = (v: "en" | "ar") => updateFilterParam("lang", v, "en");
+  const search = searchParams.get("q") ?? "";
+  const setSearch = (v: string) => updateFilterParam("q", v, "");
   const searchQ = useDebounce(search, 350);
-  const [sort, setSort] = useState("title");
-  const [genre, setGenre] = useState("");
-  const [watch, setWatch] = useState("all");
+  const sort = searchParams.get("sort") ?? "title";
+  const setSort = (v: string) => updateFilterParam("sort", v, "title");
+  const genre = searchParams.get("genre") ?? "";
+  const setGenre = (v: string) => updateFilterParam("genre", v, "");
+  const watch = searchParams.get("watch") ?? "all";
+  const setWatch = (v: string) => updateFilterParam("watch", v, "all");
   const pageSize = 40;
   const [selectionMode, setSelectionMode] = useState(false);
   const [selectedIds, setSelectedIds] = useState<Set<number>>(() => new Set());
   const [markBusy, setMarkBusy] = useState(false);
+  const [bulkError, setBulkError] = useState<string | null>(null);
   const [viewMode, setViewMode] = useState<ViewMode>(() => {
     try { return (localStorage.getItem(VIEW_STORAGE_KEY) as ViewMode) || "grid"; } catch { return "grid"; }
   });
@@ -96,7 +123,11 @@ export function SeriesPage() {
     watch,
   });
 
+  useScrollRestoration(searchParams.toString(), !isPending);
+
   const total = data?.total ?? 0;
+  const pageItems = (data?.items ?? []) as MediaCard[];
+  const { menu, closeMenu, runAction, cardExtras } = useLibraryPosterCards(pageItems);
 
   const toggleSelect = (id: number) => {
     setSelectedIds((prev) => {
@@ -112,6 +143,17 @@ export function SeriesPage() {
     setSelectedIds(new Set());
   };
 
+  useEffect(() => {
+    if (!bulkError) return;
+    const t = setTimeout(() => setBulkError(null), 8000);
+    return () => clearTimeout(t);
+  }, [bulkError]);
+
+  const reportBulkError = (e: unknown) => {
+    console.error(e);
+    setBulkError(e instanceof Error ? e.message : "Bulk action failed. Please try again.");
+  };
+
   const markSelectedCompleted = async () => {
     if (selectedIds.size === 0) return;
     setMarkBusy(true);
@@ -125,7 +167,7 @@ export function SeriesPage() {
       void qc.invalidateQueries({ queryKey: ["stats"] });
       void qc.invalidateQueries({ queryKey: ["home-series"] });
     } catch (e) {
-      console.error(e);
+      reportBulkError(e);
     } finally {
       setMarkBusy(false);
     }
@@ -144,7 +186,7 @@ export function SeriesPage() {
       void qc.invalidateQueries({ queryKey: ["stats"] });
       void qc.invalidateQueries({ queryKey: ["home-series"] });
     } catch (e) {
-      console.error(e);
+      reportBulkError(e);
     } finally {
       setMarkBusy(false);
     }
@@ -161,7 +203,7 @@ export function SeriesPage() {
       void qc.invalidateQueries({ queryKey: ["home-series"] });
       void qc.invalidateQueries({ queryKey: ["unmatched"] });
     } catch (e) {
-      console.error(e);
+      reportBulkError(e);
     } finally {
       setMarkBusy(false);
     }
@@ -186,7 +228,7 @@ export function SeriesPage() {
       if (r.errors?.length)
         window.alert(`Some files could not be deleted:\n${r.errors.slice(0, 8).join("\n")}`);
     } catch (e) {
-      console.error(e);
+      reportBulkError(e);
     } finally {
       setMarkBusy(false);
     }
@@ -216,8 +258,8 @@ export function SeriesPage() {
         window.alert(`Successfully re-scanned ${r.successCount} series.`);
       }
     } catch (e) {
-      console.error(e);
-      window.alert("Re-scan failed. Check console for details.");
+      reportBulkError(e);
+      window.alert("Re-scan failed. Check the error banner for details.");
     } finally {
       setMarkBusy(false);
     }
@@ -225,6 +267,22 @@ export function SeriesPage() {
 
   return (
     <div>
+      {bulkError ? (
+        <div
+          role="alert"
+          className="mb-4 flex items-start justify-between gap-3 rounded-lg border border-red-900/60 bg-red-950/40 px-4 py-3 text-sm text-red-200"
+        >
+          <span>{bulkError}</span>
+          <button
+            type="button"
+            className="shrink-0 text-red-300/80 hover:text-red-100"
+            onClick={() => setBulkError(null)}
+            aria-label="Dismiss"
+          >
+            ×
+          </button>
+        </div>
+      ) : null}
       <div className="mb-6 flex flex-wrap items-start justify-between gap-4">
         <div>
           <h1 className="text-3xl font-bold text-white">Series</h1>
@@ -323,10 +381,7 @@ export function SeriesPage() {
           <button
             key={key}
             type="button"
-            onClick={() => {
-              setLang(key);
-              setPage(1);
-            }}
+            onClick={() => setLang(key)}
             className={cn(
               "rounded-lg px-6 py-2 text-sm font-medium transition-all",
               lang === key
@@ -343,31 +398,24 @@ export function SeriesPage() {
       <div className="mb-6 flex flex-wrap gap-3">
         <LibrarySearchField
           value={search}
-          onChange={(v) => {
-            setSearch(v);
-            setPage(1);
-          }}
+          onChange={(v) => setSearch(v)}
           placeholder="Search series…"
         />
         <select
           value={sort}
-          onChange={(e) => {
-            setSort(e.target.value);
-            setPage(1);
-          }}
+          onChange={(e) => setSort(e.target.value)}
           className="min-w-32 cursor-pointer rounded-xl border border-pitflix-card bg-pitflix-card px-4 py-2.5 text-sm text-white focus:border-pitflix-primary focus:outline-none"
         >
           <option value="title">Sort: A-Z</option>
           <option value="year">Sort: Year</option>
           <option value="rating">Sort: Rating</option>
           <option value="dateAdded">Sort: Added</option>
+          <option value="imdbDesc">IMDb: High to Low</option>
+          <option value="imdbAsc">IMDb: Low to High</option>
         </select>
         <select
           value={genre}
-          onChange={(e) => {
-            setGenre(e.target.value);
-            setPage(1);
-          }}
+          onChange={(e) => setGenre(e.target.value)}
           className="min-w-32 cursor-pointer rounded-xl border border-pitflix-card bg-pitflix-card px-4 py-2.5 text-sm text-white focus:border-pitflix-primary focus:outline-none"
         >
           <option value="">All Genres</option>
@@ -379,10 +427,7 @@ export function SeriesPage() {
         </select>
         <select
           value={watch}
-          onChange={(e) => {
-            setWatch(e.target.value);
-            setPage(1);
-          }}
+          onChange={(e) => setWatch(e.target.value)}
           className="min-w-36 cursor-pointer rounded-xl border border-pitflix-card bg-pitflix-card px-4 py-2.5 text-sm text-white focus:border-pitflix-primary focus:outline-none"
         >
           <option value="all">All</option>
@@ -412,33 +457,41 @@ export function SeriesPage() {
         <>
           <ScrollReveal>
             {viewMode === "grid" ? (
-              <div className="grid grid-cols-4 sm:grid-cols-5 md:grid-cols-6 lg:grid-cols-7 xl:grid-cols-8 2xl:grid-cols-10 gap-3 gap-y-7">
-                {((data?.items ?? []) as MediaCard[]).map((s) => (
+              <LibraryPosterGrid>
+                {pageItems.map((s) => {
+                  const extras = cardExtras(s);
+                  return (
                   <PosterCard
                     key={s.id}
                     item={s}
-                    mediaType="Series"
+                    mediaType={extras.mediaType}
                     isFavorite={favoriteSet.has(s.tmdbId)}
                     selectionMode={selectionMode}
                     selected={selectedIds.has(s.id)}
                     onToggleSelect={() => toggleSelect(s.id)}
-                    className="w-full"
+                    imdbRating={extras.imdbRating}
+                    onContextMenu={extras.onContextMenu}
                   />
-                ))}
-              </div>
+                  );
+                })}
+              </LibraryPosterGrid>
             ) : (
               <div className="flex flex-col divide-y divide-pitflix-card/50">
-                {((data?.items ?? []) as MediaCard[]).map((s) => (
+                {pageItems.map((s) => {
+                  const extras = cardExtras(s);
+                  return (
                   <LibraryListRow
                     key={s.id}
                     item={s}
-                    mediaType="Series"
+                    mediaType={extras.mediaType}
                     isFavorite={favoriteSet.has(s.tmdbId)}
                     selectionMode={selectionMode}
                     selected={selectedIds.has(s.id)}
                     onToggleSelect={() => toggleSelect(s.id)}
+                    onContextMenu={extras.onContextMenu}
                   />
-                ))}
+                  );
+                })}
               </div>
             )}
           </ScrollReveal>
@@ -453,6 +506,9 @@ export function SeriesPage() {
           </ScrollReveal>
         </>
       )}
+      {menu ? (
+        <LibraryContextMenuLayer menu={menu} onClose={closeMenu} onAction={(a) => void runAction(a)} />
+      ) : null}
     </div>
   );
 }

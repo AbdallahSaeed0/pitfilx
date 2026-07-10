@@ -6,6 +6,7 @@ import { getComingSoon, type ComingSoonItem } from "../../api/homeDiscover";
 import { getComingSoon as getPinnedItems, pinComingSoon, unpinComingSoon } from "../../api/comingSoon";
 import { getTrailerEmbedUrl } from "../../api/trailers";
 import type { StreamPlayerLocationState } from "../../pages/StreamPlayerPage";
+import type { StreamingDetailsLocationState } from "../../pages/StreamingDetailsPage";
 import { AirDateCountdown } from "../../components/ui/AirDateCountdown";
 import { HorizontalScrollRow } from "../../components/ui/HorizontalScrollRow";
 import { MediaImage } from "../../components/ui/MediaImage";
@@ -66,7 +67,8 @@ function Card({ item, pinnedId, onDismiss }: { item: ComingSoonItem; pinnedId: n
 
   const busy = pinMut.isPending || unpinMut.isPending;
 
-  const handleTrailer = async () => {
+  const handleTrailer = async (e: React.MouseEvent) => {
+    e.stopPropagation();
     if (trailerBusy) return;
     setTrailerBusy(true);
     try {
@@ -86,8 +88,26 @@ function Card({ item, pinnedId, onDismiss }: { item: ComingSoonItem; pinnedId: n
     }
   };
 
+  const openDetails = () => {
+    const mediaType = item.mediaType.toLowerCase() === "movie" ? "Movie" : "Series";
+    const state: StreamingDetailsLocationState = {
+      tmdbId: item.tmdbId,
+      mediaType,
+      title: item.title,
+      posterUrl: item.posterUrl,
+      year: item.releaseDate?.slice(0, 4) ?? null,
+    };
+    navigate("/stream-details", { state });
+  };
+
   return (
-    <div className="group relative w-[160px] shrink-0 overflow-hidden rounded-xl border border-pitflix-card/60 bg-pitflix-surface/50 shadow-md">
+    <div
+      role="button"
+      tabIndex={0}
+      onClick={openDetails}
+      onKeyDown={(e) => e.key === "Enter" && openDetails()}
+      className="group relative w-[160px] shrink-0 cursor-pointer overflow-hidden rounded-xl border border-pitflix-card/60 bg-pitflix-surface/50 shadow-md transition hover:border-pitflix-primary/50"
+    >
       <div className="relative">
         <MediaImage
           src={item.posterUrl ?? undefined}
@@ -99,7 +119,10 @@ function Card({ item, pinnedId, onDismiss }: { item: ComingSoonItem; pinnedId: n
           type="button"
           disabled={busy}
           title={isPinned ? "Unpin from Coming Soon" : "Pin to Coming Soon"}
-          onClick={() => isPinned ? unpinMut.mutate() : pinMut.mutate()}
+          onClick={(e) => {
+            e.stopPropagation();
+            isPinned ? unpinMut.mutate() : pinMut.mutate();
+          }}
           className="absolute right-1 top-1 z-10 flex h-6 w-6 items-center justify-center rounded-full bg-black/70 opacity-0 transition-opacity hover:bg-pitflix-primary/80 group-hover:opacity-100 disabled:opacity-40"
         >
           {isPinned
@@ -110,7 +133,10 @@ function Card({ item, pinnedId, onDismiss }: { item: ComingSoonItem; pinnedId: n
         <button
           type="button"
           title="Hide from Coming Soon"
-          onClick={onDismiss}
+          onClick={(e) => {
+            e.stopPropagation();
+            onDismiss();
+          }}
           className="absolute left-1 top-1 z-10 flex h-6 w-6 items-center justify-center rounded-full bg-black/70 opacity-0 transition-opacity hover:bg-rose-600/80 group-hover:opacity-100"
         >
           <X className="h-3 w-3 text-white" />
@@ -136,7 +162,7 @@ function Card({ item, pinnedId, onDismiss }: { item: ComingSoonItem; pinnedId: n
         <button
           type="button"
           disabled={trailerBusy}
-          onClick={() => void handleTrailer()}
+          onClick={(e) => void handleTrailer(e)}
           className="mt-1 flex w-full items-center justify-center gap-1 rounded-lg border border-pitflix-primary/40 bg-pitflix-primary/10 py-1 text-[10px] font-semibold text-pitflix-primary transition-colors hover:bg-pitflix-primary/25 disabled:opacity-50"
         >
           {trailerBusy ? (

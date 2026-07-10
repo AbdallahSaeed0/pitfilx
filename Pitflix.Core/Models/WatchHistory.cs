@@ -74,6 +74,10 @@ public class WatchHistory
     [NotMapped]
     public string? NextUpLabel { get; set; }
 
+    /// <summary>API-only: episode display title for Continue Watching (not stored in DB).</summary>
+    [NotMapped]
+    public string? EpisodeTitle { get; set; }
+
     /// <summary>API-only: local backdrop path for hero UI (not stored).</summary>
     [NotMapped]
     public string? BackdropLocalPath { get; set; }

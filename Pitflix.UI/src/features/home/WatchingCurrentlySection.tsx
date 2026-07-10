@@ -1,7 +1,8 @@
-import { useQuery } from "@tanstack/react-query";
-import { ChevronRight, Play } from "lucide-react";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { ChevronRight, CloudDownload, Play, X } from "lucide-react";
 import { Link, useNavigate } from "react-router-dom";
 import { getWatchingCurrently, type WatchingCurrentlyCard } from "../../api/homeDiscover";
+import { setShowDropped } from "../../api/series";
 import { HorizontalScrollRow } from "../../components/ui/HorizontalScrollRow";
 import { MediaImage } from "../../components/ui/MediaImage";
 import { Spinner } from "../../components/ui/Spinner";
@@ -27,19 +28,42 @@ function episodeBadge(card: WatchingCurrentlyCard): string | null {
 
 // ─── Individual card ─────────────────────────────────────────────────────────
 
-function UpNextCard({ card }: { card: WatchingCurrentlyCard }) {
+function UpNextCard({
+  card,
+  onDismiss,
+  dismissing,
+}: {
+  card: WatchingCurrentlyCard;
+  onDismiss?: () => void;
+  dismissing?: boolean;
+}) {
   const navigate = useNavigate();
   const pct = Math.min(100, Math.max(0, (card.progressFraction ?? 0) * 100));
   const poster = toPosterSrc(card.posterUrl ?? undefined);
   const badge = episodeBadge(card);
   const continueTo = continueSeasonRoute(card);
-
   return (
-    <button
+    <div className="group relative w-[130px] shrink-0">
+      {onDismiss ? (
+        <button
+          type="button"
+          aria-label={`Drop ${card.showTitle} — stop suggesting it in Up Next`}
+          title="Drop — won't show here again (keeps your watch progress)"
+          disabled={dismissing}
+          onClick={(e) => {
+            e.stopPropagation();
+            onDismiss();
+          }}
+          className="absolute left-1 top-1 z-10 flex h-6 w-6 items-center justify-center rounded-full bg-black/75 text-white opacity-0 ring-1 ring-white/15 transition-opacity hover:bg-red-600/90 group-hover:opacity-100 disabled:opacity-40"
+        >
+          <X className="h-3.5 w-3.5" />
+        </button>
+      ) : null}
+      <button
       type="button"
       aria-label={`Continue watching ${card.showTitle}`}
       onClick={() => navigate(continueTo)}
-      className="group relative w-[130px] shrink-0 rounded-xl text-left transition-transform duration-200 hover:-translate-y-1 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-pitflix-primary/60"
+      className="relative w-full rounded-xl text-left transition-transform duration-200 hover:-translate-y-1 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-pitflix-primary/60"
     >
       {/* Poster container */}
       <div className="relative overflow-hidden rounded-xl bg-pitflix-card shadow-md ring-1 ring-white/10 transition-shadow duration-200 group-hover:shadow-xl group-hover:shadow-black/50 group-hover:ring-pitflix-primary/50">
@@ -57,13 +81,21 @@ function UpNextCard({ card }: { card: WatchingCurrentlyCard }) {
         {/* Hover overlay with play icon */}
         <div className="pointer-events-none absolute inset-0 flex items-center justify-center bg-black/65 opacity-0 transition-opacity duration-200 group-hover:opacity-100">
           <div className="flex h-12 w-12 items-center justify-center rounded-full bg-pitflix-primary/90 shadow-lg shadow-black/40">
-            <Play className="h-5 w-5 fill-white text-white" />
+            {card.nextEpisodeDownloaded ? (
+              <Play className="h-5 w-5 fill-white text-white" />
+            ) : (
+              <CloudDownload className="h-5 w-5 text-white" />
+            )}
           </div>
         </div>
 
         {/* Episode badge — top right */}
         {badge ? (
-          <div className="pointer-events-none absolute right-1.5 top-1.5 rounded-md bg-black/80 px-1.5 py-0.5 text-[10px] font-bold tabular-nums text-white ring-1 ring-white/10 backdrop-blur-sm">
+          <div
+            title={card.nextEpisodeDownloaded ? undefined : "Aired but not downloaded yet"}
+            className="pointer-events-none absolute right-1.5 top-1.5 flex items-center gap-1 rounded-md bg-black/80 px-1.5 py-0.5 text-[10px] font-bold tabular-nums text-white ring-1 ring-white/10 backdrop-blur-sm"
+          >
+            {!card.nextEpisodeDownloaded ? <CloudDownload className="h-2.5 w-2.5 text-amber-300" /> : null}
             {badge}
           </div>
         ) : null}
@@ -98,6 +130,7 @@ function UpNextCard({ card }: { card: WatchingCurrentlyCard }) {
         </p>
       </div>
     </button>
+    </div>
   );
 }
 
@@ -106,10 +139,18 @@ function UpNextCard({ card }: { card: WatchingCurrentlyCard }) {
 type Props = { embedded?: boolean };
 
 export function WatchingCurrentlySection({ embedded = false }: Props) {
+  const qc = useQueryClient();
   const q = useQuery({
     queryKey: ["home-watching-currently"],
     queryFn: getWatchingCurrently,
     staleTime: 45_000,
+  });
+
+  const dismissMut = useMutation({
+    mutationFn: (showId: number) => setShowDropped(showId, true),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: ["home-watching-currently"] });
+    },
   });
 
   if (q.isLoading)
@@ -144,7 +185,12 @@ export function WatchingCurrentlySection({ embedded = false }: Props) {
       {/* Carousel */}
       <HorizontalScrollRow hideHeader className="mb-0" contentClassName="gap-3 pb-2">
         {list.map((card) => (
-          <UpNextCard key={card.libraryShowId} card={card} />
+          <UpNextCard
+            key={card.libraryShowId}
+            card={card}
+            onDismiss={() => dismissMut.mutate(card.libraryShowId)}
+            dismissing={dismissMut.isPending && dismissMut.variables === card.libraryShowId}
+          />
         ))}
       </HorizontalScrollRow>
     </section>

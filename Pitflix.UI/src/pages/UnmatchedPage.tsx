@@ -1,6 +1,6 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Bot, ChevronDown, ChevronUp, Film, Lightbulb, Search, SkipForward, Trash2, Tv } from "lucide-react";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { API_ORIGIN } from "../api/client";
 import { clearAllUnmatched, searchUnmatched, skipUnmatched } from "../api/unmatched";
 import { useDebounce } from "../hooks/useDebounce";
@@ -427,6 +427,18 @@ export function UnmatchedPage() {
   const [bulkProgress, setBulkProgress] = useState<{ current: number; total: number } | null>(null);
   const [smartStarting, setSmartStarting] = useState(false);
   const [clearBusy, setClearBusy] = useState(false);
+  const [actionError, setActionError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!actionError) return;
+    const t = setTimeout(() => setActionError(null), 8000);
+    return () => clearTimeout(t);
+  }, [actionError]);
+
+  const reportActionError = (message: string, e?: unknown) => {
+    if (e !== undefined) console.error(e);
+    setActionError(message);
+  };
 
   const refetchLists = () => {
     void qc.invalidateQueries({ queryKey: ["unmatched"] });
@@ -445,6 +457,7 @@ export function UnmatchedPage() {
 
     setBulkWorking(true);
     setBulkProgress({ current: 0, total: ids.length });
+    let failed = 0;
     try {
       for (let i = 0; i < ids.length; i++) {
         const r = await fetch(`${API_ORIGIN}/api/unmatched/${ids[i]}/match`, {
@@ -454,14 +467,21 @@ export function UnmatchedPage() {
         });
         if (!r.ok) {
           console.error("Bulk match step failed:", ids[i], await r.text());
+          failed++;
         } else {
           const res = (await r.json()) as Record<string, unknown>;
-          if (res.success !== true) console.error("Match unsuccessful:", ids[i], res);
+          if (res.success !== true) {
+            console.error("Match unsuccessful:", ids[i], res);
+            failed++;
+          }
         }
         setBulkProgress({ current: i + 1, total: ids.length });
       }
+      if (failed > 0) {
+        reportActionError(`Could not match ${failed} of ${ids.length} file(s).`);
+      }
     } catch (err) {
-      console.error("Bulk match failed:", err);
+      reportActionError("Bulk match failed. Please try again.", err);
     } finally {
       setBulkWorking(false);
     }
@@ -478,7 +498,7 @@ export function UnmatchedPage() {
       await startSmartScan();
       void qc.invalidateQueries({ queryKey: ["smartMatchProgress"] });
     } catch (e) {
-      console.error(e);
+      reportActionError("Could not start smart auto-match. Check TMDB key and try again.", e);
     } finally {
       setSmartStarting(false);
     }
@@ -500,7 +520,7 @@ export function UnmatchedPage() {
       await clearAllUnmatched();
       refetchLists();
     } catch (e) {
-      console.error(e);
+      reportActionError("Could not clear unmatched entries. Please try again.", e);
     } finally {
       setClearBusy(false);
     }
@@ -508,6 +528,22 @@ export function UnmatchedPage() {
 
   return (
     <div>
+      {actionError ? (
+        <div
+          role="alert"
+          className="mb-4 flex items-start justify-between gap-3 rounded-lg border border-red-900/60 bg-red-950/40 px-4 py-3 text-sm text-red-200"
+        >
+          <span>{actionError}</span>
+          <button
+            type="button"
+            className="shrink-0 text-red-300/80 hover:text-red-100"
+            onClick={() => setActionError(null)}
+            aria-label="Dismiss"
+          >
+            ×
+          </button>
+        </div>
+      ) : null}
       {/* ── Page header ── */}
       <div className="mb-6 flex flex-wrap items-start justify-between gap-4">
         <div>

@@ -17,12 +17,14 @@ export type SeasonSummary = {
   episodeCount: number;
   tmdbEpisodeCount: number;
   voteAverage?: number | null;
+  imdbVoteAverage?: number | null;
   /** False when the season exists on TMDB but you have no episodes locally yet */
   inLibrary?: boolean;
 };
 
 export type ShowDetailResponse = {
   show: unknown;
+  isDropped?: boolean;
   seasonsSummary?: SeasonSummary[];
   episodes?: unknown;
   nextEpisode?: unknown;
@@ -33,6 +35,18 @@ export type ShowDetailResponse = {
 
 export const getShowSeason = (libraryShowId: number, seasonNumber: number) =>
   api.get(`/series/${libraryShowId}/season/${seasonNumber}`).then((r) => r.data);
+
+/** Per-episode cast/crew (real director for this episode, not the show's overall Executive Producer). */
+export const getEpisodeCredits = (libraryShowId: number, seasonNumber: number, episodeNumber: number) =>
+  api.get(`/series/${libraryShowId}/season/${seasonNumber}/episode/${episodeNumber}/credits`).then((r) => r.data);
+
+/** Marks (or unmarks) a series as one the user won't continue watching. Does not touch episode
+ * watch state or history — it only hides the show from "Up Next" (still surfaces elsewhere,
+ * e.g. "New episodes available"). */
+export const setShowDropped = (libraryShowId: number, dropped: boolean) =>
+  api
+    .post<{ success: boolean; dropped: boolean }>(`/library/series/${libraryShowId}/dropped`, { dropped })
+    .then((r) => r.data);
 
 export const getShowVideos = (id: number): Promise<{ videos: MediaVideoItem[] }> =>
   api.get(`/series/${id}/videos`).then((r) => r.data as { videos: MediaVideoItem[] });

@@ -1,9 +1,9 @@
 import { useQuery } from "@tanstack/react-query";
 import { useMemo, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
-import { Trophy, Globe, Tv, Star, Award, Film, Camera, PenLine } from "lucide-react";
 import { getPerson, getPersonStreamCredits, getBatchCachedRatings, type CreditRatings } from "../api/people";
 import { getPersonAwards, type PersonNomination } from "../api/awards";
+import { CeremonyIcon, ceremonyAccent, ceremonyShortName } from "../components/awards/CeremonyBadge";
 import { MediaImage } from "../components/ui/MediaImage";
 import { Spinner } from "../components/ui/Spinner";
 import { cn } from "../utils/cn";
@@ -53,75 +53,6 @@ function PersonCard({
 }
 
 
-// ── Award ceremony trophy images — locally downloaded to /awards/ ─────────────
-const CEREMONY_IMAGE: Record<string, string> = {
-  "academy-awards": "/awards/oscar.svg",
-  "bafta":          "/awards/bafta.svg",
-  "golden-globes":  "/awards/golden-globe.svg",
-  "emmys":          "/awards/emmy.svg",
-  "sag":            "/awards/sag.svg",
-  "critics-choice": "/awards/critics-choice.svg",
-};
-
-// Lucide fallback icons when no local image exists
-function FallbackIcon({ id, color }: { id: string; color: string }) {
-  const p = { size: 18, color, strokeWidth: 1.8 } as const;
-  switch (id) {
-    case "academy-awards": return <Trophy {...p} />;
-    case "bafta":          return <Film {...p} />;
-    case "golden-globes":  return <Globe {...p} />;
-    case "emmys":          return <Tv {...p} />;
-    case "sag":            return <Star {...p} />;
-    case "critics-choice": return <Award {...p} />;
-    case "dga":            return <Camera {...p} />;
-    case "wga":            return <PenLine {...p} />;
-    default:               return <Trophy {...p} />;
-  }
-}
-
-function CeremonyIcon({ id, color }: { id: string; color: string }) {
-  const [failed, setFailed] = useState(false);
-  const imgSrc = CEREMONY_IMAGE[id];
-
-  if (!imgSrc || failed) {
-    return <FallbackIcon id={id} color={color} />;
-  }
-
-  return (
-    <img
-      src={imgSrc}
-      alt={id}
-      className="h-[28px] w-auto object-contain drop-shadow-sm"
-      onError={() => setFailed(true)}
-    />
-  );
-}
-
-const CEREMONY_ACCENT: Record<string, string> = {
-  "academy-awards": "#c9a227",
-  bafta: "#f97316",
-  "golden-globes": "#eab308",
-  emmys: "#3b82f6",
-  sag: "#a78bfa",
-  "critics-choice": "#10b981",
-  cesar: "#e2c27d",
-  saturn: "#818cf8",
-};
-
-const CEREMONY_SHORT: Record<string, string> = {
-  "academy-awards": "OSCAR",
-  bafta: "BAFTA",
-  "golden-globes": "GOLDEN GLOBE",
-  emmys: "EMMY",
-  sag: "SAG",
-  "critics-choice": "CRITICS' CHOICE",
-  dga: "DGA",
-  wga: "WGA",
-  pga: "PGA",
-  cesar: "CÉSAR",
-  saturn: "SATURN",
-};
-
 type AwardGroup = {
   awardId: string;
   awardName: string;
@@ -152,7 +83,7 @@ function AwardAccordionPanel({
   localByTmdbId: Map<number, LocalAppearance>;
   navigate: ReturnType<typeof useNavigate>;
 }) {
-  const accent = CEREMONY_ACCENT[group.awardId] ?? "#6366f1";
+  const accent = ceremonyAccent(group.awardId);
   return (
     <div
       className="overflow-hidden rounded-xl border border-white/[0.07] bg-[#141414] shadow-xl shadow-black/50"
@@ -240,8 +171,8 @@ function PersonAwardsBadges({
     <div className="relative mb-4 mt-3">
       <div className="flex flex-wrap gap-2.5">
         {groups.map((g) => {
-          const accent = CEREMONY_ACCENT[g.awardId] ?? "#6366f1";
-          const short = CEREMONY_SHORT[g.awardId] ?? g.awardName.replace(" Awards", "").replace(" Award", "").toUpperCase();
+          const accent = ceremonyAccent(g.awardId);
+          const short = ceremonyShortName(g.awardId, g.awardName);
           const isOpen = openId === g.awardId;
           return (
             <button
@@ -535,7 +466,7 @@ export function PersonPage() {
         <MediaImage
           src={person?.profileImageUrl ?? undefined}
           alt={person?.name ?? ""}
-          className="h-48 w-48 shrink-0 overflow-hidden rounded-full bg-pitflix-card object-cover object-top"
+          className="h-72 w-[216px] shrink-0 overflow-hidden rounded-lg bg-pitflix-card object-cover object-top"
           fallbackText={person?.name?.slice(0, 3) ?? "?"}
         />
         <div className="min-w-0 flex-1">

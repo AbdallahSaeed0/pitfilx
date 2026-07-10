@@ -1,0 +1,660 @@
+--- Logging error ---
+Traceback (most recent call last):
+  File "C:\Python312\Lib\logging\__init__.py", line 1160, in emit
+    msg = self.format(record)
+          ^^^^^^^^^^^^^^^^^^^
+  File "C:\Python312\Lib\logging\__init__.py", line 999, in format
+    return fmt.format(record)
+           ^^^^^^^^^^^^^^^^^^
+  File "C:\Python312\Lib\logging\__init__.py", line 703, in format
+    record.message = record.getMessage()
+                     ^^^^^^^^^^^^^^^^^^^
+  File "C:\Python312\Lib\logging\__init__.py", line 392, in getMessage
+    msg = msg % self.args
+          ~~~~^~~~~~~~~~~
+TypeError: %d format: a real number is required, not list
+Call stack:
+  File "F:\PitFilx-app\tools\tvtime_import\serializd_import.py", line 424, in <module>
+    main()
+  File "F:\PitFilx-app\tools\tvtime_import\serializd_import.py", line 341, in main
+    run_rebuild(client, shows, matcher, cache_dir, names)
+  File "F:\PitFilx-app\tools\tvtime_import\serializd_import.py", line 221, in run_rebuild
+    count = rebuild_episodes(client, tmdb_id, shows[name].seasons)
+  File "F:\PitFilx-app\tools\tvtime_import\serializd_import.py", line 190, in rebuild_episodes
+    with_retries(client.unlog_episodes, show_id=tmdb_id, season_id=season_info.seasonId,
+  File "F:\PitFilx-app\tools\tvtime_import\serializd_import.py", line 67, in with_retries
+    return fn(*args, **kwargs)
+  File "F:\PitFilx-app\tools\tvtime_import\.venv\Lib\site-packages\serializd\client.py", line 320, in unlog_episodes
+    self.logger.error(
+Message: 'Failed to unlog epsiodes of season ID %d (show ID %d) as watched!'
+Arguments: ([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30], 104015, 72048)
+Serializd return empty season information for ID 224377, season 02 (likely: no episodes)
+Serializd return empty season information for ID 224377, season 03 (likely: no episodes)
+Serializd return empty season information for ID 224377, season 04 (likely: no episodes)
+Serializd return empty season information for ID 224377, season 05 (likely: no episodes)
+Serializd return empty season information for ID 224377, season 06 (likely: no episodes)
+Serializd return empty season information for ID 224377, season 07 (likely: no episodes)
+Serializd return empty season information for ID 224377, season 08 (likely: no episodes)
+Serializd return empty season information for ID 95479, season 02 (likely: no episodes)
+Serializd return empty season information for ID 95479, season 03 (likely: no episodes)
+Parsing TV Time export...
+Found 230 shows with episode watch data.
+Serializd: reusing cached session.
+Rebuilding 230 shows sequentially (this will take a while)...
+    rebuilt 13 episode(s)
+  [1/230] rebuilt: 13 Reasons Why (13 episodes)
+    rebuilt 8 episode(s)
+  [2/230] rebuilt: 1899 (8 episodes)
+    rebuilt 10 episode(s)
+  [3/230] rebuilt: 6 Months (10 episodes)
+    rebuilt 1 episode(s)
+  [4/230] rebuilt: 80 Grand (1 episodes)
+    rebuilt 15 episode(s)
+  [5/230] rebuilt: A Husband's Diary (15 episodes)
+    rebuilt 6 episode(s)
+  [6/230] rebuilt: A Knight of the Seven Kingdoms (6 episodes)
+    rebuilt 12 episode(s)
+  [7/230] rebuilt: Ab W Laken (12 episodes)
+    rebuilt 18 episode(s)
+  [8/230] rebuilt: After Life (18 episodes)
+    rebuilt 4 episode(s)
+  [9/230] rebuilt: Al Camera El Khafya (4 episodes)
+    rebuilt 5 episode(s)
+  [10/230] rebuilt: Al Daheeh Museum (5 episodes)
+    rebuilt 8 episode(s)
+  [11/230] rebuilt: Alien: Earth (8 episodes)
+    rebuilt 8 episode(s)
+  [12/230] rebuilt: All or Nothing: Manchester City (8 episodes)
+    rebuilt 9 episode(s)
+  [13/230] rebuilt: All or Nothing: Tottenham Hotspur (9 episodes)
+    rebuilt 5 episode(s)
+  [14/230] rebuilt: Amazing Stories (2020) (5 episodes)
+    rebuilt 30 episode(s)
+  [15/230] rebuilt: Apartment Tasks (30 episodes)
+    rebuilt 18 episode(s)
+  [16/230] rebuilt: Arcane (18 episodes)
+    rebuilt 15 episode(s)
+  [17/230] rebuilt: Ard Wa Talab (15 episodes)
+    rebuilt 145 episode(s)
+  [18/230] rebuilt: Arrow (145 episodes)
+    rebuilt 87 episode(s)
+  [19/230] rebuilt: Attack on Titan (87 episodes)
+    rebuilt 32 episode(s)
+  [20/230] rebuilt: Barry (32 episodes)
+    rebuilt 10 episode(s)
+  [21/230] rebuilt: Batal Al Alam (10 episodes)
+    rebuilt 6 episode(s)
+  [22/230] rebuilt: Black Bird (6 episodes)
+    rebuilt 32 episode(s)
+  [23/230] rebuilt: Black Mirror (32 episodes)
+    rebuilt 30 episode(s)
+  [24/230] rebuilt: Bless Your Wife (30 episodes)
+    rebuilt 6 episode(s)
+  [25/230] rebuilt: Bodyguard (2018) (6 episodes)
+    rebuilt 62 episode(s)
+  [26/230] rebuilt: Breaking Bad (62 episodes)
+    rebuilt 15 episode(s)
+  [27/230] rebuilt: COVID-25 (15 episodes)
+    rebuilt 20 episode(s)
+  [28/230] rebuilt: Cairo: Kabul (20 episodes)
+    rebuilt 20 episode(s)
+  [29/230] rebuilt: Castle Rock (20 episodes)
+    rebuilt 8 episode(s)
+  [30/230] rebuilt: Catalog (8 episodes)
+    rebuilt 7 episode(s)
+  [31/230] rebuilt: Change of Mood (7 episodes)
+    rebuilt 5 episode(s)
+  [32/230] rebuilt: Chernobyl (5 episodes)
+    rebuilt 36 episode(s)
+  [33/230] rebuilt: Chilling Adventures of Sabrina (36 episodes)
+    rebuilt 10 episode(s)
+  [34/230] rebuilt: Club Loyal (10 episodes)
+    rebuilt 24 episode(s)
+  [35/230] rebuilt: Counterattack (24 episodes)
+    rebuilt 26 episode(s)
+  [36/230] rebuilt: Cowboy Bebop (26 episodes)
+    rebuilt 15 episode(s)
+  [37/230] rebuilt: Dad's Here (15 episodes)
+    rebuilt 17 episode(s)
+  [38/230] rebuilt: Daredevil: Born Again (17 episodes)
+    rebuilt 26 episode(s)
+  [39/230] rebuilt: Dark (26 episodes)
+    rebuilt 9 episode(s)
+  [40/230] rebuilt: Dark Matter (2024) (9 episodes)
+    rebuilt 30 episode(s)
+  [41/230] rebuilt: Date With Destiny! (30 episodes)
+    rebuilt 10 episode(s)
+  [42/230] rebuilt: Deadly Class (10 episodes)
+    rebuilt 37 episode(s)
+  [43/230] rebuilt: Death Note (37 episodes)
+    rebuilt 63 episode(s)
+  [44/230] rebuilt: Demon Slayer: Kimetsu no Yaiba (63 episodes)
+    rebuilt 8 episode(s)
+  [45/230] rebuilt: Dispatch (8 episodes)
+    rebuilt 34 episode(s)
+  [46/230] rebuilt: Doom Patrol (34 episodes)
+    rebuilt 3 episode(s)
+  [47/230] rebuilt: Dracula (2020) (3 episodes)
+    rebuilt 15 episode(s)
+  [48/230] rebuilt: Ein Sehreya (15 episodes)
+    rebuilt 150 episode(s)
+  [49/230] rebuilt: El Kebeer (150 episodes)
+    rebuilt 30 episode(s)
+  [50/230] rebuilt: El Leba (30 episodes)
+    rebuilt 30 episode(s)
+  [51/230] rebuilt: El Nos (30 episodes)
+    rebuilt 4 episode(s)
+  [52/230] rebuilt: Elite (4 episodes)
+    rebuilt 19 episode(s)
+  [53/230] rebuilt: Euphoria (US) (19 episodes)
+    rebuilt 15 episode(s)
+  [54/230] rebuilt: Expired (15 episodes)
+    rebuilt 16 episode(s)
+  [55/230] rebuilt: Fallout (16 episodes)
+    rebuilt 32 episode(s)
+  [56/230] rebuilt: Family Matter (32 episodes)
+    rebuilt 3 episode(s)
+  [57/230] rebuilt: First Team: Juventus (3 episodes)
+    rebuilt 12 episode(s)
+  [58/230] rebuilt: Fleabag (12 episodes)
+    rebuilt 10 episode(s)
+  [59/230] rebuilt: Forky Asks a Question (10 episodes)
+    rebuilt 228 episode(s)
+  [60/230] rebuilt: Friends (228 episodes)
+    rebuilt 64 episode(s)
+  [61/230] rebuilt: Fullmetal Alchemist: Brotherhood (64 episodes)
+    rebuilt 73 episode(s)
+  [62/230] rebuilt: Game of Thrones (73 episodes)
+    rebuilt 16 episode(s)
+  [63/230] rebuilt: Gen V (16 episodes)
+    rebuilt 11 episode(s)
+  [64/230] rebuilt: Greatness Code (11 episodes)
+    rebuilt 34 episode(s)
+  [65/230] rebuilt: Hagg Metwally's Family (34 episodes)
+    rebuilt 8 episode(s)
+  [66/230] rebuilt: Half of The People are Called Mohammed (8 episodes)
+    (transient error: Expecting value: line 1 column 1 (char 0), retrying in 1s...)
+    rebuilt 60 episode(s)
+  [67/230] rebuilt: Handcuffs (60 episodes)
+    rebuilt 39 episode(s)
+  [68/230] rebuilt: Hannibal (39 episodes)
+    rebuilt 1 episode(s)
+  [69/230] rebuilt: Harry Potter (1 episodes)
+    rebuilt 6 episode(s)
+  [70/230] rebuilt: Hawkeye (2021) (6 episodes)
+    rebuilt 15 episode(s)
+  [71/230] rebuilt: Hekayet Narges (15 episodes)
+    rebuilt 14 episode(s)
+  [72/230] rebuilt: Hello Country (14 episodes)
+    rebuilt 30 episode(s)
+  [73/230] rebuilt: Hidden Worlds (30 episodes)
+    rebuilt 16 episode(s)
+  [74/230] rebuilt: Highest Viewership (16 episodes)
+    rebuilt 30 episode(s)
+  [75/230] rebuilt: His All-Knowing Secret (30 episodes)
+    rebuilt 23 episode(s)
+  [76/230] rebuilt: His Dark Materials (23 episodes)
+    rebuilt 30 episode(s)
+  [77/230] rebuilt: His Excellency (30 episodes)
+    rebuilt 15 episode(s)
+  [78/230] rebuilt: Hiyya Chemya?! (15 episodes)
+    rebuilt 20 episode(s)
+  [79/230] rebuilt: House of the Dragon (20 episodes)
+    rebuilt 208 episode(s)
+  [80/230] rebuilt: How I Met Your Mother (208 episodes)
+    rebuilt 6 episode(s)
+  [81/230] rebuilt: How to Become a Tyrant (6 episodes)
+    rebuilt 18 episode(s)
+  [82/230] rebuilt: Hunters (2020) (18 episodes)
+    rebuilt 10 episode(s)
+  [83/230] rebuilt: I Am Groot (10 episodes)
+    rebuilt 7 episode(s)
+  [84/230] rebuilt: I Am Not Okay With This (7 episodes)
+    rebuilt 36 episode(s)
+  [85/230] rebuilt: I Won't Live in My Father's Robes (36 episodes)
+    rebuilt 32 episode(s)
+  [86/230] rebuilt: INVINCIBLE (2021) (32 episodes)
+    rebuilt 24 episode(s)
+  [87/230] rebuilt: JUJUTSU KAISEN (24 episodes)
+    rebuilt 4 episode(s)
+  [88/230] rebuilt: Jazeerat Ghamam (4 episodes)
+    rebuilt 30 episode(s)
+  [89/230] rebuilt: Kafr Delhab (30 episodes)
+    rebuilt 8 episode(s)
+  [90/230] rebuilt: Kaleidoscope (2023) (8 episodes)
+    rebuilt 2 episode(s)
+  [91/230] rebuilt: Kan Yama Kan (2 episodes)
+    rebuilt 9 episode(s)
+  [92/230] rebuilt: Kanto Market (9 episodes)
+    rebuilt 2 episode(s)
+  [93/230] rebuilt: Khaled Noor and His Son Noor Khaled (2 episodes)
+    rebuilt 12 episode(s)
+  [94/230] rebuilt: Kingdom (2019) (12 episodes)
+    rebuilt 10 episode(s)
+  [95/230] rebuilt: Lab Coat (10 episodes)
+    rebuilt 15 episode(s)
+  [96/230] rebuilt: Lam Shamsiyya (15 episodes)
+    rebuilt 12 episode(s)
+  [97/230] rebuilt: Loki (12 episodes)
+    rebuilt 7 episode(s)
+  [98/230] rebuilt: Love & Death (7 episodes)
+    rebuilt 45 episode(s)
+  [99/230] rebuilt: Love, Death & Robots (45 episodes)
+    rebuilt 67 episode(s)
+  [100/230] rebuilt: Lucifer (67 episodes)
+    rebuilt 17 episode(s)
+  [101/230] rebuilt: Lupin (17 episodes)
+    rebuilt 19 episode(s)
+  [102/230] rebuilt: MINDHUNTER (19 episodes)
+    rebuilt 30 episode(s)
+  [103/230] rebuilt: Mamoun Wa Shurakah - Mamoun & Partners (30 episodes)
+    rebuilt 15 episode(s)--- Logging error ---
+Traceback (most recent call last):
+  File "C:\Python312\Lib\logging\__init__.py", line 1160, in emit
+    msg = self.format(record)
+          ^^^^^^^^^^^^^^^^^^^
+  File "C:\Python312\Lib\logging\__init__.py", line 999, in format
+    return fmt.format(record)
+           ^^^^^^^^^^^^^^^^^^
+  File "C:\Python312\Lib\logging\__init__.py", line 703, in format
+    record.message = record.getMessage()
+                     ^^^^^^^^^^^^^^^^^^^
+  File "C:\Python312\Lib\logging\__init__.py", line 392, in getMessage
+    msg = msg % self.args
+          ~~~~^~~~~~~~~~~
+TypeError: %d format: a real number is required, not list
+Call stack:
+  File "F:\PitFilx-app\tools\tvtime_import\serializd_import.py", line 424, in <module>
+    main()
+  File "F:\PitFilx-app\tools\tvtime_import\serializd_import.py", line 341, in main
+    run_rebuild(client, shows, matcher, cache_dir, names)
+  File "F:\PitFilx-app\tools\tvtime_import\serializd_import.py", line 221, in run_rebuild
+    count = rebuild_episodes(client, tmdb_id, shows[name].seasons)
+  File "F:\PitFilx-app\tools\tvtime_import\serializd_import.py", line 194, in rebuild_episodes
+    with_retries(client.log_episodes, show_id=tmdb_id, season_id=season_info.seasonId,
+  File "F:\PitFilx-app\tools\tvtime_import\serializd_import.py", line 67, in with_retries
+    return fn(*args, **kwargs)
+  File "F:\PitFilx-app\tools\tvtime_import\.venv\Lib\site-packages\serializd\client.py", line 283, in log_episodes
+    self.logger.error(
+Message: 'Failed to log epsiodes of season ID %d (show ID %d) as watched!'
+Arguments: ([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23], 3631, 1400)
+--- Logging error ---
+Traceback (most recent call last):
+  File "C:\Python312\Lib\logging\__init__.py", line 1160, in emit
+    msg = self.format(record)
+          ^^^^^^^^^^^^^^^^^^^
+  File "C:\Python312\Lib\logging\__init__.py", line 999, in format
+    return fmt.format(record)
+           ^^^^^^^^^^^^^^^^^^
+  File "C:\Python312\Lib\logging\__init__.py", line 703, in format
+    record.message = record.getMessage()
+                     ^^^^^^^^^^^^^^^^^^^
+  File "C:\Python312\Lib\logging\__init__.py", line 392, in getMessage
+    msg = msg % self.args
+          ~~~~^~~~~~~~~~~
+TypeError: %d format: a real number is required, not list
+Call stack:
+  File "F:\PitFilx-app\tools\tvtime_import\serializd_import.py", line 424, in <module>
+    main()
+  File "F:\PitFilx-app\tools\tvtime_import\serializd_import.py", line 341, in main
+    run_rebuild(client, shows, matcher, cache_dir, names)
+  File "F:\PitFilx-app\tools\tvtime_import\serializd_import.py", line 221, in run_rebuild
+    count = rebuild_episodes(client, tmdb_id, shows[name].seasons)
+  File "F:\PitFilx-app\tools\tvtime_import\serializd_import.py", line 194, in rebuild_episodes
+    with_retries(client.log_episodes, show_id=tmdb_id, season_id=season_info.seasonId,
+  File "F:\PitFilx-app\tools\tvtime_import\serializd_import.py", line 67, in with_retries
+    return fn(*args, **kwargs)
+  File "F:\PitFilx-app\tools\tvtime_import\.venv\Lib\site-packages\serializd\client.py", line 283, in log_episodes
+    self.logger.error(
+Message: 'Failed to log epsiodes of season ID %d (show ID %d) as watched!'
+Arguments: ([1, 2, 3, 4, 5, 6, 7, 8, 9, 10], 123438, 76331)
+--- Logging error ---
+Traceback (most recent call last):
+  File "C:\Python312\Lib\logging\__init__.py", line 1160, in emit
+    msg = self.format(record)
+          ^^^^^^^^^^^^^^^^^^^
+  File "C:\Python312\Lib\logging\__init__.py", line 999, in format
+    return fmt.format(record)
+           ^^^^^^^^^^^^^^^^^^
+  File "C:\Python312\Lib\logging\__init__.py", line 703, in format
+    record.message = record.getMessage()
+                     ^^^^^^^^^^^^^^^^^^^
+  File "C:\Python312\Lib\logging\__init__.py", line 392, in getMessage
+    msg = msg % self.args
+          ~~~~^~~~~~~~~~~
+TypeError: %d format: a real number is required, not list
+Call stack:
+  File "F:\PitFilx-app\tools\tvtime_import\serializd_import.py", line 424, in <module>
+    main()
+  File "F:\PitFilx-app\tools\tvtime_import\serializd_import.py", line 341, in main
+    run_rebuild(client, shows, matcher, cache_dir, names)
+  File "F:\PitFilx-app\tools\tvtime_import\serializd_import.py", line 221, in run_rebuild
+    count = rebuild_episodes(client, tmdb_id, shows[name].seasons)
+  File "F:\PitFilx-app\tools\tvtime_import\serializd_import.py", line 194, in rebuild_episodes
+    with_retries(client.log_episodes, show_id=tmdb_id, season_id=season_info.seasonId,
+  File "F:\PitFilx-app\tools\tvtime_import\serializd_import.py", line 67, in with_retries
+    return fn(*args, **kwargs)
+  File "F:\PitFilx-app\tools\tvtime_import\.venv\Lib\site-packages\serializd\client.py", line 283, in log_episodes
+    self.logger.error(
+Message: 'Failed to log epsiodes of season ID %d (show ID %d) as watched!'
+Arguments: ([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30], 148151, 102045)
+--- Logging error ---
+Traceback (most recent call last):
+  File "C:\Python312\Lib\logging\__init__.py", line 1160, in emit
+    msg = self.format(record)
+          ^^^^^^^^^^^^^^^^^^^
+  File "C:\Python312\Lib\logging\__init__.py", line 999, in format
+    return fmt.format(record)
+           ^^^^^^^^^^^^^^^^^^
+  File "C:\Python312\Lib\logging\__init__.py", line 703, in format
+    record.message = record.getMessage()
+                     ^^^^^^^^^^^^^^^^^^^
+  File "C:\Python312\Lib\logging\__init__.py", line 392, in getMessage
+    msg = msg % self.args
+          ~~~~^~~~~~~~~~~
+TypeError: %d format: a real number is required, not list
+Call stack:
+  File "F:\PitFilx-app\tools\tvtime_import\serializd_import.py", line 424, in <module>
+    main()
+  File "F:\PitFilx-app\tools\tvtime_import\serializd_import.py", line 341, in main
+    run_rebuild(client, shows, matcher, cache_dir, names)
+  File "F:\PitFilx-app\tools\tvtime_import\serializd_import.py", line 221, in run_rebuild
+    count = rebuild_episodes(client, tmdb_id, shows[name].seasons)
+  File "F:\PitFilx-app\tools\tvtime_import\serializd_import.py", line 190, in rebuild_episodes
+    with_retries(client.unlog_episodes, show_id=tmdb_id, season_id=season_info.seasonId,
+  File "F:\PitFilx-app\tools\tvtime_import\serializd_import.py", line 67, in with_retries
+    return fn(*args, **kwargs)
+  File "F:\PitFilx-app\tools\tvtime_import\.venv\Lib\site-packages\serializd\client.py", line 320, in unlog_episodes
+    self.logger.error(
+Message: 'Failed to unlog epsiodes of season ID %d (show ID %d) as watched!'
+Arguments: ([1, 2, 3, 4, 5, 6, 7, 8], 94165, 74577)
+Serializd return empty season information for ID 231907, season 02 (likely: no episodes)
+--- Logging error ---
+Traceback (most recent call last):
+  File "C:\Python312\Lib\logging\__init__.py", line 1160, in emit
+    msg = self.format(record)
+          ^^^^^^^^^^^^^^^^^^^
+  File "C:\Python312\Lib\logging\__init__.py", line 999, in format
+    return fmt.format(record)
+           ^^^^^^^^^^^^^^^^^^
+  File "C:\Python312\Lib\logging\__init__.py", line 703, in format
+    record.message = record.getMessage()
+                     ^^^^^^^^^^^^^^^^^^^
+  File "C:\Python312\Lib\logging\__init__.py", line 392, in getMessage
+    msg = msg % self.args
+          ~~~~^~~~~~~~~~~
+TypeError: %d format: a real number is required, not list
+Call stack:
+  File "F:\PitFilx-app\tools\tvtime_import\serializd_import.py", line 424, in <module>
+    main()
+  File "F:\PitFilx-app\tools\tvtime_import\serializd_import.py", line 341, in main
+    run_rebuild(client, shows, matcher, cache_dir, names)
+  File "F:\PitFilx-app\tools\tvtime_import\serializd_import.py", line 221, in run_rebuild
+    count = rebuild_episodes(client, tmdb_id, shows[name].seasons)
+  File "F:\PitFilx-app\tools\tvtime_import\serializd_import.py", line 190, in rebuild_episodes
+    with_retries(client.unlog_episodes, show_id=tmdb_id, season_id=season_info.seasonId,
+  File "F:\PitFilx-app\tools\tvtime_import\serializd_import.py", line 67, in with_retries
+    return fn(*args, **kwargs)
+  File "F:\PitFilx-app\tools\tvtime_import\.venv\Lib\site-packages\serializd\client.py", line 320, in unlog_episodes
+    self.logger.error(
+Message: 'Failed to unlog epsiodes of season ID %d (show ID %d) as watched!'
+Arguments: ([1, 2, 3, 4, 5, 6, 7], 405376, 100088)
+
+  [104/230] rebuilt: Mandatory Path (15 episodes)
+    rebuilt 7 episode(s)
+  [105/230] rebuilt: Mare of Easttown (7 episodes)
+    rebuilt 4 episode(s)
+  [106/230] rebuilt: Marvel Zombies (4 episodes)
+    rebuilt 18 episode(s)
+  [107/230] rebuilt: Marvel's Agent Carter (18 episodes)
+    rebuilt 25 episode(s)
+  [108/230] rebuilt: Marvel's Agents of S.H.I.E.L.D. (25 episodes)
+    rebuilt 39 episode(s)
+  [109/230] rebuilt: Marvel's Daredevil (39 episodes)
+    rebuilt 13 episode(s)
+  [110/230] rebuilt: Marvel's Iron Fist (13 episodes)
+    rebuilt 13 episode(s)
+  [111/230] rebuilt: Marvel's Jessica Jones (13 episodes)
+    rebuilt 26 episode(s)
+  [112/230] rebuilt: Marvel's Luke Cage (26 episodes)
+    rebuilt 8 episode(s)
+  [113/230] rebuilt: Marvel's The Defenders (8 episodes)
+    rebuilt 26 episode(s)
+  [114/230] rebuilt: Marvel's The Punisher (26 episodes)
+    rebuilt 8 episode(s)
+  [115/230] rebuilt: Matchday: Inside FC Barcelona (8 episodes)
+    rebuilt 15 episode(s)
+  [116/230] rebuilt: Moment of Anger (15 episodes)
+    rebuilt 41 episode(s)
+  [117/230] rebuilt: Money Heist (41 episodes)
+    rebuilt 5 episode(s)
+  [118/230] rebuilt: Monster (2022) (5 episodes)
+    rebuilt 6 episode(s)
+  [119/230] rebuilt: Moon Knight (6 episodes)
+    rebuilt 10 episode(s)
+  [120/230] rebuilt: Mr. Robot (10 episodes)
+    rebuilt 6 episode(s)
+  [121/230] rebuilt: Ms. Marvel (6 episodes)
+    rebuilt 15 episode(s)
+  [122/230] rebuilt: My Sisters (15 episodes)
+    rebuilt 16 episode(s)
+  [123/230] rebuilt: Mystery Box (16 episodes)
+    rebuilt 0 episode(s)
+  [124/230] rebuilt: Naji Attallah's Squad - Firqat Naji Attallah (0 episodes)
+    rebuilt 30 episode(s)
+  [125/230] rebuilt: Newton's Cradle (30 episodes)
+    rebuilt 8 episode(s)
+  [126/230] rebuilt: Off Campus (8 episodes)
+    rebuilt 50 episode(s)
+  [127/230] rebuilt: Only Murders in the Building (50 episodes)
+    rebuilt 1 episode(s)
+  [128/230] rebuilt: Operation Messi (1 episodes)
+    rebuilt 91 episode(s)
+  [129/230] rebuilt: Orange Is the New Black (91 episodes)
+    rebuilt 30 episode(s)
+  [130/230] rebuilt: Our Saint Lover (30 episodes)
+    rebuilt 7 episode(s)
+  [131/230] rebuilt: Outsider Bloodline (7 episodes)
+    rebuilt 6 episode(s)
+  [132/230] rebuilt: Paranormal (6 episodes)
+    rebuilt 5 episode(s)
+  [133/230] rebuilt: Patrick Melrose (5 episodes)
+    rebuilt 16 episode(s)
+  [134/230] rebuilt: Peacemaker (16 episodes)
+    rebuilt 36 episode(s)
+  [135/230] rebuilt: Peaky Blinders (36 episodes)
+    rebuilt 8 episode(s)
+  [136/230] rebuilt: Presumed Innocent (8 episodes)
+    rebuilt 6 episode(s)
+  [137/230] rebuilt: Ragnarok (6 episodes)
+    rebuilt 10 episode(s)
+  [138/230] rebuilt: Raised by Wolves (2020) (10 episodes)
+    rebuilt 30 episode(s)
+  [139/230] rebuilt: Ramy (30 episodes)
+    rebuilt 15 episode(s)
+  [140/230] rebuilt: Rasheed (15 episodes)
+    rebuilt 81 episode(s)
+  [141/230] rebuilt: Rick and Morty (81 episodes)
+    rebuilt 10 episode(s)
+  [142/230] rebuilt: Room 207 (10 episodes)
+    rebuilt 30 episode(s)
+  [143/230] rebuilt: Saheb al Saada - Friend of the Saada (30 episodes)
+    rebuilt 1 episode(s)
+  [144/230] rebuilt: Saturday Night Live (1 episodes)
+    rebuilt 2 episode(s)
+  [145/230] rebuilt: Sawa Sawa (2 episodes)
+    rebuilt 6 episode(s)
+  [146/230] rebuilt: Secret Invasion (6 episodes)
+    rebuilt 16 episode(s)
+  [147/230] rebuilt: See (16 episodes)
+    (transient error: Expecting value: line 1 column 1 (char 0), retrying in 1s...)
+    rebuilt 174 episode(s)
+  [148/230] rebuilt: Seinfeld (174 episodes)
+    rebuilt 15 episode(s)
+  [149/230] rebuilt: Seventh Year Itch (15 episodes)
+    rebuilt 19 episode(s)
+  [150/230] rebuilt: Severance (19 episodes)
+    rebuilt 32 episode(s)
+  [151/230] rebuilt: Sex Education (32 episodes)
+    rebuilt 8 episode(s)
+  [152/230] rebuilt: Sharp Objects (8 episodes)
+    rebuilt 9 episode(s)
+  [153/230] rebuilt: She-Hulk: Attorney at Law (9 episodes)
+    rebuilt 12 episode(s)
+  [154/230] rebuilt: Sherlock (12 episodes)
+    rebuilt 20 episode(s)
+  [155/230] rebuilt: Silo (20 episodes)
+    rebuilt 30 episode(s)
+  [156/230] rebuilt: Slow Horses (30 episodes)
+    rebuilt 15 episode(s)
+  [157/230] rebuilt: Sohab Al Ard (15 episodes)
+    rebuilt 15 episode(s)
+  [158/230] rebuilt: Sons of the Sun (15 episodes)
+    rebuilt 10 episode(s)
+  [159/230] rebuilt: Special Case (10 episodes)
+    rebuilt 8 episode(s)
+  [160/230] rebuilt: Spider-Noir (8 episodes)
+    rebuilt 22 episode(s)
+  [161/230] rebuilt: Squid Game (22 episodes)
+    rebuilt 42 episode(s)
+  [162/230] rebuilt: Stranger Things (42 episodes)
+    (transient error: Expecting value: line 1 column 1 (char 0), retrying in 1s...)
+    rebuilt 39 episode(s)
+  [163/230] rebuilt: Succession (39 episodes)
+    rebuilt 30 episode(s)
+  [164/230] rebuilt: Suits (EG) (30 episodes)
+    rebuilt 4 episode(s)
+  [165/230] rebuilt: Super League: The War for Football (4 episodes)
+    rebuilt 20 episode(s)
+  [166/230] rebuilt: Supergirl (20 episodes)
+    rebuilt 18 episode(s)
+  [167/230] rebuilt: Swagger (18 episodes)
+    (transient error: The read operation timed out, retrying in 1s...)
+    rebuilt 10 episode(s)
+  [168/230] rebuilt: Swamp Thing (2019) (10 episodes)
+    (transient error: The read operation timed out, retrying in 1s...)
+    rebuilt 8 episode(s)
+  [169/230] rebuilt: Taboo (2017) (8 episodes)
+    (transient error: The read operation timed out, retrying in 1s...)
+    rebuilt 30 episode(s)
+  [170/230] rebuilt: Take Care of Zizi (30 episodes)
+    rebuilt 34 episode(s)
+  [171/230] rebuilt: Ted Lasso (34 episodes)
+    rebuilt 5 episode(s)
+  [172/230] rebuilt: The Art Of War (5 episodes)
+    rebuilt 26 episode(s)
+  [173/230] rebuilt: The Assassins (26 episodes)
+    rebuilt 38 episode(s)
+  [174/230] rebuilt: The Bear (38 episodes)
+    rebuilt 7 episode(s)
+  [175/230] rebuilt: The Book of Boba Fett (7 episodes)
+    rebuilt 40 episode(s)
+  [176/230] rebuilt: The Boys (40 episodes)
+    rebuilt 8 episode(s)
+  [177/230] rebuilt: The Boys Presents: Diabolical (8 episodes)
+    rebuilt 3 episode(s)
+  [178/230] rebuilt: The Captain (2025) (3 episodes)
+    (transient error: Expecting value: line 1 column 1 (char 0), retrying in 1s...)
+    rebuilt 90 episode(s)
+  [179/230] rebuilt: The Choice (2020) (EG) (90 episodes)
+    (transient error: Expecting value: line 1 column 1 (char 0), retrying in 1s...)
+    rebuilt 16 episode(s)
+  [180/230] rebuilt: The End of the F***ing World (16 episodes)
+    rebuilt 6 episode(s)
+  [181/230] rebuilt: The Falcon and The Winter Soldier (6 episodes)
+    rebuilt 8 episode(s)
+  [182/230] rebuilt: The Fall of the House of Usher (8 episodes)
+    rebuilt 93 episode(s)
+  [183/230] rebuilt: The Flash (2014) (93 episodes)
+    rebuilt 8 episode(s)
+  [184/230] rebuilt: The Giza Killer (8 episodes)
+    rebuilt 1 episode(s)
+  [185/230] rebuilt: The Haunting (1 episodes)
+    rebuilt 10 episode(s)
+  [186/230] rebuilt: The Last Dance (10 episodes)
+    rebuilt 2 episode(s)
+  [187/230] rebuilt: The Last Round (2 episodes)
+    rebuilt 30 episode(s)
+  [188/230] rebuilt: The Last of The Schmucks (30 episodes)
+    (transient error: Expecting value: line 1 column 1 (char 0), retrying in 1s...)
+    rebuilt 16 episode(s)
+  [189/230] rebuilt: The Last of Us (16 episodes)
+    rebuilt 8 episode(s)
+  [190/230] rebuilt: The Lord of the Rings: The Rings of Power (8 episodes)
+    rebuilt 24 episode(s)
+  [191/230] rebuilt: The Mandalorian (24 episodes)
+    rebuilt 40 episode(s)
+  [192/230] rebuilt: The Morning Show (40 episodes)
+    rebuilt 8 episode(s)
+  [193/230] rebuilt: The Night Of (8 episodes)
+    rebuilt 186 episode(s)
+  [194/230] rebuilt: The Office (US) (186 episodes)
+    rebuilt 8 episode(s)
+  [195/230] rebuilt: The Penguin (8 episodes)
+    rebuilt 30 episode(s)
+  [196/230] rebuilt: The Pitt (30 episodes)
+    rebuilt 7 episode(s)
+  [197/230] rebuilt: The Queen's Gambit (7 episodes)
+    rebuilt 30 episode(s)
+  [198/230] rebuilt: The Returnees (30 episodes)
+    rebuilt 10 episode(s)
+  [199/230] rebuilt: The Sandman (10 episodes)--- Logging error ---
+Traceback (most recent call last):
+  File "C:\Python312\Lib\logging\__init__.py", line 1160, in emit
+    msg = self.format(record)
+          ^^^^^^^^^^^^^^^^^^^
+  File "C:\Python312\Lib\logging\__init__.py", line 999, in format
+    return fmt.format(record)
+           ^^^^^^^^^^^^^^^^^^
+  File "C:\Python312\Lib\logging\__init__.py", line 703, in format
+    record.message = record.getMessage()
+                     ^^^^^^^^^^^^^^^^^^^
+  File "C:\Python312\Lib\logging\__init__.py", line 392, in getMessage
+    msg = msg % self.args
+          ~~~~^~~~~~~~~~~
+TypeError: %d format: a real number is required, not list
+Call stack:
+  File "F:\PitFilx-app\tools\tvtime_import\serializd_import.py", line 424, in <module>
+    main()
+  File "F:\PitFilx-app\tools\tvtime_import\serializd_import.py", line 341, in main
+    run_rebuild(client, shows, matcher, cache_dir, names)
+  File "F:\PitFilx-app\tools\tvtime_import\serializd_import.py", line 221, in run_rebuild
+    count = rebuild_episodes(client, tmdb_id, shows[name].seasons)
+  File "F:\PitFilx-app\tools\tvtime_import\serializd_import.py", line 194, in rebuild_episodes
+    with_retries(client.log_episodes, show_id=tmdb_id, season_id=season_info.seasonId,
+  File "F:\PitFilx-app\tools\tvtime_import\serializd_import.py", line 67, in with_retries
+    return fn(*args, **kwargs)
+  File "F:\PitFilx-app\tools\tvtime_import\.venv\Lib\site-packages\serializd\client.py", line 283, in log_episodes
+    self.logger.error(
+Message: 'Failed to log epsiodes of season ID %d (show ID %d) as watched!'
+Arguments: ([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16], 91735, 1402)
+--- Logging error ---
+Traceback (most recent call last):
+  File "C:\Python312\Lib\logging\__init__.py", line 1160, in emit
+    msg = self.format(record)
+          ^^^^^^^^^^^^^^^^^^^
+  File "C:\Python312\Lib\logging\__init__.py", line 999, in format
+    return fmt.format(record)
+           ^^^^^^^^^^^^^^^^^^
+  File "C:\Python312\Lib\logging\__init__.py", line 703, in format
+    record.message = record.getMessage()
+                     ^^^^^^^^^^^^^^^^^^^
+  File "C:\Python312\Lib\logging\__init__.py", line 392, in getMessage
+    msg = msg % self.args
+          ~~~~^~~~~~~~~~~
+TypeError: %d format: a real number is required, not list
+Call stack:
+  File "F:\PitFilx-app\tools\tvtime_import\serializd_import.py", line 424, in <module>
+    main()
+  File "F:\PitFilx-app\tools\tvtime_import\serializd_import.py", line 341, in main
+    run_rebuild(client, shows, matcher, cache_dir, names)
+  File "F:\PitFilx-app\tools\tvtime_import\serializd_import.py", line 221, in run_rebuild
+    count = rebuild_episodes(client, tmdb_id, shows[name].seasons)
+  File "F:\PitFilx-app\tools\tvtime_import\serializd_import.py", line 190, in rebuild_episodes
+    with_retries(client.unlog_episodes, show_id=tmdb_id, season_id=season_info.seasonId,
+  File "F:\PitFilx-app\tools\tvtime_import\serializd_import.py", line 67, in with_retries
+    return fn(*args, **kwargs)
+  File "F:\PitFilx-app\tools\tvtime_import\.venv\Lib\site-packages\serializd\client.py", line 320, in unlog_episodes
+    self.logger.error(
+Message: 'Failed to unlog epsiodes of season ID %d (show ID %d) as watched!'
+Arguments: ([1, 2, 3, 4, 5, 6, 7, 8], 88731, 71912)

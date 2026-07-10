@@ -2,7 +2,7 @@ import { useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import type { MediaCard } from "../../types/media";
 import { cn } from "../../utils/cn";
-import { formatRating, formatYear } from "../../utils/format";
+import { formatYear } from "../../utils/format";
 import { toPosterSrc } from "../../utils/posterSrc";
 import { usePlayback } from "../../hooks/usePlayback";
 import { useHoverCard } from "../../hooks/useHoverCard";
@@ -25,10 +25,14 @@ export function LandscapeHomeCard({
   item,
   mediaType,
   className,
+  imdbRating,
+  onContextMenu,
 }: {
   item: MediaCard;
   mediaType: "Movie" | "Series";
   className?: string;
+  imdbRating?: number | null;
+  onContextMenu?: (e: React.MouseEvent) => void;
 }) {
   const navigate = useNavigate();
   const { play } = usePlayback();
@@ -78,6 +82,7 @@ export function LandscapeHomeCard({
         }}
         onMouseEnter={handleMouseEnter}
         onMouseLeave={handleMouseLeave}
+        onContextMenu={onContextMenu}
       >
         <div className="relative h-full w-[168px] shrink-0 overflow-hidden bg-black/40">
           {backdrop ? (
@@ -107,7 +112,7 @@ export function LandscapeHomeCard({
               {displayTitle}
             </p>
             <p className="mt-0.5 shrink-0 text-xs text-pitflix-muted">
-              {formatYear(item.year)} · ★ {formatRating(item.voteAverage ?? 0)}
+              {formatYear(item.year)}
               {item.isArabic ? " · AR" : " · EN"}
             </p>
           </div>
@@ -161,6 +166,7 @@ export function LandscapeHomeCard({
           item={item}
           mediaType={mediaType}
           anchorRect={anchorRect}
+          imdbRating={imdbRating}
           onPlay={
             playPath
               ? () => {

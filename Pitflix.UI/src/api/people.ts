@@ -13,10 +13,12 @@ export type CreditRatings = {
   trakt: number | null;
 };
 
-/** Reads ratings from the local cache only — no new API calls. */
-export const getBatchCachedRatings = (ids: string[]): Promise<CreditRatings[]> =>
+/** Reads ratings from the local cache; optionally queues background enrichment for missing IMDb scores. */
+export const getBatchCachedRatings = (ids: string[], queueMissing = true): Promise<CreditRatings[]> =>
   api
-    .get<{ results: CreditRatings[] }>("/ratings/batch-cached", { params: { ids: ids.join(",") } })
+    .get<{ results: CreditRatings[] }>("/ratings/batch-cached", {
+      params: { ids: ids.join(","), queueMissing: queueMissing ? "true" : "false" },
+    })
     .then((r) => r.data.results);
 
 export type PersonStreamCredit = {

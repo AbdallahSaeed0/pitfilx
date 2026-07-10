@@ -1,5 +1,6 @@
 appsettings.local.json
 **/appsettings.local.json
+PitflixAndroid/lib/config/app_config.dart
 
 # Local third-party clones (PSARipper, etc.)
 /externals/
@@ -9,4 +10,26 @@ appsettings.local.json
 /_verify_build_out/
 
 third_party/libmpv/libmpv-2.dll
-.exe
+
+# ── .NET build outputs ────────────────────────────────────────────────────────
+**/bin/
+**/obj/
+
+# Publish output folders (dotnet publish, self-contained, etc.)
+**/publish*/
+**/publish-*/
+
+# Compiled binaries & debug symbols
+*.exe
+*.dll
+*.pdb
+*.deps.json
+*.runtimeconfig.json
+*.runtimeconfig.dev.json
+
+# ── Flutter / Dart ────────────────────────────────────────────────────────────
+PitflixAndroid/.dart_tool/
+PitflixAndroid/build/
+PitflixAndroid/.flutter-plugins
+PitflixAndroid/.flutter-plugins-dependencies
+*.g.dart

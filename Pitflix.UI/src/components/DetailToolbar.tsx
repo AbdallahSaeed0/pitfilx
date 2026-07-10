@@ -1,13 +1,14 @@
 import { useQueryClient } from "@tanstack/react-query";
 import axios from "axios";
 import { useState } from "react";
-import { RefreshCw, Search, Trash2 } from "lucide-react";
+import { AlertCircle, FolderInput, RefreshCw, Search, Trash2 } from "lucide-react";
 import {
   deleteMediaFromDevice,
   refreshMovieMetadata,
   refreshShowMetadata,
   rematchMovieFromFile,
   rematchSeriesFromFolder,
+  wrapMovieFile,
 } from "../api/library";
 import { PickTmdbTitleModal, type PickTmdbMatchTarget } from "./PickTmdbTitleModal";
 import { cn } from "../utils/cn";
@@ -44,6 +45,7 @@ export function DetailToolbar({
   const [busy, setBusy] = useState<string | null>(null);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   const [pickTarget, setPickTarget] = useState<PickTmdbMatchTarget | null>(null);
+  const [wrapResult, setWrapResult] = useState<{ message: string; ok: boolean } | null>(null);
 
   const mediaType = kind === "movie" ? "Movie" : "Series";
 
@@ -121,6 +123,29 @@ export function DetailToolbar({
       .finally(() => setBusy(null));
   };
 
+  const onWrapMovieFile = async () => {
+    if (kind !== "movie" || busy !== null) return;
+    const ok = await pitflixConfirm(
+      "Move this movie's video file (and any matching subtitles) into its own folder named after the movie?",
+    );
+    if (!ok) return;
+    setBusy("wrap");
+    setWrapResult(null);
+    try {
+      const r = await wrapMovieFile(libraryId);
+      setWrapResult({ message: r.message, ok: r.success });
+      if (r.movedCount > 0) invalidate();
+    } catch (e) {
+      setWrapResult({
+        message: e instanceof Error ? e.message : "Could not wrap this movie's file.",
+        ok: false,
+      });
+    } finally {
+      setBusy(null);
+      window.setTimeout(() => setWrapResult(null), 6000);
+    }
+  };
+
   const onRematchSeriesFromFolder = async () => {
     if (kind !== "series") return;
     const ok = await pitflixConfirm(
@@ -183,6 +208,16 @@ export function DetailToolbar({
               <Search className="h-3.5 w-3.5" strokeWidth={2} />
               Pick correct title…
             </button>
+            <button
+              type="button"
+              className={mgmtBtn}
+              disabled={busy !== null}
+              title="Move this movie's loose video file into its own folder named after the movie"
+              onClick={() => void onWrapMovieFile()}
+            >
+              <FolderInput className="h-3.5 w-3.5" strokeWidth={2} />
+              {busy === "wrap" ? "Wrapping…" : "Wrap it"}
+            </button>
           </>
         ) : null}
         {kind === "series" && (folderPath || libraryId > 0) ? (
@@ -220,6 +255,35 @@ export function DetailToolbar({
         ) : null}
       </div>
       {actionMsg ? <p className="px-12 pb-2 text-sm text-white/40">{actionMsg}</p> : null}
+
+      {wrapResult ? (
+        <div className="px-12 pb-3">
+          <div
+            role="status"
+            className={cn(
+              "flex items-start gap-2.5 rounded-xl border px-4 py-3 text-sm shadow-lg backdrop-blur-sm",
+              wrapResult.ok
+                ? "border-pitflix-primary/40 bg-pitflix-primary/10 text-white shadow-pitflix-primary/10"
+                : "border-red-500/40 bg-red-950/30 text-red-100 shadow-red-900/20",
+            )}
+          >
+            {wrapResult.ok ? (
+              <FolderInput className="mt-0.5 h-4 w-4 shrink-0 text-pitflix-primary" />
+            ) : (
+              <AlertCircle className="mt-0.5 h-4 w-4 shrink-0 text-red-300" />
+            )}
+            <p className="leading-snug">{wrapResult.message}</p>
+            <button
+              type="button"
+              onClick={() => setWrapResult(null)}
+              className="ml-auto shrink-0 text-xs text-white/40 hover:text-white"
+              aria-label="Dismiss"
+            >
+              ✕
+            </button>
+          </div>
+        </div>
+      ) : null}
 
       <PickTmdbTitleModal
         open={pickTarget !== null}

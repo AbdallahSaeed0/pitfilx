@@ -6,6 +6,9 @@ pub enum PlayerEvent {
   State(PlayerState),
   Tracks(PlayerTracks),
   Error { message: String },
+  /// Emitted once when mpv's log confirms `audio-spdif` engaged (only observed when the
+  /// Audio Passthrough setting is on). See `quality_enhancement.rs`.
+  AudioPassthroughStatus { active: bool },
 }
 
 /// Last correlated pause/resume IPC verification (external mpv — `get_property` is authoritative).

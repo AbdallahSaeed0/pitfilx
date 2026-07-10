@@ -1,46 +1,68 @@
-import { useEffect } from "react";
+import { lazy, Suspense, useEffect } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { BrowserRouter, Navigate, Route, Routes, useParams } from "react-router-dom";
 import { startPlaybackPolEventListener } from "./playback/playbackPolListener";
 import { getSettings } from "./api/settings";
 import { MainLayout } from "./components/layout/MainLayout";
+import { PitflixConfirmHost } from "./components/layout/PitflixConfirmHost";
 import { SetupWizard } from "./components/setup/SetupWizard";
 import { Spinner } from "./components/ui/Spinner";
 import { HomePage } from "./pages/HomePage";
 import { MoviesPage } from "./pages/MoviesPage";
 import { SeriesPage } from "./pages/SeriesPage";
-import { MovieDetailPage, ShowDetailPage } from "./pages/DetailPage";
-import { UnmatchedPage } from "./pages/UnmatchedPage";
-import { SettingsPage } from "./pages/SettingsPage";
-import { MyListsPage } from "./pages/MyListsPage";
-import { MyDevicePage } from "./pages/MyDevicePage";
-import { ListDetailPage } from "./pages/ListDetailPage";
-import { PersonPage } from "./pages/PersonPage";
-import { StatsPage } from "./pages/StatsPage";
-import { RecommendationsPage } from "./pages/RecommendationsPage";
-import { AwardsPage } from "./pages/AwardsPage";
-import { AwardHubPage } from "./pages/AwardHubPage";
-import { AwardEditionPage } from "./pages/AwardEditionPage";
-import { SeasonDetailPage } from "./pages/SeasonDetailPage";
-import { TrailersPage } from "./pages/TrailersPage";
-import { NextEpisodesPage } from "./pages/NextEpisodesPage";
-import { PlayerPage } from "./pages/PlayerPage";
 import { PlaylistPopoutPage } from "./pages/PlaylistPopoutPage";
-import { RemotePlayerPage } from "./pages/RemotePlayerPage";
-import { OnlineStreamPage } from "./pages/OnlineStreamPage";
-import { StreamPlayerPage } from "./pages/StreamPlayerPage";
-import { StreamingDetailsPage } from "./pages/StreamingDetailsPage";
-import { GenreBrowsePage } from "./pages/GenreBrowsePage";
-import { AllCategoriesPage } from "./pages/AllCategoriesPage";
-import { DecadeBrowsePage } from "./pages/DecadeBrowsePage";
-import { KeywordBrowsePage } from "./pages/KeywordBrowsePage";
-import { StreamingCollectionPage } from "./pages/StreamingCollectionPage";
-import { StreamSeasonPage } from "./pages/StreamSeasonPage";
-import { DuplicatesPage } from "./pages/DuplicatesPage";
 import { BackgroundTasksProvider } from "./context/BackgroundTasksContext";
 import { GitHubUpdaterProvider } from "./context/GitHubUpdaterContext";
 import { GitHubUpdaterHost } from "./components/updater/GitHubUpdaterHost";
 import { NowPlayingBar } from "./components/NowPlayingBar";
+
+const PlayerPage = lazy(() => import("./pages/PlayerPage").then((m) => ({ default: m.PlayerPage })));
+const MovieDetailPage = lazy(() => import("./pages/DetailPage").then((m) => ({ default: m.MovieDetailPage })));
+const ShowDetailPage = lazy(() => import("./pages/DetailPage").then((m) => ({ default: m.ShowDetailPage })));
+const UnmatchedPage = lazy(() => import("./pages/UnmatchedPage").then((m) => ({ default: m.UnmatchedPage })));
+const SettingsPage = lazy(() => import("./pages/SettingsPage").then((m) => ({ default: m.SettingsPage })));
+const MyListsPage = lazy(() => import("./pages/MyListsPage").then((m) => ({ default: m.MyListsPage })));
+const MyDevicePage = lazy(() => import("./pages/MyDevicePage").then((m) => ({ default: m.MyDevicePage })));
+const ListDetailPage = lazy(() => import("./pages/ListDetailPage").then((m) => ({ default: m.ListDetailPage })));
+const PersonPage = lazy(() => import("./pages/PersonPage").then((m) => ({ default: m.PersonPage })));
+const StatsPage = lazy(() => import("./pages/StatsPage").then((m) => ({ default: m.StatsPage })));
+const RecommendationsPage = lazy(() =>
+  import("./pages/RecommendationsPage").then((m) => ({ default: m.RecommendationsPage })),
+);
+const AwardsPage = lazy(() => import("./pages/AwardsPage").then((m) => ({ default: m.AwardsPage })));
+const AwardHubPage = lazy(() => import("./pages/AwardHubPage").then((m) => ({ default: m.AwardHubPage })));
+const AwardEditionPage = lazy(() => import("./pages/AwardEditionPage").then((m) => ({ default: m.AwardEditionPage })));
+const SeasonDetailPage = lazy(() => import("./pages/SeasonDetailPage").then((m) => ({ default: m.SeasonDetailPage })));
+const TrailersPage = lazy(() => import("./pages/TrailersPage").then((m) => ({ default: m.TrailersPage })));
+const NextEpisodesPage = lazy(() => import("./pages/NextEpisodesPage").then((m) => ({ default: m.NextEpisodesPage })));
+const RemotePlayerPage = lazy(() => import("./pages/RemotePlayerPage").then((m) => ({ default: m.RemotePlayerPage })));
+const OnlineStreamPage = lazy(() => import("./pages/OnlineStreamPage").then((m) => ({ default: m.OnlineStreamPage })));
+const StreamPlayerPage = lazy(() => import("./pages/StreamPlayerPage").then((m) => ({ default: m.StreamPlayerPage })));
+const StreamingDetailsPage = lazy(() =>
+  import("./pages/StreamingDetailsPage").then((m) => ({ default: m.StreamingDetailsPage })),
+);
+const GenreBrowsePage = lazy(() => import("./pages/GenreBrowsePage").then((m) => ({ default: m.GenreBrowsePage })));
+const AllCategoriesPage = lazy(() => import("./pages/AllCategoriesPage").then((m) => ({ default: m.AllCategoriesPage })));
+const DecadeBrowsePage = lazy(() => import("./pages/DecadeBrowsePage").then((m) => ({ default: m.DecadeBrowsePage })));
+const KeywordBrowsePage = lazy(() => import("./pages/KeywordBrowsePage").then((m) => ({ default: m.KeywordBrowsePage })));
+const StreamingCollectionPage = lazy(() =>
+  import("./pages/StreamingCollectionPage").then((m) => ({ default: m.StreamingCollectionPage })),
+);
+const StreamSeasonPage = lazy(() => import("./pages/StreamSeasonPage").then((m) => ({ default: m.StreamSeasonPage })));
+const DuplicatesPage = lazy(() => import("./pages/DuplicatesPage").then((m) => ({ default: m.DuplicatesPage })));
+const LivePage = lazy(() => import("./pages/LivePage").then((m) => ({ default: m.LivePage })));
+const TvTimeReviewPage = lazy(() =>
+  import("./pages/TvTimeReviewPage").then((m) => ({ default: m.TvTimeReviewPage })),
+); // TEMPORARY -- remove once the TV Time import review is done
+const BrowsePage = lazy(() => import("./pages/Browse/BrowsePage").then((m) => ({ default: m.BrowsePage })));
+
+function RouteFallback() {
+  return (
+    <div className="flex min-h-[40vh] items-center justify-center">
+      <Spinner />
+    </div>
+  );
+}
 
 function PlaybackPolListenerHost() {
   useEffect(() => startPlaybackPolEventListener(), []);
@@ -96,9 +118,11 @@ function App() {
   return (
     <BrowserRouter>
       <PlaybackPolListenerHost />
+      <PitflixConfirmHost />
       <GitHubUpdaterProvider>
         <GitHubUpdaterHost />
       <BackgroundTasksProvider>
+        <Suspense fallback={<RouteFallback />}>
         <Routes>
         <Route path="/player" element={<PlayerPage />} />
         <Route path="/playlist-popout" element={<PlaylistPopoutPage />} />
@@ -115,6 +139,7 @@ function App() {
           <Route path="recommendations" element={<RecommendationsPage />} />
           <Route path="trailers" element={<TrailersPage />} />
           <Route path="online-stream" element={<OnlineStreamPage />} />
+          <Route path="browse" element={<BrowsePage />} />
           <Route path="stream-details" element={<StreamingDetailsPage />} />
           <Route path="stream-season" element={<StreamSeasonPage />} />
           <Route path="next-episodes" element={<NextEpisodesPage />} />
@@ -122,6 +147,7 @@ function App() {
           <Route path="awards/:awardId/:year" element={<AwardEditionPage />} />
           <Route path="awards/:awardId" element={<AwardHubPage />} />
           <Route path="unmatched" element={<UnmatchedPage />} />
+          <Route path="tvtime-review" element={<TvTimeReviewPage />} />
           <Route path="lists" element={<MyListsPage />} />
           <Route path="my-device" element={<MyDevicePage />} />
           <Route path="lists/:id" element={<ListDetailPage />} />
@@ -134,9 +160,11 @@ function App() {
           <Route path="stream-collection" element={<StreamingCollectionPage />} />
           <Route path="categories" element={<AllCategoriesPage />} />
           <Route path="duplicates" element={<DuplicatesPage />} />
+          <Route path="live" element={<LivePage />} />
           <Route path="*" element={<Navigate to="/" replace />} />
         </Route>
         </Routes>
+        </Suspense>
       </BackgroundTasksProvider>
       </GitHubUpdaterProvider>
       <NowPlayingBar />

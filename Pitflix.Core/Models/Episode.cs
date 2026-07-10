@@ -15,5 +15,8 @@ public class Episode
     public string WatchStatus { get; set; } = WatchStatuses.Unwatched;
     public DateTime? CompletedAt { get; set; }
 
+    /// <summary>True when Completed was reached by actually finishing playback in-app (vs. a manual "mark watched" action).</summary>
+    public bool CompletedFromPlayback { get; set; }
+
     public Show Show { get; set; } = null!;
 }

@@ -1,0 +1,822 @@
+        <div style="flex-shrink:0;height:60px;background:#0C0B1A;border-top:1px solid #1A172E;display:flex;align-items:center;justify-content:space-around;"><div style="flex:1;display:flex;flex-direction:column;align-items:center;gap:3px;cursor:pointer;"><svg width="22" height="22" viewBox="0 0 24 24" fill="none"><path d="M10 20v-6h4v6h5v-8h3L12 3 2 12h3v8z" fill="#5E5A82"></path></svg><span style="font-size:9px;font-weight:400;color:rgba(255,255,255,0.45);font-family:'DM Sans',sans-serif;">Home</span></div><div style="flex:1;display:flex;flex-direction:column;align-items:center;gap:3px;cursor:pointer;"><svg width="22" height="22" viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="8.5" stroke="#5E5A82" stroke-width="1.8"></circle><path d="M15.5 8.5L13 13.5L8 15.5L10.5 10.5Z" fill="#5E5A82"></path></svg><span style="font-size:9px;font-weight:400;color:rgba(255,255,255,0.45);font-family:'DM Sans',sans-serif;">Discover</span></div><div style="flex:1;display:flex;flex-direction:column;align-items:center;gap:3px;cursor:pointer;"><svg width="22" height="22" viewBox="0 0 24 24" fill="none"><rect x="4" y="10" width="3.5" height="10" rx="1.5" fill="#5E5A82"></rect><rect x="10.25" y="6" width="3.5" height="14" rx="1.5" fill="#5E5A82"></rect><rect x="16.5" y="13" width="3.5" height="7" rx="1.5" fill="#5E5A82"></rect></svg><span style="font-size:9px;font-weight:400;color:rgba(255,255,255,0.45);font-family:'DM Sans',sans-serif;">Stats</span></div><div style="flex:1;display:flex;flex-direction:column;align-items:center;gap:3px;cursor:pointer;"><svg width="22" height="22" viewBox="0 0 24 24" fill="none"><circle cx="12" cy="8" r="3.5" stroke="#FFFFFF" stroke-width="1.8"></circle><path d="M4.5 20c0-3.6 3.4-6.5 7.5-6.5s7.5 2.9 7.5 6.5" stroke="#FFFFFF" stroke-width="1.8" stroke-linecap="round"></path></svg><span style="font-size:9px;font-weight:600;color:#FFFFFF;font-family:'DM Sans',sans-serif;">Profile</span></div></div>
+
+      </div>
+    </x-import>
+  </div>
+
+</div>
+</x-dc><!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+  <link href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=DM+Sans:wght@300;400;500;600&display=swap" rel="stylesheet">
+  <meta name="design_doc_mode" content="canvas">
+  <style>
+    html, body { margin: 0; padding: 0; background: #07060E; }
+    .scroll-x { display: flex; gap: 10px; overflow-x: auto; padding: 0 20px 6px; scrollbar-width: none; -webkit-overflow-scrolling: touch; }
+    .scroll-x::-webkit-scrollbar { display: none; }
+    .scroll-y::-webkit-scrollbar { display: none; }
+  </style>
+</helmet>
+
+<div style="min-height: 100vh; background: #07060E; display: flex; align-items: flex-start; justify-content: center; padding: 56px 48px; gap: 52px; flex-wrap: wrap; font-family: 'DM Sans', sans-serif;">
+
+  <!-- ═══════════════════════════════
+       SCREEN 1 — LOGIN
+  ════════════════════════════════ -->
+  <div style="display: flex; flex-direction: column; align-items: center; gap: 14px;">
+    <span style="font-size: 10px; font-weight: 600; letter-spacing: 0.14em; text-transform: uppercase; color: #2E2B4A; font-family: 'DM Sans', sans-serif;">01 · Login</span>
+
+    <x-import component-from-global-scope="AndroidDevice" from="./android-frame.jsx" dark="{{ true }}" hint-size="412px,892px">
+      <div style="height: 100%; background: #09080F; display: flex; flex-direction: column; overflow: hidden;">
+
+        <!-- Hero area -->
+        <div style="flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 0 32px 24px;">
+
+          <!-- P icon -->
+          <div style="width: 80px; height: 80px; border-radius: 20px; background: #5B21B6; display: flex; align-items: center; justify-content: center; margin-bottom: 22px; flex-shrink: 0;">
+            <svg width="36" height="58" viewBox="0 0 54 100" fill="none">
+              <path fillRule="evenodd" d="M 0,0 L 0,100 L 12,100 L 12,54 C 32,54 54,46 54,27 C 54,8 32,0 12,0 Z M 15,8 L 15,46 L 46,27 Z" fill="white"></path>
+            </svg>
+          </div>
+
+          <!-- Animated PITFLIX wordmark -->
+          <svg viewBox="0 0 231 110" style="width: 196px; height: auto; overflow: visible; display: block;" aria-label="PITFLIX">
+            <defs>
+              <clipPath id="wm-bounds">
+                <rect x="-10" y="26" width="2000" height="70"></rect>
+              </clipPath>
+              <clipPath id="wm-cp-p">
+                <path transform="translate(0,26) scale(0.7)" clipRule="evenodd" d="M 0,0 L 0,100 L 12,100 L 12,54 C 32,54 54,46 54,27 C 54,8 32,0 12,0 Z M 15,8 L 15,46 L 46,27 Z"></path>
+              </clipPath>
+              <clipPath id="wm-cp-i1">
+                <text x="40" y="96" font-family="'Bebas Neue', Impact, sans-serif" font-size="100">I</text>
+              </clipPath>
+              <clipPath id="wm-cp-t">
+                <text x="59.206" y="96" font-family="'Bebas Neue', Impact, sans-serif" font-size="100">T</text>
+              </clipPath>
+              <clipPath id="wm-cp-f">
+                <text x="95.609" y="96" font-family="'Bebas Neue', Impact, sans-serif" font-size="100">F</text>
+              </clipPath>
+              <clipPath id="wm-cp-l">
+                <text x="130.022" y="96" font-family="'Bebas Neue', Impact, sans-serif" font-size="100">L</text>
+              </clipPath>
+              <clipPath id="wm-cp-i2">
+                <text x="164.425" y="96" font-family="'Bebas Neue', Impact, sans-serif" font-size="100">I</text>
+              </clipPath>
+              <clipPath id="wm-cp-x">
+                <text x="183.632" y="96" font-family="'Bebas Neue', Impact, sans-serif" font-size="100">X</text>
+              </clipPath>
+            </defs>
+            <g clipPath="url(#wm-bounds)">
+              <rect class="wm-r" x="0"     y="26" width="38"   height="70" fill="#7C3AED" clipPath="url(#wm-cp-p)"></rect>
+              <rect class="wm-r" x="39"    y="26" width="21.2" height="70" fill="#7C3AED" clipPath="url(#wm-cp-i1)"></rect>
+              <rect class="wm-r" x="58.2"  y="26" width="38.4" height="70" fill="#7C3AED" clipPath="url(#wm-cp-t)"></rect>
+              <rect class="wm-r" x="94.6"  y="26" width="36.4" height="70" fill="#7C3AED" clipPath="url(#wm-cp-f)"></rect>
+              <rect class="wm-r" x="129"   y="26" width="36.4" height="70" fill="#7C3AED" clipPath="url(#wm-cp-l)"></rect>
+              <rect class="wm-r" x="163.4" y="26" width="21.2" height="70" fill="#7C3AED" clipPath="url(#wm-cp-i2)"></rect>
+              <rect class="wm-r" x="182.6" y="26" width="42.6" height="70" fill="#7C3AED" clipPath="url(#wm-cp-x)"></rect>
+            </g>
+          </svg>
+        </div>
+
+        <!-- Form -->
+        <div style="padding: 0 32px 52px; display: flex; flex-direction: column;">
+          <!-- Email -->
+          <div style="margin-bottom: 14px;">
+            <div style="font-size: 11px; font-weight: 600; letter-spacing: 0.1em; text-transform: uppercase; color: #5E5A82; margin-bottom: 8px; font-family: 'DM Sans', sans-serif;">Email</div>
+            <div style="background: #110F22; border: 1.5px solid #2A2548; border-radius: 10px; padding: 14px 16px; font-size: 15px; color: #9D9AC0; font-family: 'DM Sans', sans-serif;">you@example.com</div>
+          </div>
+          <!-- Password -->
+          <div style="margin-bottom: 28px;">
+            <div style="font-size: 11px; font-weight: 600; letter-spacing: 0.1em; text-transform: uppercase; color: #5E5A82; margin-bottom: 8px; font-family: 'DM Sans', sans-serif;">Password</div>
+            <div style="background: #110F22; border: 1.5px solid #2A2548; border-radius: 10px; padding: 14px 16px; font-size: 15px; color: #7B77A0; letter-spacing: 0.28em; font-family: 'DM Sans', sans-serif;">••••••••</div>
+          </div>
+          <!-- CTA -->
+          <div style="background: #FFFFFF; border-radius: 12px; padding: 16px; text-align: center; font-family: 'Bebas Neue', Impact, sans-serif; font-size: 22px; letter-spacing: 0.14em; color: #09080F; margin-bottom: 18px; cursor: pointer;">Log In</div>
+          <!-- Forgot -->
+          <div style="text-align: center; font-size: 13px; color: #FFFFFF; opacity: 0.45; cursor: pointer; font-family: 'DM Sans', sans-serif;">Forgot password?</div>
+        </div>
+
+      </div>
+    </x-import>
+  </div>
+
+  <!-- ═══════════════════════════════
+       SCREEN 2 — HOME
+  ════════════════════════════════ -->
+  <div style="display: flex; flex-direction: column; align-items: center; gap: 14px;">
+    <span style="font-size: 10px; font-weight: 600; letter-spacing: 0.14em; text-transform: uppercase; color: #2E2B4A; font-family: 'DM Sans', sans-serif;">02 · Home</span>
+
+    <x-import component-from-global-scope="AndroidDevice" from="./android-frame.jsx" dark="{{ true }}" hint-size="412px,892px">
+      <div style="height: 100%; background: #09080F; display: flex; flex-direction: column; overflow: hidden;">
+
+        <!-- Top bar -->
+        <div style="display: flex; align-items: center; justify-content: space-between; padding: 14px 20px 0; flex-shrink: 0;">
+          <span style="font-family: 'Bebas Neue', Impact, sans-serif; font-size: 26px; letter-spacing: 0.14em; color: #FFFFFF;">PITFLIX</span>
+          <div style="display: flex; align-items: center; gap: 18px;">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none">
+              <circle cx="11" cy="11" r="7" stroke="#5E5A82" stroke-width="2"></circle>
+              <path d="M16.5 16.5 L21 21" stroke="#5E5A82" stroke-width="2" stroke-linecap="round"></path>
+            </svg>
+            <div style="width: 28px; height: 28px; border-radius: 50%; background: #2E2B46;"></div>
+          </div>
+        </div>
+
+        <!-- Tab bar -->
+        <div style="display: flex; padding: 10px 20px 0; flex-shrink: 0;">
+          <div onClick="{{ setShowsTab }}" style="{{ showsTabStyle }}">Shows</div>
+          <div onClick="{{ setMoviesTab }}" style="{{ moviesTabStyle }}">Movies</div>
+        </div>
+
+        <!-- Scrollable content -->
+        <div class="scroll-y" style="flex: 1; overflow-y: auto; overflow-x: hidden;">
+
+          <!-- ── SHOWS tab ── -->
+          <sc-if value="{{ showsActive }}" hint-placeholder-val="{{ true }}">
+
+            <!-- Watch Next -->
+            <div style="margin-top: 20px;">
+              <div style="display: flex; align-items: center; justify-content: space-between; padding: 0 20px 10px;">
+                <span style="font-size: 14px; font-weight: 600; color: #F0EDFF; letter-spacing: -0.01em; font-family: 'DM Sans', sans-serif;">Watch Next</span>
+                <span style="font-size: 12px; color: #FFFFFF; font-family: 'DM Sans', sans-serif;">See all</span>
+              </div>
+              <div class="scroll-x">
+                <sc-for list="{{ showsWatchNext }}" as="poster" hint-placeholder-count="4">
+                  <div style="flex: 0 0 auto; width: 110px;">
+                    <div style="{{ poster.cardStyle }}">
+                      <div style="position: absolute; bottom: 0; left: 0; right: 0; height: 3px; background: #1E1A32;">
+                        <div style="{{ poster.barStyle }}"></div>
+                      </div>
+                      <div style="position: absolute; bottom: 3px; left: 0; right: 0; padding: 28px 8px 8px; background: linear-gradient(to top, rgba(9,8,15,0.95) 0%, transparent 100%);">
+                        <div style="font-size: 10px; font-weight: 600; color: #EDE9FF; line-height: 1.3; font-family: 'DM Sans', sans-serif;">{{ poster.title }}</div>
+                        <div style="font-size: 9px; color: #FFFFFF; opacity: 0.7; margin-top: 2px; font-family: 'DM Sans', sans-serif;">{{ poster.sub }}</div>
+                      </div>
+                    </div>
+                  </div>
+                </sc-for>
+              </div>
+            </div>
+
+            <!-- Trending -->
+            <div style="margin-top: 22px;">
+              <div style="display: flex; align-items: center; justify-content: space-between; padding: 0 20px 10px;">
+                <span style="font-size: 14px; font-weight: 600; color: #F0EDFF; letter-spacing: -0.01em; font-family: 'DM Sans', sans-serif;">Trending</span>
+                <span style="font-size: 12px; color: #FFFFFF; font-family: 'DM Sans', sans-serif;">See all</span>
+              </div>
+              <div class="scroll-x">
+                <sc-for list="{{ showsTrending }}" as="poster" hint-placeholder-count="4">
+                  <div style="flex: 0 0 auto; width: 110px;">
+                    <div style="{{ poster.cardStyle }}">
+                      <div style="position: absolute; bottom: 0; left: 0; right: 0; padding: 28px 8px 8px; background: linear-gradient(to top, rgba(9,8,15,0.95) 0%, transparent 100%);">
+                        <div style="font-size: 10px; font-weight: 600; color: #EDE9FF; line-height: 1.3; font-family: 'DM Sans', sans-serif;">{{ poster.title }}</div>
+                      </div>
+                    </div>
+                  </div>
+                </sc-for>
+              </div>
+            </div>
+
+            <!-- Watch Later -->
+            <div style="margin-top: 22px; margin-bottom: 12px;">
+              <div style="display: flex; align-items: center; justify-content: space-between; padding: 0 20px 10px;">
+                <span style="font-size: 14px; font-weight: 600; color: #F0EDFF; letter-spacing: -0.01em; font-family: 'DM Sans', sans-serif;">Watch Later</span>
+                <span style="font-size: 12px; color: #FFFFFF; font-family: 'DM Sans', sans-serif;">See all</span>
+              </div>
+              <div class="scroll-x">
+                <sc-for list="{{ showsWatchLater }}" as="poster" hint-placeholder-count="4">
+                  <div style="flex: 0 0 auto; width: 110px;">
+                    <div style="{{ poster.cardStyle }}">
+                      <div style="position: absolute; bottom: 0; left: 0; right: 0; padding: 28px 8px 8px; background: linear-gradient(to top, rgba(9,8,15,0.95) 0%, transparent 100%);">
+                        <div style="font-size: 10px; font-weight: 600; color: #EDE9FF; line-height: 1.3; font-family: 'DM Sans', sans-serif;">{{ poster.title }}</div>
+                      </div>
+                    </div>
+                  </div>
+                </sc-for>
+              </div>
+            </div>
+
+          </sc-if>
+
+          <!-- ── MOVIES tab ── -->
+          <sc-if value="{{ moviesActive }}" hint-placeholder-val="{{ false }}">
+
+            <!-- Trending -->
+            <div style="margin-top: 20px;">
+              <div style="display: flex; align-items: center; justify-content: space-between; padding: 0 20px 10px;">
+                <span style="font-size: 14px; font-weight: 600; color: #F0EDFF; letter-spacing: -0.01em; font-family: 'DM Sans', sans-serif;">Trending</span>
+                <span style="font-size: 12px; color: #FFFFFF; font-family: 'DM Sans', sans-serif;">See all</span>
+              </div>
+              <div class="scroll-x">
+                <sc-for list="{{ moviesTrending }}" as="poster" hint-placeholder-count="4">
+                  <div style="flex: 0 0 auto; width: 110px;">
+                    <div style="{{ poster.cardStyle }}">
+                      <div style="position: absolute; bottom: 0; left: 0; right: 0; padding: 28px 8px 8px; background: linear-gradient(to top, rgba(9,8,15,0.95) 0%, transparent 100%);">
+                        <div style="font-size: 10px; font-weight: 600; color: #EDE9FF; line-height: 1.3; font-family: 'DM Sans', sans-serif;">{{ poster.title }}</div>
+                      </div>
+                    </div>
+                  </div>
+                </sc-for>
+              </div>
+            </div>
+
+            <!-- Watch Later -->
+            <div style="margin-top: 22px; margin-bottom: 12px;">
+              <div style="display: flex; align-items: center; justify-content: space-between; padding: 0 20px 10px;">
+                <span style="font-size: 14px; font-weight: 600; color: #F0EDFF; letter-spacing: -0.01em; font-family: 'DM Sans', sans-serif;">Watch Later</span>
+                <span style="font-size: 12px; color: #FFFFFF; font-family: 'DM Sans', sans-serif;">See all</span>
+              </div>
+              <div class="scroll-x">
+                <sc-for list="{{ moviesWatchLater }}" as="poster" hint-placeholder-count="4">
+                  <div style="flex: 0 0 auto; width: 110px;">
+                    <div style="{{ poster.cardStyle }}">
+                      <div style="position: absolute; bottom: 0; left: 0; right: 0; padding: 28px 8px 8px; background: linear-gradient(to top, rgba(9,8,15,0.95) 0%, transparent 100%);">
+                        <div style="font-size: 10px; font-weight: 600; color: #EDE9FF; line-height: 1.3; font-family: 'DM Sans', sans-serif;">{{ poster.title }}</div>
+                      </div>
+                    </div>
+                  </div>
+                </sc-for>
+              </div>
+            </div>
+
+          </sc-if>
+
+        </div>
+
+        <div style="flex-shrink:0;height:60px;background:#0C0B1A;border-top:1px solid #1A172E;display:flex;align-items:center;justify-content:space-around;"><div style="flex:1;display:flex;flex-direction:column;align-items:center;gap:3px;cursor:pointer;"><svg width="22" height="22" viewBox="0 0 24 24" fill="none"><path d="M10 20v-6h4v6h5v-8h3L12 3 2 12h3v8z" fill="#FFFFFF"></path></svg><span style="font-size:9px;font-weight:600;color:#FFFFFF;font-family:'DM Sans',sans-serif;">Home</span></div><div style="flex:1;display:flex;flex-direction:column;align-items:center;gap:3px;cursor:pointer;"><svg width="22" height="22" viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="8.5" stroke="#5E5A82" stroke-width="1.8"></circle><path d="M15.5 8.5L13 13.5L8 15.5L10.5 10.5Z" fill="#5E5A82"></path></svg><span style="font-size:9px;font-weight:400;color:rgba(255,255,255,0.45);font-family:'DM Sans',sans-serif;">Discover</span></div><div style="flex:1;display:flex;flex-direction:column;align-items:center;gap:3px;cursor:pointer;"><svg width="22" height="22" viewBox="0 0 24 24" fill="none"><rect x="4" y="10" width="3.5" height="10" rx="1.5" fill="#5E5A82"></rect><rect x="10.25" y="6" width="3.5" height="14" rx="1.5" fill="#5E5A82"></rect><rect x="16.5" y="13" width="3.5" height="7" rx="1.5" fill="#5E5A82"></rect></svg><span style="font-size:9px;font-weight:400;color:rgba(255,255,255,0.45);font-family:'DM Sans',sans-serif;">Stats</span></div><div style="flex:1;display:flex;flex-direction:column;align-items:center;gap:3px;cursor:pointer;"><svg width="22" height="22" viewBox="0 0 24 24" fill="none"><circle cx="12" cy="8" r="3.5" stroke="#5E5A82" stroke-width="1.8"></circle><path d="M4.5 20c0-3.6 3.4-6.5 7.5-6.5s7.5 2.9 7.5 6.5" stroke="#5E5A82" stroke-width="1.8" stroke-linecap="round"></path></svg><span style="font-size:9px;font-weight:400;color:rgba(255,255,255,0.45);font-family:'DM Sans',sans-serif;">Profile</span></div></div>
+      </div>
+    </x-import>
+  </div>
+
+
+  <!-- ═══════════════════════════════
+       SCREEN 3 — STATS
+  ════════════════════════════════ -->
+  <div style="display: flex; flex-direction: column; align-items: center; gap: 14px;">
+    <span style="font-size: 10px; font-weight: 600; letter-spacing: 0.14em; text-transform: uppercase; color: #2E2B4A; font-family: 'DM Sans', sans-serif;">03 · Stats</span>
+
+    <x-import component-from-global-scope="AndroidDevice" from="./android-frame.jsx" dark="{{ true }}" hint-size="412px,892px">
+      <div style="height: 100%; background: #09080F; display: flex; flex-direction: column; overflow: hidden;">
+
+        <!-- Top bar -->
+        <div style="display: flex; align-items: center; justify-content: space-between; padding: 14px 20px 0; flex-shrink: 0;">
+          <span style="font-family: 'Bebas Neue', Impact, sans-serif; font-size: 22px; letter-spacing: 0.14em; color: #FFFFFF;">Stats</span>
+        </div>
+
+        <!-- Tab bar -->
+        <div style="display: flex; padding: 10px 20px 0; flex-shrink: 0;">
+          <div onClick="{{ setStatsShowsTab }}" style="{{ statsShowsTabStyle }}">Shows</div>
+          <div onClick="{{ setStatsMoviesTab }}" style="{{ statsMoviesTabStyle }}">Movies</div>
+        </div>
+
+        <!-- Scrollable content -->
+        <div class="scroll-y" style="flex: 1; overflow-y: auto; overflow-x: hidden; padding-bottom: 12px;">
+
+          <!-- Hero metric card -->
+          <div style="margin: 16px 20px 0; background: #110F22; border-radius: 14px; padding: 22px 20px 18px;">
+            <div style="font-size: 11px; font-weight: 600; letter-spacing: 0.1em; text-transform: uppercase; color: #5E5A82; margin-bottom: 8px; font-family: 'DM Sans', sans-serif;">Total Time Watched</div>
+            <div style="font-family: 'Bebas Neue', Impact, sans-serif; font-size: 34px; letter-spacing: 0.06em; color: #FFFFFF; line-height: 1;">5 mo 21 d 15 hr</div>
+            <div style="font-size: 12px; color: #7C3AED; margin-top: 8px; font-weight: 500; font-family: 'DM Sans', sans-serif;">+38 hours in the last 7 days</div>
+          </div>
+
+          <!-- Bar chart -->
+          <div style="margin: 16px 20px 0; background: #110F22; border-radius: 14px; padding: 18px 16px 14px;">
+            <div style="font-size: 11px; font-weight: 600; letter-spacing: 0.1em; text-transform: uppercase; color: #5E5A82; margin-bottom: 16px; font-family: 'DM Sans', sans-serif;">Episodes / Week</div>
+            <div style="display: flex; align-items: flex-end; gap: 5px; height: 72px;">
+              <sc-for list="{{ weekBars }}" as="bar" hint-placeholder-count="12">
+                <div style="flex: 1; display: flex; flex-direction: column; align-items: center; gap: 4px;">
+                  <div style="{{ bar.barStyle }}"></div>
+                  <div style="font-size: 8px; color: #3D3A5C; font-family: 'DM Sans', sans-serif;">{{ bar.label }}</div>
+                </div>
+              </sc-for>
+            </div>
+          </div>
+
+          <!-- Count cards row -->
+          <div style="margin: 12px 20px 0; display: flex; gap: 10px;">
+            <div style="flex: 1; background: #110F22; border-radius: 14px; padding: 16px 14px;">
+              <div style="font-size: 11px; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase; color: #5E5A82; margin-bottom: 6px; font-family: 'DM Sans', sans-serif;">Episodes</div>
+              <div style="font-family: 'Bebas Neue', Impact, sans-serif; font-size: 30px; letter-spacing: 0.04em; color: #FFFFFF;">5,920</div>
+            </div>
+            <div style="flex: 1; background: #110F22; border-radius: 14px; padding: 16px 14px;">
+              <div style="font-size: 11px; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase; color: #5E5A82; margin-bottom: 6px; font-family: 'DM Sans', sans-serif;">Movies</div>
+              <div style="font-family: 'Bebas Neue', Impact, sans-serif; font-size: 30px; letter-spacing: 0.04em; color: #FFFFFF;">801</div>
+            </div>
+          </div>
+
+          <!-- Biggest Marathons -->
+          <div style="margin: 16px 20px 0; background: #110F22; border-radius: 14px; padding: 18px 16px 8px;">
+            <div style="font-size: 11px; font-weight: 600; letter-spacing: 0.1em; text-transform: uppercase; color: #5E5A82; margin-bottom: 14px; font-family: 'DM Sans', sans-serif;">Biggest Marathons</div>
+            <sc-for list="{{ marathons }}" as="row" hint-placeholder-count="5">
+              <div style="display: flex; align-items: center; padding: 9px 0; border-bottom: 1px solid #1A172E;">
+                <span style="font-size: 11px; color: #3D3A5C; width: 18px; font-family: 'DM Sans', sans-serif; flex-shrink: 0;">{{ row.rank }}</span>
+                <span style="flex: 1; font-size: 13px; font-weight: 500; color: #FFFFFF; font-family: 'DM Sans', sans-serif; margin-left: 4px;">{{ row.title }}</span>
+                <span style="font-size: 11px; color: #7C3AED; font-family: 'DM Sans', sans-serif; margin-right: 10px;">{{ row.eps }} ep</span>
+                <span style="font-size: 11px; color: #5E5A82; font-family: 'DM Sans', sans-serif;">{{ row.hrs }}h</span>
+              </div>
+            </sc-for>
+          </div>
+
+          <!-- Top Genres -->
+          <div style="margin: 16px 20px 0; background: #110F22; border-radius: 14px; padding: 18px 16px 8px;">
+            <div style="font-size: 11px; font-weight: 600; letter-spacing: 0.1em; text-transform: uppercase; color: #5E5A82; margin-bottom: 14px; font-family: 'DM Sans', sans-serif;">Top Genres</div>
+            <sc-for list="{{ genres }}" as="g" hint-placeholder-count="5">
+              <div style="margin-bottom: 12px;">
+                <div style="display: flex; justify-content: space-between; margin-bottom: 5px;">
+                  <span style="font-size: 13px; font-weight: 500; color: #FFFFFF; font-family: 'DM Sans', sans-serif;">{{ g.name }}</span>
+                  <span style="font-size: 12px; color: #5E5A82; font-family: 'DM Sans', sans-serif;">{{ g.count }}</span>
+                </div>
+                <div style="height: 3px; background: #1E1A32; border-radius: 2px;">
+                  <div style="{{ g.barStyle }}"></div>
+                </div>
+              </div>
+            </sc-for>
+          </div>
+
+        </div>
+
+        <div style="flex-shrink:0;height:60px;background:#0C0B1A;border-top:1px solid #1A172E;display:flex;align-items:center;justify-content:space-around;"><div style="flex:1;display:flex;flex-direction:column;align-items:center;gap:3px;cursor:pointer;"><svg width="22" height="22" viewBox="0 0 24 24" fill="none"><path d="M10 20v-6h4v6h5v-8h3L12 3 2 12h3v8z" fill="#5E5A82"></path></svg><span style="font-size:9px;font-weight:400;color:rgba(255,255,255,0.45);font-family:'DM Sans',sans-serif;">Home</span></div><div style="flex:1;display:flex;flex-direction:column;align-items:center;gap:3px;cursor:pointer;"><svg width="22" height="22" viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="8.5" stroke="#5E5A82" stroke-width="1.8"></circle><path d="M15.5 8.5L13 13.5L8 15.5L10.5 10.5Z" fill="#5E5A82"></path></svg><span style="font-size:9px;font-weight:400;color:rgba(255,255,255,0.45);font-family:'DM Sans',sans-serif;">Discover</span></div><div style="flex:1;display:flex;flex-direction:column;align-items:center;gap:3px;cursor:pointer;"><svg width="22" height="22" viewBox="0 0 24 24" fill="none"><rect x="4" y="10" width="3.5" height="10" rx="1.5" fill="#FFFFFF"></rect><rect x="10.25" y="6" width="3.5" height="14" rx="1.5" fill="#FFFFFF"></rect><rect x="16.5" y="13" width="3.5" height="7" rx="1.5" fill="#FFFFFF"></rect></svg><span style="font-size:9px;font-weight:600;color:#FFFFFF;font-family:'DM Sans',sans-serif;">Stats</span></div><div style="flex:1;display:flex;flex-direction:column;align-items:center;gap:3px;cursor:pointer;"><svg width="22" height="22" viewBox="0 0 24 24" fill="none"><circle cx="12" cy="8" r="3.5" stroke="#5E5A82" stroke-width="1.8"></circle><path d="M4.5 20c0-3.6 3.4-6.5 7.5-6.5s7.5 2.9 7.5 6.5" stroke="#5E5A82" stroke-width="1.8" stroke-linecap="round"></path></svg><span style="font-size:9px;font-weight:400;color:rgba(255,255,255,0.45);font-family:'DM Sans',sans-serif;">Profile</span></div></div>
+
+      </div>
+    </x-import>
+  </div>
+
+
+
+  <!-- ═══════════════════════════════
+       SCREEN 5a — TITLE DETAIL · SERIES
+  ════════════════════════════════ -->
+  <div style="display: flex; flex-direction: column; align-items: center; gap: 14px;">
+    <span style="font-size: 10px; font-weight: 600; letter-spacing: 0.14em; text-transform: uppercase; color: #2E2B4A; font-family: 'DM Sans', sans-serif;">05a · Title Detail — Series</span>
+    <x-import component-from-global-scope="AndroidDevice" from="./android-frame.jsx" dark="{{ true }}" hint-size="412px,892px">
+      <div style="height: 100%; background: #09080F; display: flex; flex-direction: column; overflow: hidden;">
+        <div style="flex-shrink:0;height:200px;background:linear-gradient(180deg,#0d1e35 0%,#09080F 100%);position:relative;overflow:hidden;">
+          <div style="position:absolute;inset:0;background:repeating-linear-gradient(0deg,transparent,transparent 30px,rgba(255,255,255,0.015) 30px,rgba(255,255,255,0.015) 31px),repeating-linear-gradient(90deg,transparent,transparent 30px,rgba(255,255,255,0.015) 30px,rgba(255,255,255,0.015) 31px);"></div>
+          <div style="position:absolute;top:14px;left:16px;width:34px;height:34px;border-radius:50%;background:rgba(0,0,0,0.4);display:flex;align-items:center;justify-content:center;"><svg width="18" height="18" viewBox="0 0 24 24" fill="none"><path d="M15 18l-6-6 6-6" stroke="#FFFFFF" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"></path></svg></div>
+          <div style="position:absolute;bottom:16px;left:16px;right:16px;">
+            <div style="font-family:'Bebas Neue',Impact,sans-serif;font-size:36px;letter-spacing:0.08em;color:#FFFFFF;line-height:1;">SEVERANCE</div>
+            <div style="display:flex;align-items:center;gap:10px;margin-top:6px;"><span style="font-size:12px;color:rgba(255,255,255,0.55);font-family:'DM Sans',sans-serif;">2022 · 2 Seasons · Apple TV+</span><div style="background:#7C3AED;border-radius:4px;padding:2px 7px;font-size:11px;font-weight:600;color:#FFFFFF;font-family:'DM Sans',sans-serif;">8.7 ★</div></div>
+          </div>
+        </div>
+        <div style="display:flex;padding:0 20px;flex-shrink:0;border-bottom:1px solid #1A172E;">
+          <div onClick="{{ setDetailEpisodes }}" style="{{ detailEpisodesTabStyle }}">Episodes</div>
+          <div onClick="{{ setDetailAbout }}" style="{{ detailAboutTabStyle }}">About</div>
+        </div>
+        <div class="scroll-y" style="flex:1;overflow-y:auto;overflow-x:hidden;padding-bottom:12px;">
+          <sc-if value="{{ detailEpisodesActive }}" hint-placeholder-val="{{ true }}">
+            <div style="margin:16px 20px 0;background:#110F22;border-radius:12px;padding:14px;display:flex;align-items:center;gap:12px;">
+              <div style="width:52px;height:52px;border-radius:8px;background:linear-gradient(160deg,#0d1a2e,#1c2f4e);flex-shrink:0;display:flex;align-items:center;justify-content:center;"><svg width="18" height="18" viewBox="0 0 24 24" fill="none"><path d="M8 5.14v14l11-7-11-7z" fill="#7C3AED"></path></svg></div>
+              <div style="flex:1;"><div style="font-size:10px;font-weight:600;letter-spacing:0.08em;text-transform:uppercase;color:#5E5A82;font-family:'DM Sans',sans-serif;">Continue Tracking</div><div style="font-size:14px;font-weight:600;color:#FFFFFF;font-family:'DM Sans',sans-serif;margin-top:3px;">S2 E9 · The Goodbye Party</div><div style="font-size:11px;color:rgba(255,255,255,0.45);font-family:'DM Sans',sans-serif;margin-top:2px;">42 min</div></div>
+              <div style="background:#7C3AED;border-radius:8px;padding:8px 12px;font-size:12px;font-weight:600;color:#FFFFFF;font-family:'DM Sans',sans-serif;cursor:pointer;flex-shrink:0;">Mark</div>
+            </div>
+            <div style="margin:12px 20px 0;background:#110F22;border-radius:12px;overflow:hidden;">
+              <div style="display:flex;align-items:center;padding:14px 16px;cursor:pointer;"><div style="flex:1;"><div style="font-size:14px;font-weight:600;color:#FFFFFF;font-family:'DM Sans',sans-serif;">Season 1</div><div style="font-size:11px;color:rgba(255,255,255,0.4);font-family:'DM Sans',sans-serif;margin-top:2px;">9 of 9 episodes</div></div><div style="width:22px;height:22px;border-radius:50%;background:#1A3A2A;border:1.5px solid #34D399;display:flex;align-items:center;justify-content:center;flex-shrink:0;"><svg width="11" height="11" viewBox="0 0 12 12" fill="none"><path d="M2 6l3 3 5-5" stroke="#34D399" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"></path></svg></div></div>
+            </div>
+            <div style="margin:10px 20px 0;background:#110F22;border-radius:12px;overflow:hidden;">
+              <div style="display:flex;align-items:center;padding:14px 16px;border-bottom:1px solid #1A172E;"><div style="flex:1;"><div style="font-size:14px;font-weight:600;color:#FFFFFF;font-family:'DM Sans',sans-serif;">Season 2</div><div style="font-size:11px;color:rgba(255,255,255,0.4);font-family:'DM Sans',sans-serif;margin-top:2px;">8 of 9 episodes</div></div><div style="width:22px;height:22px;border-radius:50%;border:1.5px solid #7C3AED;display:flex;align-items:center;justify-content:center;flex-shrink:0;"><svg width="11" height="11" viewBox="0 0 12 12" fill="none"><path d="M2 7l3 3 5-5" stroke="#7C3AED" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"></path></svg></div></div>
+              <sc-for list="{{ s2Episodes }}" as="ep" hint-placeholder-count="4">
+                <div style="display:flex;align-items:center;padding:10px 16px;border-bottom:1px solid #1A172E;">
+                  <div style="width:18px;height:18px;border-radius:50%;background:{{ ep.doneBg }};border:1.5px solid {{ ep.doneBorder }};display:flex;align-items:center;justify-content:center;flex-shrink:0;margin-right:12px;"><svg width="9" height="9" viewBox="0 0 12 12" fill="none"><path d="M2 6l3 3 5-5" stroke="{{ ep.doneStroke }}" stroke-width="1.8" stroke-linecap="round"></path></svg></div>
+                  <div style="flex:1;"><div style="font-size:12px;font-weight:500;color:#FFFFFF;font-family:'DM Sans',sans-serif;">{{ ep.title }}</div><div style="font-size:10px;color:rgba(255,255,255,0.35);font-family:'DM Sans',sans-serif;margin-top:1px;">{{ ep.dur }}</div></div>
+                  <div style="font-size:11px;color:rgba(255,255,255,0.25);font-family:'DM Sans',sans-serif;">E{{ ep.num }}</div>
+                </div>
+              </sc-for>
+            </div>
+          </sc-if>
+          <sc-if value="{{ detailAboutActive }}" hint-placeholder-val="{{ false }}">
+            <div style="padding:16px 20px 0;"><p style="font-size:13px;line-height:1.65;color:rgba(255,255,255,0.7);font-family:'DM Sans',sans-serif;margin:0 0 20px;">A mysterious biotech company offers a surgical procedure that separates work memories from personal ones — but something much darker lies beneath the surface of Lumon Industries.</p><div style="font-size:11px;font-weight:600;letter-spacing:0.1em;text-transform:uppercase;color:#5E5A82;margin-bottom:12px;font-family:'DM Sans',sans-serif;">Cast</div></div>
+            <div class="scroll-x" style="padding-bottom:10px;">
+              <sc-for list="{{ castSeverance }}" as="actor" hint-placeholder-count="5">
+                <div style="flex:0 0 auto;display:flex;flex-direction:column;align-items:center;gap:6px;width:70px;"><div style="width:52px;height:52px;border-radius:50%;background:{{ actor.bg }};display:flex;align-items:center;justify-content:center;"><span style="font-size:14px;font-weight:600;color:#FFFFFF;font-family:'Bebas Neue',Impact,sans-serif;">{{ actor.initials }}</span></div><div style="font-size:9px;color:rgba(255,255,255,0.65);text-align:center;line-height:1.3;font-family:'DM Sans',sans-serif;">{{ actor.name }}</div></div>
+              </sc-for>
+            </div>
+            <div style="padding:4px 20px 0;"><div style="font-size:11px;font-weight:600;letter-spacing:0.1em;text-transform:uppercase;color:#5E5A82;margin-bottom:10px;font-family:'DM Sans',sans-serif;">Genres</div><div style="display:flex;flex-wrap:wrap;gap:8px;"><div style="background:#1A172E;border-radius:20px;padding:5px 12px;font-size:12px;color:rgba(255,255,255,0.65);font-family:'DM Sans',sans-serif;">Drama</div><div style="background:#1A172E;border-radius:20px;padding:5px 12px;font-size:12px;color:rgba(255,255,255,0.65);font-family:'DM Sans',sans-serif;">Mystery</div><div style="background:#1A172E;border-radius:20px;padding:5px 12px;font-size:12px;color:rgba(255,255,255,0.65);font-family:'DM Sans',sans-serif;">Sci-Fi</div><div style="background:#1A172E;border-radius:20px;padding:5px 12px;font-size:12px;color:rgba(255,255,255,0.65);font-family:'DM Sans',sans-serif;">Thriller</div></div></div>
+          </sc-if>
+        </div>
+        <div style="flex-shrink:0;height:60px;background:#0C0B1A;border-top:1px solid #1A172E;display:flex;align-items:center;justify-content:space-around;">
+          <div style="flex:1;display:flex;flex-direction:column;align-items:center;gap:3px;"><svg width="22" height="22" viewBox="0 0 24 24" fill="none"><path d="M10 20v-6h4v6h5v-8h3L12 3 2 12h3v8z" fill="#5E5A82"></path></svg><span style="font-size:9px;color:rgba(255,255,255,0.45);font-family:'DM Sans',sans-serif;">Home</span></div>
+          <div style="flex:1;display:flex;flex-direction:column;align-items:center;gap:3px;"><svg width="22" height="22" viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="8.5" stroke="#FFFFFF" stroke-width="1.8"></circle><path d="M15.5 8.5L13 13.5L8 15.5L10.5 10.5Z" fill="#FFFFFF"></path></svg><span style="font-size:9px;font-weight:600;color:#FFFFFF;font-family:'DM Sans',sans-serif;">Discover</span></div>
+          <div style="flex:1;display:flex;flex-direction:column;align-items:center;gap:3px;"><svg width="22" height="22" viewBox="0 0 24 24" fill="none"><rect x="4" y="10" width="3.5" height="10" rx="1.5" fill="#5E5A82"></rect><rect x="10.25" y="6" width="3.5" height="14" rx="1.5" fill="#5E5A82"></rect><rect x="16.5" y="13" width="3.5" height="7" rx="1.5" fill="#5E5A82"></rect></svg><span style="font-size:9px;color:rgba(255,255,255,0.45);font-family:'DM Sans',sans-serif;">Stats</span></div>
+          <div style="flex:1;display:flex;flex-direction:column;align-items:center;gap:3px;"><svg width="22" height="22" viewBox="0 0 24 24" fill="none"><circle cx="12" cy="8" r="3.5" stroke="#5E5A82" stroke-width="1.8"></circle><path d="M4.5 20c0-3.6 3.4-6.5 7.5-6.5s7.5 2.9 7.5 6.5" stroke="#5E5A82" stroke-width="1.8" stroke-linecap="round"></path></svg><span style="font-size:9px;color:rgba(255,255,255,0.45);font-family:'DM Sans',sans-serif;">Profile</span></div>
+        </div>
+      </div>
+    </x-import>
+  </div>
+
+  <!-- ═══════════════════════════════
+       SCREEN 5b — TITLE DETAIL · MOVIE
+  ════════════════════════════════ -->
+  <div style="display: flex; flex-direction: column; align-items: center; gap: 14px;">
+    <span style="font-size: 10px; font-weight: 600; letter-spacing: 0.14em; text-transform: uppercase; color: #2E2B4A; font-family: 'DM Sans', sans-serif;">05b · Title Detail — Movie</span>
+    <x-import component-from-global-scope="AndroidDevice" from="./android-frame.jsx" dark="{{ true }}" hint-size="412px,892px">
+      <div style="height: 100%; background: #09080F; display: flex; flex-direction: column; overflow: hidden;">
+        <div style="flex-shrink:0;height:220px;background:linear-gradient(180deg,#1e1404 0%,#09080F 100%);position:relative;overflow:hidden;">
+          <div style="position:absolute;inset:0;background:repeating-linear-gradient(0deg,transparent,transparent 28px,rgba(255,200,80,0.018) 28px,rgba(255,200,80,0.018) 29px),repeating-linear-gradient(90deg,transparent,transparent 28px,rgba(255,200,80,0.018) 28px,rgba(255,200,80,0.018) 29px);"></div>
+          <div style="position:absolute;top:14px;left:16px;width:34px;height:34px;border-radius:50%;background:rgba(0,0,0,0.4);display:flex;align-items:center;justify-content:center;"><svg width="18" height="18" viewBox="0 0 24 24" fill="none"><path d="M15 18l-6-6 6-6" stroke="#FFFFFF" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"></path></svg></div>
+          <div style="position:absolute;bottom:16px;left:16px;right:16px;"><div style="font-family:'Bebas Neue',Impact,sans-serif;font-size:32px;letter-spacing:0.08em;color:#FFFFFF;line-height:1;">DUNE: PART TWO</div><div style="display:flex;align-items:center;gap:10px;margin-top:6px;"><span style="font-size:12px;color:rgba(255,255,255,0.55);font-family:'DM Sans',sans-serif;">2024 · 2h 46m · Theaters</span><div style="background:#7C3AED;border-radius:4px;padding:2px 7px;font-size:11px;font-weight:600;color:#FFFFFF;font-family:'DM Sans',sans-serif;">8.5 ★</div></div></div>
+        </div>
+        <div class="scroll-y" style="flex:1;overflow-y:auto;overflow-x:hidden;">
+          <div style="padding:16px 20px 0;">
+            <div style="background:#110F22;border-radius:12px;padding:14px 16px;display:flex;align-items:center;gap:0;margin-bottom:14px;">
+              <div style="flex:1;"><div style="font-size:10px;font-weight:600;letter-spacing:0.08em;text-transform:uppercase;color:#5E5A82;font-family:'DM Sans',sans-serif;margin-bottom:6px;">Watched</div><div style="width:44px;height:26px;border-radius:13px;background:#7C3AED;position:relative;cursor:pointer;"><div style="position:absolute;top:3px;left:21px;width:20px;height:20px;border-radius:50%;background:#FFFFFF;"></div></div></div>
+              <div style="width:1px;height:44px;background:#1A172E;margin:0 16px;"></div>
+              <div style="flex:1;"><div style="font-size:10px;font-weight:600;letter-spacing:0.08em;text-transform:uppercase;color:#5E5A82;font-family:'DM Sans',sans-serif;margin-bottom:6px;">Rating</div><div style="display:flex;gap:2px;"><span style="font-size:17px;color:#F59E0B;">★</span><span style="font-size:17px;color:#F59E0B;">★</span><span style="font-size:17px;color:#F59E0B;">★</span><span style="font-size:17px;color:#F59E0B;">★</span><span style="font-size:17px;color:#2A2548;">★</span></div></div>
+              <div style="width:1px;height:44px;background:#1A172E;margin:0 16px;"></div>
+              <div style="flex:1;"><div style="font-size:10px;font-weight:600;letter-spacing:0.08em;text-transform:uppercase;color:#5E5A82;font-family:'DM Sans',sans-serif;margin-bottom:6px;">Watch Later</div><div style="width:44px;height:26px;border-radius:13px;background:#1E1A32;position:relative;cursor:pointer;"><div style="position:absolute;top:3px;left:3px;width:20px;height:20px;border-radius:50%;background:#3D3A5C;"></div></div></div>
+            </div>
+            <div style="background:#7C3AED;border-radius:12px;padding:14px;text-align:center;font-family:'Bebas Neue',Impact,sans-serif;font-size:20px;letter-spacing:0.12em;color:#FFFFFF;cursor:pointer;margin-bottom:14px;">Log This Watch</div>
+            <p style="font-size:13px;line-height:1.65;color:rgba(255,255,255,0.7);font-family:'DM Sans',sans-serif;margin:0 0 20px;">Paul Atreides unites with the Fremen to wage war against the Harkonnens and seeks revenge against the conspirators who destroyed his family.</p>
+            <div style="font-size:11px;font-weight:600;letter-spacing:0.1em;text-transform:uppercase;color:#5E5A82;margin-bottom:12px;font-family:'DM Sans',sans-serif;">Cast</div>
+          </div>
+          <div class="scroll-x" style="padding-bottom:10px;">
+            <sc-for list="{{ castDune }}" as="actor" hint-placeholder-count="5">
+              <div style="flex:0 0 auto;display:flex;flex-direction:column;align-items:center;gap:6px;width:70px;"><div style="width:52px;height:52px;border-radius:50%;background:{{ actor.bg }};display:flex;align-items:center;justify-content:center;"><span style="font-size:14px;font-weight:600;color:#FFFFFF;font-family:'Bebas Neue',Impact,sans-serif;">{{ actor.initials }}</span></div><div style="font-size:9px;color:rgba(255,255,255,0.65);text-align:center;line-height:1.3;font-family:'DM Sans',sans-serif;">{{ actor.name }}</div></div>
+            </sc-for>
+          </div>
+          <div style="padding:4px 20px 16px;"><div style="font-size:11px;font-weight:600;letter-spacing:0.1em;text-transform:uppercase;color:#5E5A82;margin-bottom:10px;font-family:'DM Sans',sans-serif;">Genres</div><div style="display:flex;flex-wrap:wrap;gap:8px;"><div style="background:#1A172E;border-radius:20px;padding:5px 12px;font-size:12px;color:rgba(255,255,255,0.65);font-family:'DM Sans',sans-serif;">Sci-Fi</div><div style="background:#1A172E;border-radius:20px;padding:5px 12px;font-size:12px;color:rgba(255,255,255,0.65);font-family:'DM Sans',sans-serif;">Adventure</div><div style="background:#1A172E;border-radius:20px;padding:5px 12px;font-size:12px;color:rgba(255,255,255,0.65);font-family:'DM Sans',sans-serif;">Drama</div></div></div>
+        </div>
+        <div style="flex-shrink:0;height:60px;background:#0C0B1A;border-top:1px solid #1A172E;display:flex;align-items:center;justify-content:space-around;">
+          <div style="flex:1;display:flex;flex-direction:column;align-items:center;gap:3px;"><svg width="22" height="22" viewBox="0 0 24 24" fill="none"><path d="M10 20v-6h4v6h5v-8h3L12 3 2 12h3v8z" fill="#5E5A82"></path></svg><span style="font-size:9px;color:rgba(255,255,255,0.45);font-family:'DM Sans',sans-serif;">Home</span></div>
+          <div style="flex:1;display:flex;flex-direction:column;align-items:center;gap:3px;"><svg width="22" height="22" viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="8.5" stroke="#FFFFFF" stroke-width="1.8"></circle><path d="M15.5 8.5L13 13.5L8 15.5L10.5 10.5Z" fill="#FFFFFF"></path></svg><span style="font-size:9px;font-weight:600;color:#FFFFFF;font-family:'DM Sans',sans-serif;">Discover</span></div>
+          <div style="flex:1;display:flex;flex-direction:column;align-items:center;gap:3px;"><svg width="22" height="22" viewBox="0 0 24 24" fill="none"><rect x="4" y="10" width="3.5" height="10" rx="1.5" fill="#5E5A82"></rect><rect x="10.25" y="6" width="3.5" height="14" rx="1.5" fill="#5E5A82"></rect><rect x="16.5" y="13" width="3.5" height="7" rx="1.5" fill="#5E5A82"></rect></svg><span style="font-size:9px;color:rgba(255,255,255,0.45);font-family:'DM Sans',sans-serif;">Stats</span></div>
+          <div style="flex:1;display:flex;flex-direction:column;align-items:center;gap:3px;"><svg width="22" height="22" viewBox="0 0 24 24" fill="none"><circle cx="12" cy="8" r="3.5" stroke="#5E5A82" stroke-width="1.8"></circle><path d="M4.5 20c0-3.6 3.4-6.5 7.5-6.5s7.5 2.9 7.5 6.5" stroke="#5E5A82" stroke-width="1.8" stroke-linecap="round"></path></svg><span style="font-size:9px;color:rgba(255,255,255,0.45);font-family:'DM Sans',sans-serif;">Profile</span></div>
+        </div>
+      </div>
+    </x-import>
+  </div>
+
+  <!-- ═══════════════════════════════
+       SCREEN 6 — ACTOR
+  ════════════════════════════════ -->
+  <div style="display: flex; flex-direction: column; align-items: center; gap: 14px;">
+    <span style="font-size: 10px; font-weight: 600; letter-spacing: 0.14em; text-transform: uppercase; color: #2E2B4A; font-family: 'DM Sans', sans-serif;">06 · Actor</span>
+    <x-import component-from-global-scope="AndroidDevice" from="./android-frame.jsx" dark="{{ true }}" hint-size="412px,892px">
+      <div style="height: 100%; background: #09080F; display: flex; flex-direction: column; overflow: hidden;">
+        <div style="flex-shrink:0;background:linear-gradient(180deg,#0e0c20 0%,#09080F 100%);padding:16px 20px 20px;position:relative;">
+          <div style="position:absolute;top:14px;left:16px;width:34px;height:34px;border-radius:50%;background:rgba(0,0,0,0.4);display:flex;align-items:center;justify-content:center;"><svg width="18" height="18" viewBox="0 0 24 24" fill="none"><path d="M15 18l-6-6 6-6" stroke="#FFFFFF" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"></path></svg></div>
+          <div style="display:flex;flex-direction:column;align-items:center;padding-top:20px;gap:12px;">
+            <div style="width:80px;height:80px;border-radius:50%;background:#1A1630;border:2px solid #2A2548;display:flex;align-items:center;justify-content:center;"><span style="font-family:'Bebas Neue',Impact,sans-serif;font-size:28px;color:#7C3AED;letter-spacing:0.04em;">PP</span></div>
+            <div style="text-align:center;"><div style="font-family:'Bebas Neue',Impact,sans-serif;font-size:28px;letter-spacing:0.1em;color:#FFFFFF;">PEDRO PASCAL</div><div style="font-size:12px;color:rgba(255,255,255,0.4);font-family:'DM Sans',sans-serif;margin-top:4px;">Born April 2, 1975 · Santiago, Chile</div></div>
+          </div>
+        </div>
+        <div class="scroll-y" style="flex:1;overflow-y:auto;overflow-x:hidden;padding:16px 20px;">
+          <p style="font-size:13px;line-height:1.65;color:rgba(255,255,255,0.65);font-family:'DM Sans',sans-serif;margin:0 0 22px;">Chilean-American actor known for his roles in Game of Thrones, Narcos, The Mandalorian, and The Last of Us. One of the most in-demand leading men in Hollywood.</p>
+          <div style="font-size:11px;font-weight:600;letter-spacing:0.12em;text-transform:uppercase;color:#5E5A82;margin-bottom:14px;font-family:'DM Sans',sans-serif;">Filmography</div>
+          <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:10px;">
+            <sc-for list="{{ actorFilmography }}" as="film" hint-placeholder-count="6">
+              <div style="position:relative;border-radius:8px;overflow:hidden;aspect-ratio:2/3;background:{{ film.bg }};"><div style="position:absolute;bottom:0;left:0;right:0;padding:22px 7px 7px;background:linear-gradient(to top,rgba(9,8,15,0.95) 0%,transparent 100%);"><div style="font-size:9px;font-weight:600;color:#FFFFFF;line-height:1.3;font-family:'DM Sans',sans-serif;">{{ film.title }}</div></div></div>
+            </sc-for>
+          </div>
+        </div>
+        <div style="flex-shrink:0;height:60px;background:#0C0B1A;border-top:1px solid #1A172E;display:flex;align-items:center;justify-content:space-around;">
+          <div style="flex:1;display:flex;flex-direction:column;align-items:center;gap:3px;"><svg width="22" height="22" viewBox="0 0 24 24" fill="none"><path d="M10 20v-6h4v6h5v-8h3L12 3 2 12h3v8z" fill="#5E5A82"></path></svg><span style="font-size:9px;color:rgba(255,255,255,0.45);font-family:'DM Sans',sans-serif;">Home</span></div>
+          <div style="flex:1;display:flex;flex-direction:column;align-items:center;gap:3px;"><svg width="22" height="22" viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="8.5" stroke="#FFFFFF" stroke-width="1.8"></circle><path d="M15.5 8.5L13 13.5L8 15.5L10.5 10.5Z" fill="#FFFFFF"></path></svg><span style="font-size:9px;font-weight:600;color:#FFFFFF;font-family:'DM Sans',sans-serif;">Discover</span></div>
+          <div style="flex:1;display:flex;flex-direction:column;align-items:center;gap:3px;"><svg width="22" height="22" viewBox="0 0 24 24" fill="none"><rect x="4" y="10" width="3.5" height="10" rx="1.5" fill="#5E5A82"></rect><rect x="10.25" y="6" width="3.5" height="14" rx="1.5" fill="#5E5A82"></rect><rect x="16.5" y="13" width="3.5" height="7" rx="1.5" fill="#5E5A82"></rect></svg><span style="font-size:9px;color:rgba(255,255,255,0.45);font-family:'DM Sans',sans-serif;">Stats</span></div>
+          <div style="flex:1;display:flex;flex-direction:column;align-items:center;gap:3px;"><svg width="22" height="22" viewBox="0 0 24 24" fill="none"><circle cx="12" cy="8" r="3.5" stroke="#5E5A82" stroke-width="1.8"></circle><path d="M4.5 20c0-3.6 3.4-6.5 7.5-6.5s7.5 2.9 7.5 6.5" stroke="#5E5A82" stroke-width="1.8" stroke-linecap="round"></path></svg><span style="font-size:9px;color:rgba(255,255,255,0.45);font-family:'DM Sans',sans-serif;">Profile</span></div>
+        </div>
+      </div>
+    </x-import>
+  </div>
+
+  <!-- ═══════════════════════════════
+       SCREEN 7 — SETTINGS
+  ════════════════════════════════ -->
+  <div style="display: flex; flex-direction: column; align-items: center; gap: 14px;">
+    <span style="font-size: 10px; font-weight: 600; letter-spacing: 0.14em; text-transform: uppercase; color: #2E2B4A; font-family: 'DM Sans', sans-serif;">07 · Settings</span>
+    <x-import component-from-global-scope="AndroidDevice" from="./android-frame.jsx" dark="{{ true }}" hint-size="412px,892px">
+      <div style="height: 100%; background: #09080F; display: flex; flex-direction: column; overflow: hidden;">
+        <div style="display:flex;align-items:center;gap:12px;padding:14px 20px 0;flex-shrink:0;">
+          <div style="width:34px;height:34px;border-radius:50%;background:#110F22;display:flex;align-items:center;justify-content:center;cursor:pointer;"><svg width="18" height="18" viewBox="0 0 24 24" fill="none"><path d="M15 18l-6-6 6-6" stroke="#FFFFFF" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"></path></svg></div>
+          <span style="font-family:'Bebas Neue',Impact,sans-serif;font-size:22px;letter-spacing:0.14em;color:#FFFFFF;">Settings</span>
+        </div>
+        <div class="scroll-y" style="flex:1;overflow-y:auto;padding:20px 20px 12px;">
+          <div style="font-size:11px;font-weight:600;letter-spacing:0.12em;text-transform:uppercase;color:#5E5A82;margin-bottom:10px;font-family:'DM Sans',sans-serif;">Connection</div>
+          <div style="background:#110F22;border-radius:14px;overflow:hidden;margin-bottom:20px;">
+            <div style="display:flex;align-items:center;padding:16px;"><div style="flex:1;"><div style="font-size:14px;font-weight:500;color:#FFFFFF;font-family:'DM Sans',sans-serif;">Sync with Desktop</div><div style="font-size:11px;color:#5E5A82;margin-top:2px;font-family:'DM Sans',sans-serif;">Auto-sync watch history</div></div><div style="width:44px;height:26px;border-radius:13px;background:#7C3AED;position:relative;cursor:pointer;flex-shrink:0;"><div style="position:absolute;top:3px;left:21px;width:20px;height:20px;border-radius:50%;background:#FFFFFF;"></div></div></div>
+            <div style="height:1px;background:#1A172E;margin:0 16px;"></div>
+            <div style="display:flex;align-items:center;gap:8px;padding:12px 16px;"><div style="width:7px;height:7px;border-radius:50%;background:#34D399;flex-shrink:0;"></div><span style="font-size:12px;color:#7A7896;flex:1;font-family:'DM Sans',sans-serif;">Connected · pitflix-desktop</span></div>
+            <div style="height:1px;background:#1A172E;margin:0 16px;"></div>
+            <div style="display:flex;align-items:center;padding:12px 16px;justify-content:space-between;"><span style="font-size:13px;color:rgba(255,255,255,0.65);font-family:'DM Sans',sans-serif;">Last synced</span><span style="font-size:13px;color:rgba(255,255,255,0.35);font-family:'DM Sans',sans-serif;">3 minutes ago</span></div>
+            <div style="height:1px;background:#1A172E;margin:0 16px;"></div>
+            <div style="padding:12px 16px;cursor:pointer;"><span style="font-size:13px;color:#7C3AED;font-weight:500;font-family:'DM Sans',sans-serif;">Sync Now</span></div>
+          </div>
+          <div style="font-size:11px;font-weight:600;letter-spacing:0.12em;text-transform:uppercase;color:#5E5A82;margin-bottom:10px;font-family:'DM Sans',sans-serif;">Account</div>
+          <div style="background:#110F22;border-radius:14px;overflow:hidden;margin-bottom:20px;">
+            <div style="display:flex;align-items:center;justify-content:space-between;padding:14px 16px;"><span style="font-size:13px;color:rgba(255,255,255,0.65);font-family:'DM Sans',sans-serif;">Email</span><span style="font-size:13px;color:rgba(255,255,255,0.35);font-family:'DM Sans',sans-serif;">john@example.com</span></div>
+            <div style="height:1px;background:#1A172E;margin:0 16px;"></div>
+            <div style="padding:14px 16px;cursor:pointer;"><span style="font-size:13px;color:rgba(255,255,255,0.65);font-family:'DM Sans',sans-serif;">Change Password</span></div>
+          </div>
+          <div style="font-size:11px;font-weight:600;letter-spacing:0.12em;text-transform:uppercase;color:#5E5A82;margin-bottom:10px;font-family:'DM Sans',sans-serif;">App</div>
+          <div style="background:#110F22;border-radius:14px;overflow:hidden;margin-bottom:20px;">
+            <div style="display:flex;align-items:center;justify-content:space-between;padding:14px 16px;"><span style="font-size:13px;color:rgba(255,255,255,0.65);font-family:'DM Sans',sans-serif;">Version</span><span style="font-size:13px;color:rgba(255,255,255,0.25);font-family:'DM Sans',sans-serif;">1.0.0-beta</span></div>
+            <div style="height:1px;background:#1A172E;margin:0 16px;"></div>
+            <div style="display:flex;align-items:center;justify-content:space-between;padding:14px 16px;"><span style="font-size:13px;color:rgba(255,255,255,0.65);font-family:'DM Sans',sans-serif;">Clear Cache</span><svg width="16" height="16" viewBox="0 0 24 24" fill="none"><path d="M9 18l6-6-6-6" stroke="rgba(255,255,255,0.25)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"></path></svg></div>
+          </div>
+          <div style="background:#110F22;border-radius:14px;padding:16px;text-align:center;cursor:pointer;"><span style="font-size:14px;font-weight:500;color:#EF4444;font-family:'DM Sans',sans-serif;">Log Out</span></div>
+        </div>
+        <div style="flex-shrink:0;height:60px;background:#0C0B1A;border-top:1px solid #1A172E;display:flex;align-items:center;justify-content:space-around;">
+          <div style="flex:1;display:flex;flex-direction:column;align-items:center;gap:3px;"><svg width="22" height="22" viewBox="0 0 24 24" fill="none"><path d="M10 20v-6h4v6h5v-8h3L12 3 2 12h3v8z" fill="#5E5A82"></path></svg><span style="font-size:9px;color:rgba(255,255,255,0.45);font-family:'DM Sans',sans-serif;">Home</span></div>
+          <div style="flex:1;display:flex;flex-direction:column;align-items:center;gap:3px;"><svg width="22" height="22" viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="8.5" stroke="#5E5A82" stroke-width="1.8"></circle><path d="M15.5 8.5L13 13.5L8 15.5L10.5 10.5Z" fill="#5E5A82"></path></svg><span style="font-size:9px;color:rgba(255,255,255,0.45);font-family:'DM Sans',sans-serif;">Discover</span></div>
+          <div style="flex:1;display:flex;flex-direction:column;align-items:center;gap:3px;"><svg width="22" height="22" viewBox="0 0 24 24" fill="none"><rect x="4" y="10" width="3.5" height="10" rx="1.5" fill="#5E5A82"></rect><rect x="10.25" y="6" width="3.5" height="14" rx="1.5" fill="#5E5A82"></rect><rect x="16.5" y="13" width="3.5" height="7" rx="1.5" fill="#5E5A82"></rect></svg><span style="font-size:9px;color:rgba(255,255,255,0.45);font-family:'DM Sans',sans-serif;">Stats</span></div>
+          <div style="flex:1;display:flex;flex-direction:column;align-items:center;gap:3px;"><svg width="22" height="22" viewBox="0 0 24 24" fill="none"><circle cx="12" cy="8" r="3.5" stroke="#FFFFFF" stroke-width="1.8"></circle><path d="M4.5 20c0-3.6 3.4-6.5 7.5-6.5s7.5 2.9 7.5 6.5" stroke="#FFFFFF" stroke-width="1.8" stroke-linecap="round"></path></svg><span style="font-size:9px;font-weight:600;color:#FFFFFF;font-family:'DM Sans',sans-serif;">Profile</span></div>
+        </div>
+      </div>
+    </x-import>
+  </div>
+
+  <!-- ═══════════════════════════════
+       SCREEN 8 — SEARCH
+  ════════════════════════════════ -->
+  <div style="display: flex; flex-direction: column; align-items: center; gap: 14px;">
+    <span style="font-size: 10px; font-weight: 600; letter-spacing: 0.14em; text-transform: uppercase; color: #2E2B4A; font-family: 'DM Sans', sans-serif;">08 · Search</span>
+    <x-import component-from-global-scope="AndroidDevice" from="./android-frame.jsx" dark="{{ true }}" hint-size="412px,892px">
+      <div style="height: 100%; background: #09080F; display: flex; flex-direction: column; overflow: hidden;">
+        <div style="flex-shrink:0;padding:14px 20px 10px;">
+          <div style="background:#110F22;border:1.5px solid #2A2548;border-radius:12px;display:flex;align-items:center;gap:10px;padding:0 14px;height:46px;"><svg width="18" height="18" viewBox="0 0 24 24" fill="none"><circle cx="11" cy="11" r="7" stroke="#5E5A82" stroke-width="2"></circle><path d="M16.5 16.5L21 21" stroke="#5E5A82" stroke-width="2" stroke-linecap="round"></path></svg><span style="flex:1;font-size:15px;color:#FFFFFF;font-family:'DM Sans',sans-serif;">blade runner</span><svg width="16" height="16" viewBox="0 0 24 24" fill="none"><path d="M18 6L6 18M6 6l12 12" stroke="#5E5A82" stroke-width="2" stroke-linecap="round"></path></svg></div>
+        </div>
+        <div style="flex-shrink:0;display:flex;gap:8px;padding:0 20px 12px;">
+          <div style="background:#1A172E;border-radius:20px;padding:6px 14px;font-size:12px;color:rgba(255,255,255,0.45);font-family:'DM Sans',sans-serif;cursor:pointer;">All</div>
+          <div style="background:#7C3AED;border-radius:20px;padding:6px 14px;font-size:12px;font-weight:600;color:#FFFFFF;font-family:'DM Sans',sans-serif;cursor:pointer;">Movies</div>
+          <div style="background:#1A172E;border-radius:20px;padding:6px 14px;font-size:12px;color:rgba(255,255,255,0.45);font-family:'DM Sans',sans-serif;cursor:pointer;">Shows</div>
+        </div>
+        <div style="flex-shrink:0;padding:0 20px 10px;"><span style="font-size:12px;color:rgba(255,255,255,0.3);font-family:'DM Sans',sans-serif;">4 results for "blade runner"</span></div>
+        <div class="scroll-y" style="flex:1;overflow-y:auto;padding:0 20px 12px;">
+          <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:10px;">
+            <sc-for list="{{ searchResults }}" as="result" hint-placeholder-count="6">
+              <div style="position:relative;border-radius:8px;overflow:hidden;background:{{ result.bg }};cursor:pointer;"><div style="padding-top:150%;"></div><div style="position:absolute;inset:0;display:flex;flex-direction:column;justify-content:flex-end;padding:20px 8px 8px;background:linear-gradient(to top,rgba(9,8,15,0.95) 0%,transparent 100%);"><div style="font-size:9px;font-weight:600;color:#FFFFFF;line-height:1.3;font-family:'DM Sans',sans-serif;">{{ result.title }}</div><div style="font-size:8px;color:rgba(255,255,255,0.4);margin-top:2px;font-family:'DM Sans',sans-serif;">{{ result.year }}</div></div></div>
+            </sc-for>
+          </div>
+        </div>
+        <div style="flex-shrink:0;height:60px;background:#0C0B1A;border-top:1px solid #1A172E;display:flex;align-items:center;justify-content:space-around;">
+          <div style="flex:1;display:flex;flex-direction:column;align-items:center;gap:3px;"><svg width="22" height="22" viewBox="0 0 24 24" fill="none"><path d="M10 20v-6h4v6h5v-8h3L12 3 2 12h3v8z" fill="#5E5A82"></path></svg><span style="font-size:9px;color:rgba(255,255,255,0.45);font-family:'DM Sans',sans-serif;">Home</span></div>
+          <div style="flex:1;display:flex;flex-direction:column;align-items:center;gap:3px;"><svg width="22" height="22" viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="8.5" stroke="#FFFFFF" stroke-width="1.8"></circle><path d="M15.5 8.5L13 13.5L8 15.5L10.5 10.5Z" fill="#FFFFFF"></path></svg><span style="font-size:9px;font-weight:600;color:#FFFFFF;font-family:'DM Sans',sans-serif;">Discover</span></div>
+          <div style="flex:1;display:flex;flex-direction:column;align-items:center;gap:3px;"><svg width="22" height="22" viewBox="0 0 24 24" fill="none"><rect x="4" y="10" width="3.5" height="10" rx="1.5" fill="#5E5A82"></rect><rect x="10.25" y="6" width="3.5" height="14" rx="1.5" fill="#5E5A82"></rect><rect x="16.5" y="13" width="3.5" height="7" rx="1.5" fill="#5E5A82"></rect></svg><span style="font-size:9px;color:rgba(255,255,255,0.45);font-family:'DM Sans',sans-serif;">Stats</span></div>
+          <div style="flex:1;display:flex;flex-direction:column;align-items:center;gap:3px;"><svg width="22" height="22" viewBox="0 0 24 24" fill="none"><circle cx="12" cy="8" r="3.5" stroke="#5E5A82" stroke-width="1.8"></circle><path d="M4.5 20c0-3.6 3.4-6.5 7.5-6.5s7.5 2.9 7.5 6.5" stroke="#5E5A82" stroke-width="1.8" stroke-linecap="round"></path></svg><span style="font-size:9px;color:rgba(255,255,255,0.45);font-family:'DM Sans',sans-serif;">Profile</span></div>
+        </div>
+      </div>
+    </x-import>
+  </div>
+
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props="{
+  &quot;$preview&quot;: { &quot;width&quot;: 980, &quot;height&quot;: 1020 }
+}">
+// ── Poster data ──────────────────────────────────────────────
+
+function card(bg) {
+  return {
+    width: '110px', height: '162px', borderRadius: '8px',
+    background: bg, position: 'relative', overflow: 'hidden',
+    flexShrink: 0,
+  };
+}
+
+function bar(pct) {
+  return {
+    height: '100%', width: pct + '%',
+    background: '#7C3AED', borderRadius: '2px',
+  };
+}
+
+const SHOWS_WATCH_NEXT = [
+  { title: 'Severance',       sub: 'S2 · E8', pct: 68, cardStyle: card('linear-gradient(160deg,#0d1a2e,#1c2f4e)'), barStyle: bar(68)  },
+  { title: 'The Last of Us',  sub: 'S2 · E3', pct: 42, cardStyle: card('linear-gradient(160deg,#1e1208,#3a200e)'), barStyle: bar(42)  },
+  { title: 'Dune: Prophecy',  sub: 'S1 · E5', pct: 15, cardStyle: card('linear-gradient(160deg,#120b20,#231540)'), barStyle: bar(15)  },
+  { title: 'Shōgun',          sub: 'S1 · E7', pct: 91, cardStyle: card('linear-gradient(160deg,#0b130b,#162416)'), barStyle: bar(91)  },
+];
+
+const SHOWS_TRENDING = [
+  { title: 'House of the Dragon', cardStyle: card('linear-gradient(160deg,#1e0a0a,#381212)') },
+  { title: 'Andor',               cardStyle: card('linear-gradient(160deg,#081410,#10241c)') },
+  { title: 'The Bear',            cardStyle: card('linear-gradient(160deg,#1c1408,#2e2010)') },
+  { title: 'Fallout',             cardStyle: card('linear-gradient(160deg,#0e1410,#182618)') },
+];
+
+const SHOWS_WATCH_LATER = [
+  { title: 'Slow Horses',                cardStyle: card('linear-gradient(160deg,#101010,#1e1e1e)') },
+  { title: 'Silo',                       cardStyle: card('linear-gradient(160deg,#0a1020,#141e38)') },
+  { title: 'The Penguin',                cardStyle: card('linear-gradient(160deg,#080e14,#101828)') },
+  { title: 'Interview with the Vampire', cardStyle: card('linear-gradient(160deg,#160810,#281018)') },
+];
+
+const MOVIES_TRENDING = [
+  { title: 'Dune: Part Two',       cardStyle: card('linear-gradient(160deg,#1e1808,#342c10)') },
+  { title: 'Poor Things',          cardStyle: card('linear-gradient(160deg,#120e1c,#201828)') },
+  { title: 'Past Lives',           cardStyle: card('linear-gradient(160deg,#0c1220,#162034)') },
+  { title: 'The Zone of Interest', cardStyle: card('linear-gradient(160deg,#0c1408,#162010)') },
+];
+
+const MOVIES_WATCH_LATER = [
+  { title: 'Alien: Romulus', cardStyle: card('linear-gradient(160deg,#08120a,#0e2010)') },
+  { title: 'Furiosa',        cardStyle: card('linear-gradient(160deg,#1e0e06,#341808)') },
+  { title: 'Inside Out 2',   cardStyle: card('linear-gradient(160deg,#0c0c1e,#161630)') },
+  { title: 'A Quiet Place',  cardStyle: card('linear-gradient(160deg,#0a1018,#141e2c)') },
+];
+
+const WEEK_BARS = [
+  {label:'Apr 7', eps:4}, {label:'Apr 14', eps:7}, {label:'Apr 21', eps:3},
+  {label:'Apr 28', eps:9}, {label:'May 5', eps:5}, {label:'May 12', eps:11},
+  {label:'May 19', eps:6}, {label:'May 26', eps:8}, {label:'Jun 2', eps:14},
+  {label:'Jun 9', eps:5}, {label:'Jun 16', eps:10}, {label:'Jun 23', eps:17},
+];
+const MAX_EPS = 17;
+
+const MARATHONS = [
+  {rank:'1', title:'Breaking Bad',     eps:'62', hrs:'52'},
+  {rank:'2', title:'The Wire',         eps:'60', hrs:'72'},
+  {rank:'3', title:'Succession',       eps:'39', hrs:'39'},
+  {rank:'4', title:'Game of Thrones',  eps:'37', hrs:'57'},
+  {rank:'5', title:'Severance',        eps:'18', hrs:'14'},
+];
+
+const GENRES = [
+  {name:'Drama',    count:'2,340', pct:100},
+  {name:'Crime',    count:'1,180', pct:50},
+  {name:'Sci-Fi',   count:'980',   pct:42},
+  {name:'Thriller', count:'760',   pct:32},
+  {name:'Comedy',   count:'540',   pct:23},
+];
+
+const S2_EPISODES = [
+  { num:'1', title:'Cold Harbor',           dur:'52 min', done:true  },
+  { num:'2', title:'Goodbye, Mrs. Selvig',  dur:'46 min', done:true  },
+  { num:'3', title:'Who Is Alive?',         dur:'55 min', done:true  },
+  { num:'4', title:"Woe's Hollow",          dur:'48 min', done:true  },
+  { num:'5', title:"Trojan's Horse",        dur:'51 min', done:true  },
+  { num:'6', title:'Attila',                dur:'49 min', done:true  },
+  { num:'7', title:'Chikhai Bardo',         dur:'53 min', done:true  },
+  { num:'8', title:"What's for Dinner?",    dur:'58 min', done:true  },
+  { num:'9', title:'The Goodbye Party',     dur:'42 min', done:false },
+];
+
+const CAST_SEVERANCE = [
+  { name:'Adam Scott',     initials:'AS', bg:'linear-gradient(135deg,#1a2a3a,#2a4a6a)' },
+  { name:'Zach Cherry',    initials:'ZC', bg:'linear-gradient(135deg,#1a2a1a,#2a4a2a)' },
+  { name:'Britt Lower',    initials:'BL', bg:'linear-gradient(135deg,#2a1a2a,#4a2a4a)' },
+  { name:'Tramell Tillman',initials:'TT', bg:'linear-gradient(135deg,#2a2a1a,#4a4a2a)' },
+  { name:'John Turturro',  initials:'JT', bg:'linear-gradient(135deg,#1a1a2a,#2a2a4a)' },
+];
+
+const CAST_DUNE = [
+  { name:'Timothée Chalamet', initials:'TC', bg:'linear-gradient(135deg,#2a1a08,#4a3010)' },
+  { name:'Zendaya',           initials:'ZD', bg:'linear-gradient(135deg,#1a0a08,#3a1810)' },
+  { name:'Rebecca Ferguson',  initials:'RF', bg:'linear-gradient(135deg,#08101a,#101830)' },
+  { name:'Austin Butler',     initials:'AB', bg:'linear-gradient(135deg,#1a0808,#3a1010)' },
+  { name:'Josh Brolin',       initials:'JB', bg:'linear-gradient(135deg,#0a1a0a,#102810)' },
+];
+
+const ACTOR_FILMOGRAPHY = [
+  { title:'The Mandalorian',         bg:'linear-gradient(160deg,#0d1a2e,#1c2f4e)' },
+  { title:'The Last of Us',          bg:'linear-gradient(160deg,#1e1208,#3a200e)' },
+  { title:'Narcos',                  bg:'linear-gradient(160deg,#0a1a0a,#142814)' },
+  { title:'Gladiator II',            bg:'linear-gradient(160deg,#1e1408,#342010)' },
+  { title:'Game of Thrones',         bg:'linear-gradient(160deg,#1a0808,#2e1010)' },
+  { title:'The Unbearable Weight',   bg:'linear-gradient(160deg,#10101a,#1a1a2e)' },
+];
+
+const SEARCH_RESULTS = [
+  { title:'Blade Runner 2049', year:'2017', bg:'linear-gradient(160deg,#0a1020,#141e38)' },
+  { title:'Blade Runner',      year:'1982', bg:'linear-gradient(160deg,#081018,#101828)' },
+  { title:'BR: Black Lotus',   year:'2021', bg:'linear-gradient(160deg,#0c1220,#162034)' },
+  { title:'Blade Runner 2022', year:'2022', bg:'linear-gradient(160deg,#0e0a18,#1a1228)' },
+];
+
+// ── Component ─────────────────────────────────────────────────
+
+class Component extends DCLogic {
+  state = { activeMainTab: 'shows', statsTab: 'shows', syncOn: true, detailTab: 'episodes' };
+
+  componentDidMount() {
+    const tryAnimate = () => {
+      const rects = [...document.querySelectorAll('.wm-r')];
+      if (!rects.length) { setTimeout(tryAnimate, 200); return; }
+      this._startWm(rects);
+    };
+    setTimeout(tryAnimate, 400);
+  }
+
+  _startWm(rects) {
+    const DUR = 1800, STAGGER = 550, PAUSE = 1500;
+    const CYCLE = (rects.length - 1) * STAGGER + DUR + PAUSE;
+    let stopped = false;
+    const reset = () => rects.forEach(r => {
+      r.style.transition = 'none';
+      r.style.transform = 'translateY(70px)';
+      r.style.transformBox = 'fill-box';
+      r.style.transformOrigin = '50% 0%';
+    });
+    const reveal = () => requestAnimationFrame(() => requestAnimationFrame(() => {
+      rects.forEach((r, i) => {
+        r.style.transition = 'transform ' + DUR + 'ms ' + (i * STAGGER) + 'ms cubic-bezier(0.22,1,0.36,1)';
+        r.style.transform = 'translateY(0px)';
+      });
+    }));
+    reset();
+    const loop = () => {
+      if (stopped) return;
+      reveal();
+      this._wmTimer = setTimeout(() => {
+        if (stopped) return;
+        reset();
+        this._wmTimer = setTimeout(loop, 20);
+      }, CYCLE);
+    };
+    document.fonts.ready.then(loop);
+    this._stopWm = () => { stopped = true; clearTimeout(this._wmTimer); };
+  }
+
+  componentWillUnmount() {
+    if (this._stopWm) this._stopWm();
+  }
+
+  renderVals() {
+    const sa = this.state.activeMainTab === 'shows';
+
+    const tabStyle = (active) => ({
+      flex: 1, textAlign: 'center', paddingBottom: '10px', cursor: 'pointer',
+      fontFamily: "'DM Sans', sans-serif", fontSize: '14px',
+      fontWeight: active ? 600 : 400,
+      color: active ? '#F0EDFF' : '#6B6890',
+      borderBottom: active ? '2px solid #FFFFFF' : '2px solid #231E3A',
+    });
+
+    return {
+      // Home tabs
+      showsActive: sa,
+      moviesActive: !sa,
+      showsTabStyle: tabStyle(sa),
+      moviesTabStyle: tabStyle(!sa),
+      setShowsTab: () => this.setState({ activeMainTab: 'shows' }),
+      setMoviesTab: () => this.setState({ activeMainTab: 'movies' }),
+      showsWatchNext: SHOWS_WATCH_NEXT,
+      showsTrending: SHOWS_TRENDING,
+      showsWatchLater: SHOWS_WATCH_LATER,
+      moviesTrending: MOVIES_TRENDING,
+      moviesWatchLater: MOVIES_WATCH_LATER,
+
+      // Stats
+      statsShowsTabStyle: tabStyle(this.state.statsTab === 'shows'),
+      statsMoviesTabStyle: tabStyle(this.state.statsTab === 'movies'),
+      setStatsShowsTab: () => this.setState({ statsTab: 'shows' }),
+      setStatsMoviesTab: () => this.setState({ statsTab: 'movies' }),
+      weekBars: WEEK_BARS.map((b, i) => ({
+        label: b.label.replace(/\w+ /, ''),
+        barStyle: {
+          width: '100%',
+          height: Math.round((b.eps / MAX_EPS) * 60) + 'px',
+          borderRadius: '3px 3px 0 0',
+          background: i === WEEK_BARS.length - 1 ? '#7C3AED' : '#1E1A32',
+        },
+      })),
+      marathons: MARATHONS,
+      genres: GENRES.map(g => ({
+        ...g,
+        barStyle: { height: '100%', width: g.pct + '%', background: '#7C3AED', borderRadius: '2px' },
+      })),
+
+      // Title Detail tabs
+      detailEpisodesActive: this.state.detailTab === 'episodes',
+      detailAboutActive: this.state.detailTab === 'about',
+      setDetailEpisodes: () => this.setState({ detailTab: 'episodes' }),
+      setDetailAbout: () => this.setState({ detailTab: 'about' }),
+      detailEpisodesTabStyle: tabStyle(this.state.detailTab === 'episodes'),
+      detailAboutTabStyle: tabStyle(this.state.detailTab === 'about'),
+      s2Episodes: S2_EPISODES.map(ep => ({
+        ...ep,
+        doneBg:     ep.done ? '#1A3A2A' : 'transparent',
+        doneBorder: ep.done ? '#34D399' : '#3D3A5C',
+        doneStroke: ep.done ? '#34D399' : 'rgba(255,255,255,0)',
+      })),
+      castSeverance: CAST_SEVERANCE,
+      castDune: CAST_DUNE,
+      actorFilmography: ACTOR_FILMOGRAPHY,
+      searchResults: SEARCH_RESULTS,
+
+      // Profile / sync toggle
+      syncOn: this.state.syncOn,
+      toggleSync: () => this.setState(s => ({ syncOn: !s.syncOn })),
+      syncToggleStyle: {
+        width: '44px', height: '26px', borderRadius: '13px',
+        background: this.state.syncOn ? '#7C3AED' : '#2A2548',
+        position: 'relative', cursor: 'pointer', transition: 'background 0.2s',
+        flexShrink: 0,
+      },
+      syncThumbStyle: {
+        position: 'absolute', top: '3px',
+        left: this.state.syncOn ? '21px' : '3px',
+        width: '20px', height: '20px', borderRadius: '50%',
+        background: '#FFFFFF', transition: 'left 0.2s',
+      },
+    };
+  }
+}
+</script>
+</body>
+</html>

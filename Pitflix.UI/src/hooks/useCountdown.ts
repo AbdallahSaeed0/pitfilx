@@ -121,6 +121,18 @@ export function toCountdownSegments(ms: number | null): CountdownSegment[] | nul
   ]);
 }
 
+/** True when TMDB air date is today or earlier (Cairo end-of-day when date-only). */
+export function isEpisodeAired(airDate: string | null | undefined): boolean {
+  if (!airDate?.trim()) return false;
+  const target = airDateToUtcMs(airDate);
+  if (target != null) return Date.now() >= target;
+  const dm = /^(\d{4})-(\d{2})-(\d{2})$/.exec(airDate.trim());
+  if (!dm) return false;
+  const now = new Date();
+  const today = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`;
+  return airDate.trim() <= today;
+}
+
 /** Plain string for debugging or legacy use — matches historical `Xd Xh Xm Xs` shape. */
 export function formatCountdown(ms: number | null): string | null {
   if (ms == null) return null;

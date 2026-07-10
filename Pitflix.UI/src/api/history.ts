@@ -54,3 +54,16 @@ export const markWatchedEntry = (body: {
   episodeNumber?: number | null;
   runtimeMinutes?: number;
 }) => api.post<{ success: boolean }>("/history/mark-watched", body).then((r) => r.data);
+
+/** Reverses `markWatchedEntry` — removes the completed watch entry for this title/episode. */
+export const unmarkWatchedEntry = (body: {
+  tmdbId: number;
+  mediaType: string;
+  seasonNumber?: number | null;
+  episodeNumber?: number | null;
+}) => api.post<{ success: boolean }>("/history/unmark-watched", body).then((r) => r.data);
+
+/** Distinct TMDB ids with a completed watch entry, for badging streaming/browse-mode cards
+ * that have no local library match to key a watch-status off of. */
+export const getWatchedTmdbIds = (mediaType: "Movie" | "Series") =>
+  api.get<number[]>("/history/watched-tmdb-ids", { params: { mediaType } }).then((r) => r.data);

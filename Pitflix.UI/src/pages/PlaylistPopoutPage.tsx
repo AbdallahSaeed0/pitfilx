@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { invoke, isTauri } from "@tauri-apps/api/core";
 import { emit, listen } from "@tauri-apps/api/event";
 import type { UnlistenFn } from "@tauri-apps/api/event";
+import { getPosterThumbnail, setPosterThumbnail } from "../utils/videoThumbnailCache";
 
 type FsEntry = {
   name: string;
@@ -40,22 +41,26 @@ function PlaylistRow({
   active: boolean;
   onSelect: () => void;
 }) {
-  const [thumbUrl, setThumbUrl] = useState<string | null>(null);
+  const [thumbUrl, setThumbUrl] = useState<string | null>(() => getPosterThumbnail(entry.path) ?? null);
   useEffect(() => {
     if (!isTauri()) return;
+    const cached = getPosterThumbnail(entry.path);
+    if (cached) {
+      setThumbUrl(cached);
+      return;
+    }
     let cancelled = false;
-    let url: string | null = null;
     void invoke<number[]>("thumb_poster", { filePath: entry.path, atSeconds: 60.0 })
       .then((bytes) => {
         if (cancelled) return;
         const blob = new Blob([new Uint8Array(bytes)], { type: "image/jpeg" });
-        url = URL.createObjectURL(blob);
+        const url = URL.createObjectURL(blob);
+        setPosterThumbnail(entry.path, url);
         setThumbUrl(url);
       })
       .catch(() => {});
     return () => {
       cancelled = true;
-      if (url) URL.revokeObjectURL(url);
     };
   }, [entry.path]);
   return (

@@ -103,14 +103,27 @@ public sealed class AwardNomineeCacheRepository
     public async Task UpsertEditionRowsAsync(string awardId, int year, IReadOnlyList<AwardNomineeCacheRow> rows,
         CancellationToken ct = default)
     {
-        await DeleteEditionAsync(awardId, year, ct).ConfigureAwait(false);
-        if (rows.Count == 0) return;
         var conn = _db.Database.GetDbConnection();
         if (conn.State != ConnectionState.Open)
             await conn.OpenAsync(ct).ConfigureAwait(false);
+
+        // One transaction for the delete + all inserts — SQLite otherwise fsyncs once per
+        // statement, so a 50-nominee edition was 51 disk syncs instead of 1.
+        await using var tx = await conn.BeginTransactionAsync(ct).ConfigureAwait(false);
+
+        await using (var del = conn.CreateCommand())
+        {
+            del.Transaction = (SqliteTransaction)tx;
+            del.CommandText = "DELETE FROM AwardNomineeCache WHERE AwardId = $aid AND Year = $yr;";
+            del.Parameters.Add(new SqliteParameter("$aid", awardId));
+            del.Parameters.Add(new SqliteParameter("$yr", year));
+            await del.ExecuteNonQueryAsync(ct).ConfigureAwait(false);
+        }
+
         foreach (var row in rows)
         {
             await using var cmd = conn.CreateCommand();
+            cmd.Transaction = (SqliteTransaction)tx;
             cmd.CommandText =
                 """
                 INSERT OR REPLACE INTO AwardNomineeCache (
@@ -133,6 +146,8 @@ public sealed class AwardNomineeCacheRepository
             cmd.Parameters.Add(new SqliteParameter("$lu", row.LastUpdatedAtUtc.ToString("o", CultureInfo.InvariantCulture)));
             await cmd.ExecuteNonQueryAsync(ct).ConfigureAwait(false);
         }
+
+        await tx.CommitAsync(ct).ConfigureAwait(false);
     }
 
     public async Task<IReadOnlyList<AwardNomineeCacheRow>> GetRowsByTmdbIdAsync(int tmdbId, CancellationToken ct = default)

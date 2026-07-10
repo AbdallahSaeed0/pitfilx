@@ -92,11 +92,24 @@ public sealed class MdbListService
         }
     }
 
+    /// <summary>
+    /// Cache-only lookup — never makes a live MDBList request, so it never blocks on the 1-req/sec
+    /// rate limit. Returns (false, null) when the episode hasn't been fetched yet.
+    /// </summary>
+    public Task<(bool Hit, double? Value)> TryGetCachedEpisodeRatingAsync(string showImdbId, int season,
+        int episode, CancellationToken ct) =>
+        ReadEpisodeCacheAsync(showImdbId, season, episode, ct);
+
     /// <summary>Fetches the IMDb rating for a specific episode via the MDBList episode endpoint.</summary>
     public async Task<double?> GetEpisodeRatingAsync(string showImdbId, int season, int episode, CancellationToken ct)
     {
+        if (string.IsNullOrWhiteSpace(showImdbId)) return null;
+
+        var (cacheHit, cachedValue) = await ReadEpisodeCacheAsync(showImdbId, season, episode, ct).ConfigureAwait(false);
+        if (cacheHit) return cachedValue;
+
         var key = await GetApiKeyAsync(ct).ConfigureAwait(false);
-        if (string.IsNullOrWhiteSpace(key) || string.IsNullOrWhiteSpace(showImdbId)) return null;
+        if (string.IsNullOrWhiteSpace(key)) return null;
 
         await _rateSemaphore.WaitAsync(ct).ConfigureAwait(false);
         try
@@ -111,21 +124,25 @@ public sealed class MdbListService
             var body = await resp.Content.ReadAsStringAsync(ct).ConfigureAwait(false);
             if (!resp.IsSuccessStatusCode) return null;
 
+            double? rating = null;
             using var doc = JsonDocument.Parse(body);
             var root = doc.RootElement;
-            if (!root.TryGetProperty("ratings", out var ratings)) return null;
-
-            foreach (var item in ratings.EnumerateArray())
+            if (root.TryGetProperty("ratings", out var ratings))
             {
-                if (!item.TryGetProperty("source", out var src) || src.GetString() != "imdb") continue;
-                if (!item.TryGetProperty("value", out var val)) continue;
-                if (val.ValueKind == JsonValueKind.Number) return (double)val.GetSingle();
-                if (val.ValueKind == JsonValueKind.String &&
-                    double.TryParse(val.GetString(), System.Globalization.NumberStyles.Any,
-                        System.Globalization.CultureInfo.InvariantCulture, out var parsed))
-                    return parsed;
+                foreach (var item in ratings.EnumerateArray())
+                {
+                    if (!item.TryGetProperty("source", out var src) || src.GetString() != "imdb") continue;
+                    if (!item.TryGetProperty("value", out var val)) continue;
+                    if (val.ValueKind == JsonValueKind.Number) { rating = (double)val.GetSingle(); break; }
+                    if (val.ValueKind == JsonValueKind.String &&
+                        double.TryParse(val.GetString(), System.Globalization.NumberStyles.Any,
+                            System.Globalization.CultureInfo.InvariantCulture, out var parsed))
+                    { rating = parsed; break; }
+                }
             }
-            return null;
+
+            await WriteEpisodeCacheAsync(showImdbId, season, episode, rating, ct).ConfigureAwait(false);
+            return rating;
         }
         catch (Exception ex)
         {
@@ -262,6 +279,113 @@ public sealed class MdbListService
             AddParam("@id",      imdbId);
             AddParam("@tmdb",    (object?)tmdbId ?? DBNull.Value);
             AddParam("@json",    json);
+            AddParam("@fetched", DateTime.UtcNow.ToString("O"));
+            await cmd.ExecuteNonQueryAsync(ct).ConfigureAwait(false);
+        }
+        catch { /* best-effort cache write */ }
+    }
+
+    /// <summary>Average cached IMDb score for all episodes in a season (null when no cached rows).</summary>
+    public async Task<double?> TryGetCachedSeasonAverageRatingAsync(string showImdbId, int season, CancellationToken ct)
+    {
+        if (string.IsNullOrWhiteSpace(showImdbId) || season < 0) return null;
+        try
+        {
+            using var db = LibraryContext.Create();
+            var conn = db.Database.GetDbConnection();
+            await conn.OpenAsync(ct).ConfigureAwait(false);
+            using var cmd = conn.CreateCommand();
+            cmd.CommandText = """
+                SELECT AVG(ImdbRating) FROM MdbListEpisodeRatingsCache
+                WHERE ShowImdbId = @id AND Season = @s AND ImdbRating IS NOT NULL AND ImdbRating > 0
+                """;
+            void AddParam(string name, object val)
+            {
+                var p = cmd.CreateParameter();
+                p.ParameterName = name;
+                p.Value = val;
+                cmd.Parameters.Add(p);
+            }
+            AddParam("@id", showImdbId);
+            AddParam("@s", season);
+            var scalar = await cmd.ExecuteScalarAsync(ct).ConfigureAwait(false);
+            if (scalar is null or DBNull) return null;
+            var avg = Convert.ToDouble(scalar);
+            return avg > 0 ? avg : null;
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    private static async Task<(bool Hit, double? Value)> ReadEpisodeCacheAsync(string showImdbId, int season,
+        int episode, CancellationToken ct)
+    {
+        try
+        {
+            using var db = LibraryContext.Create();
+            var conn = db.Database.GetDbConnection();
+            await conn.OpenAsync(ct).ConfigureAwait(false);
+            using var cmd = conn.CreateCommand();
+            cmd.CommandText = """
+                SELECT ImdbRating, FetchedAtUtc FROM MdbListEpisodeRatingsCache
+                WHERE ShowImdbId = @id AND Season = @s AND Episode = @e LIMIT 1
+                """;
+            void AddParam(string name, object val)
+            {
+                var p = cmd.CreateParameter();
+                p.ParameterName = name;
+                p.Value = val;
+                cmd.Parameters.Add(p);
+            }
+            AddParam("@id", showImdbId);
+            AddParam("@s", season);
+            AddParam("@e", episode);
+            using var reader = await cmd.ExecuteReaderAsync(ct).ConfigureAwait(false);
+            if (!await reader.ReadAsync(ct).ConfigureAwait(false)) return (false, null);
+
+            var fetchedStr = reader.IsDBNull(1) ? null : reader.GetString(1);
+            if (fetchedStr is not null &&
+                DateTime.TryParse(fetchedStr, out var fetched) &&
+                DateTime.UtcNow - fetched > CacheTtl)
+                return (false, null);
+
+            return (true, reader.IsDBNull(0) ? null : reader.GetDouble(0));
+        }
+        catch
+        {
+            return (false, null);
+        }
+    }
+
+    private static async Task WriteEpisodeCacheAsync(string showImdbId, int season, int episode, double? rating,
+        CancellationToken ct)
+    {
+        try
+        {
+            using var db = LibraryContext.Create();
+            var conn = db.Database.GetDbConnection();
+            await conn.OpenAsync(ct).ConfigureAwait(false);
+            using var cmd = conn.CreateCommand();
+            cmd.CommandText = """
+                INSERT INTO MdbListEpisodeRatingsCache (ShowImdbId, Season, Episode, ImdbRating, FetchedAtUtc)
+                VALUES (@id, @s, @e, @rating, @fetched)
+                ON CONFLICT(ShowImdbId, Season, Episode) DO UPDATE SET
+                    ImdbRating = excluded.ImdbRating,
+                    FetchedAtUtc = excluded.FetchedAtUtc;
+                """;
+            void AddParam(string name, object? val)
+            {
+                var p = cmd.CreateParameter();
+                p.ParameterName = name;
+                p.Value = val ?? DBNull.Value;
+                cmd.Parameters.Add(p);
+            }
+            AddParam("@id", showImdbId);
+            AddParam("@s", season);
+            AddParam("@e", episode);
+            AddParam("@rating", (object?)rating ?? DBNull.Value);
             AddParam("@fetched", DateTime.UtcNow.ToString("O"));
             await cmd.ExecuteNonQueryAsync(ct).ConfigureAwait(false);
         }

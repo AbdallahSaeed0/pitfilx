@@ -4,12 +4,15 @@ import { Link } from "react-router-dom";
 import {
   downloadSubtitle,
   downloadSubDl,
+  downloadSubSource,
   getEpisodeSubtitles,
   getMovieSubtitles,
   searchSubtitles,
   searchSubDl,
+  searchSubSource,
   type SubtitleRow,
   type SubDlRow,
+  type SubSourceRow,
 } from "../api/subtitles";
 import { Spinner } from "./ui/Spinner";
 
@@ -27,6 +30,8 @@ type Props = {
   videoFilePath: string;
   /** IMDb ID — used for SubDL search quality. */
   imdbId?: string;
+  /** When set (e.g. in-player), load the saved file into mpv instead of only saving beside the video. */
+  onSubtitleDownloaded?: (savedPath: string) => void;
 };
 
 // Language code → { flag, name }
@@ -103,7 +108,7 @@ function langInfo(lang: string): { flag: string; name: string } {
   return { flag: "🌐", name: lang || "Unknown" };
 }
 
-type Tab = "opensubtitles" | "subdl";
+type Tab = "opensubtitles" | "subdl" | "subsource";
 
 export function SubtitleDrawer({
   open,
@@ -118,7 +123,9 @@ export function SubtitleDrawer({
   episodeNumber,
   videoFilePath,
   imdbId,
+  onSubtitleDownloaded,
 }: Props) {
+  const inPlayer = Boolean(onSubtitleDownloaded);
   const [tab, setTab] = useState<Tab>("opensubtitles");
   const [loading, setLoading] = useState(false);
   const [rows, setRows] = useState<SubtitleRow[]>([]);
@@ -140,6 +147,15 @@ export function SubtitleDrawer({
   // Ref-based guard: prevents double-firing the auto-search without triggering
   // extra re-renders (state-based guards cause effect loops with sdlLoading).
   const sdlSearchFiredRef = useRef(false);
+
+  // SubSource state
+  const [ssLoading, setSsLoading] = useState(false);
+  const [ssRows, setSsRows] = useState<SubSourceRow[]>([]);
+  const [ssError, setSsError] = useState<string | null>(null);
+  const [ssDownload, setSsDownload] = useState<Record<number, "idle" | "loading" | "ok" | "err">>({});
+  const [ssManualQ, setSsManualQ] = useState("");
+  const [ssHasSearched, setSsHasSearched] = useState(false);
+  const ssSearchFiredRef = useRef(false);
 
   const runManualSearch = useCallback(() => {
     const q = manualQ.trim();
@@ -188,6 +204,27 @@ export function SubtitleDrawer({
       .finally(() => setSdlLoading(false));
   }, [sdlManualQ, imdbId, mode, movieTmdbId, showTmdbId, title, episodeSeason, episodeNumber]);
 
+  const runSubSourceSearch = useCallback((overrideTitle?: string) => {
+    const q = (overrideTitle ?? ssManualQ).trim();
+    setSsHasSearched(true);
+    setSsLoading(true);
+    setSsError(null);
+    setSsRows([]);
+    setSsDownload({});
+    void searchSubSource({
+      imdbId,
+      title: q || title,
+      mediaType: mode === "movie" ? "Movie" : "Series",
+      season: episodeSeason,
+    })
+      .then((p) => {
+        setSsRows(p.items);
+        if (p.error) setSsError(p.error);
+      })
+      .catch(() => setSsError("SubSource search failed."))
+      .finally(() => setSsLoading(false));
+  }, [ssManualQ, imdbId, mode, title, episodeSeason]);
+
   // Load OpenSubtitles on open
   useEffect(() => {
     if (!open) return;
@@ -235,6 +272,26 @@ export function SubtitleDrawer({
     setSdlDownload({});
     setSdlLoading(false);
     setSdlManualQ("");
+  }, [open]);
+
+  // Fire SubSource search the moment the drawer opens (background prefetch).
+  useEffect(() => {
+    if (!open) return;
+    if (ssSearchFiredRef.current) return;
+    ssSearchFiredRef.current = true;
+    runSubSourceSearch(title);
+  }, [open, runSubSourceSearch, title]);
+
+  // Reset all SubSource state when drawer closes so the next open triggers a fresh search.
+  useEffect(() => {
+    if (open) return;
+    ssSearchFiredRef.current = false;
+    setSsHasSearched(false);
+    setSsRows([]);
+    setSsError(null);
+    setSsDownload({});
+    setSsLoading(false);
+    setSsManualQ("");
   }, [open]);
 
   const searchBar = (
@@ -296,7 +353,7 @@ export function SubtitleDrawer({
 
             {/* Tabs */}
             <div className="flex shrink-0 gap-1 border-b border-pitflix-card px-4 py-2">
-              {(["opensubtitles", "subdl"] as Tab[]).map((t) => (
+              {(["opensubtitles", "subdl", "subsource"] as Tab[]).map((t) => (
                 <button
                   key={t}
                   type="button"
@@ -305,7 +362,7 @@ export function SubtitleDrawer({
                     tab === t ? "bg-pitflix-primary text-white" : "text-pitflix-muted hover:text-white"
                   }`}
                 >
-                  {t === "opensubtitles" ? "OpenSubtitles" : "SubDL"}
+                  {t === "opensubtitles" ? "OpenSubtitles" : t === "subdl" ? "SubDL" : "SubSource"}
                 </button>
               ))}
             </div>
@@ -382,13 +439,22 @@ export function SubtitleDrawer({
                                   .then((r) => {
                                     setDownloadState((p) => ({ ...p, [s.fileId]: r.success ? "ok" : "err" }));
                                     if (!r.success) console.warn(r.error);
+                                    else if (r.savedPath && onSubtitleDownloaded) onSubtitleDownloaded(r.savedPath);
                                   })
                                   .catch(() => setDownloadState((p) => ({ ...p, [s.fileId]: "err" })));
                               }}
                               className="flex w-full items-center justify-center gap-2 rounded-lg bg-pitflix-primary py-2 text-xs font-medium text-white disabled:opacity-50"
                             >
                               {st === "loading" ? <Spinner className="h-4 w-4" /> : null}
-                              {st === "ok" ? "✓ Saved" : st === "err" ? "Failed" : "⬇ Download"}
+                              {st === "ok"
+                                ? inPlayer
+                                  ? "Loaded ✓"
+                                  : "✓ Saved"
+                                : st === "err"
+                                  ? "Failed"
+                                  : inPlayer
+                                    ? "Load"
+                                    : "⬇ Download"}
                             </button>
                           </li>
                         );
@@ -475,13 +541,123 @@ export function SubtitleDrawer({
                                   .then((r) => {
                                     setSdlDownload((p) => ({ ...p, [key]: r.success ? "ok" : "err" }));
                                     if (!r.success) console.warn(r.error);
+                                    else if (r.savedPath && onSubtitleDownloaded) onSubtitleDownloaded(r.savedPath);
                                   })
                                   .catch(() => setSdlDownload((p) => ({ ...p, [key]: "err" })));
                               }}
                               className="flex w-full items-center justify-center gap-2 rounded-lg bg-pitflix-primary py-2 text-xs font-medium text-white disabled:opacity-50"
                             >
                               {st === "loading" ? <Spinner className="h-4 w-4" /> : null}
-                              {st === "ok" ? "✓ Saved" : st === "err" ? "Failed" : "⬇ Download"}
+                              {st === "ok"
+                                ? inPlayer
+                                  ? "Loaded ✓"
+                                  : "✓ Saved"
+                                : st === "err"
+                                  ? "Failed"
+                                  : inPlayer
+                                    ? "Load"
+                                    : "⬇ Download"}
+                            </button>
+                          </li>
+                        );
+                      })}
+                    </ul>
+                  )}
+                </>
+              )}
+
+              {tab === "subsource" && (
+                <>
+                  {/* SubSource manual search bar */}
+                  <div className="shrink-0 space-y-2">
+                    <div className="flex gap-2">
+                      <input
+                        value={ssManualQ}
+                        onChange={(e) => setSsManualQ(e.target.value)}
+                        onKeyDown={(e) => { if (e.key === "Enter") runSubSourceSearch(); }}
+                        placeholder={`Search SubSource… (default: ${title})`}
+                        className="min-w-0 flex-1 rounded-lg border border-pitflix-card bg-pitflix-bg px-3 py-2 text-sm text-white placeholder:text-pitflix-subtle"
+                      />
+                      <button
+                        type="button"
+                        disabled={ssLoading}
+                        onClick={() => runSubSourceSearch()}
+                        className="shrink-0 rounded-lg bg-pitflix-primary px-3 py-2 text-sm font-medium text-white disabled:opacity-40"
+                      >
+                        {ssLoading ? "…" : "Search"}
+                      </button>
+                    </div>
+                    <p className="text-[11px] text-pitflix-subtle">
+                      Edit the query if nothing appears.
+                    </p>
+                  </div>
+                  {ssLoading && ssRows.length === 0 ? (
+                    <div className="flex flex-1 flex-col items-center justify-center py-16">
+                      <Spinner />
+                    </div>
+                  ) : ssError ? (
+                    <div className="space-y-2">
+                      <p className="text-sm text-red-400">{ssError}</p>
+                      <button
+                        type="button"
+                        onClick={() => runSubSourceSearch()}
+                        className="rounded-lg border border-pitflix-card px-3 py-1.5 text-xs text-pitflix-muted hover:text-white"
+                      >
+                        Retry
+                      </button>
+                    </div>
+                  ) : ssRows.length === 0 && ssHasSearched ? (
+                    <div className="space-y-2">
+                      <p className="text-sm text-pitflix-muted">No SubSource subtitles found.</p>
+                      <p className="text-[11px] text-pitflix-subtle">
+                        Try editing the search query above, or check your SubSource API key in{" "}
+                        <Link to="/settings" className="text-pitflix-primary hover:underline">Settings → API keys</Link>.
+                      </p>
+                    </div>
+                  ) : ssRows.length === 0 ? null : (
+                    <ul className={`space-y-3 pb-4 ${ssLoading ? "opacity-60" : ""}`}>
+                      {ssRows.map((s) => {
+                        const key = s.subtitleId;
+                        const st = ssDownload[key] ?? "idle";
+                        return (
+                          <li key={key} className="rounded-xl border border-pitflix-card bg-pitflix-bg/80 p-3">
+                            <div className="mb-2 flex items-start gap-2">
+                              <LangBadge lang={s.language} />
+                              <div className="min-w-0 flex-1">
+                                <p className="line-clamp-2 text-xs font-medium text-white">{s.releaseName}</p>
+                                <div className="mt-1 flex flex-wrap gap-1">
+                                  <span className="rounded bg-sky-900/60 px-1.5 py-0.5 text-[10px] text-sky-200">SubSource</span>
+                                  {s.isHearingImpaired ? (
+                                    <span className="rounded bg-pitflix-card px-1.5 py-0.5 text-[10px] text-pitflix-muted">👂 HI</span>
+                                  ) : null}
+                                </div>
+                              </div>
+                            </div>
+                            <button
+                              type="button"
+                              disabled={st === "loading"}
+                              onClick={() => {
+                                setSsDownload((p) => ({ ...p, [key]: "loading" }));
+                                void downloadSubSource({ subtitleId: s.subtitleId, videoFilePath, language: s.language })
+                                  .then((r) => {
+                                    setSsDownload((p) => ({ ...p, [key]: r.success ? "ok" : "err" }));
+                                    if (!r.success) console.warn(r.error);
+                                    else if (r.savedPath && onSubtitleDownloaded) onSubtitleDownloaded(r.savedPath);
+                                  })
+                                  .catch(() => setSsDownload((p) => ({ ...p, [key]: "err" })));
+                              }}
+                              className="flex w-full items-center justify-center gap-2 rounded-lg bg-pitflix-primary py-2 text-xs font-medium text-white disabled:opacity-50"
+                            >
+                              {st === "loading" ? <Spinner className="h-4 w-4" /> : null}
+                              {st === "ok"
+                                ? inPlayer
+                                  ? "Loaded ✓"
+                                  : "✓ Saved"
+                                : st === "err"
+                                  ? "Failed"
+                                  : inPlayer
+                                    ? "Load"
+                                    : "⬇ Download"}
                             </button>
                           </li>
                         );

@@ -26,6 +26,10 @@ public class LibraryContext : DbContext
     public DbSet<PinnedComingSoon> PinnedComingSoon => Set<PinnedComingSoon>();
     public DbSet<SeasonSkipSegment> SeasonSkipSegments => Set<SeasonSkipSegment>();
     public DbSet<EpisodeSkipOverride> EpisodeSkipOverrides => Set<EpisodeSkipOverride>();
+    public DbSet<TraktSettings> TraktSettings => Set<TraktSettings>();
+    public DbSet<TraktIdMap> TraktIdMaps => Set<TraktIdMap>();
+    public DbSet<SupabaseSyncMap> SupabaseSyncMaps => Set<SupabaseSyncMap>();
+    public DbSet<SupabaseWatchEvent> SupabaseWatchEvents => Set<SupabaseWatchEvent>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -135,6 +139,24 @@ public class LibraryContext : DbContext
                 .WithMany()
                 .HasForeignKey(x => x.EpisodeId)
                 .OnDelete(DeleteBehavior.Cascade);
+        });
+
+        modelBuilder.Entity<TraktIdMap>(e =>
+        {
+            e.HasIndex(x => new { x.TmdbId, x.MediaType }).IsUnique();
+        });
+
+        modelBuilder.Entity<SupabaseSyncMap>(e =>
+        {
+            e.HasIndex(x => new { x.EntityType, x.RemoteId }).IsUnique();
+            e.HasIndex(x => new { x.EntityType, x.LocalId }).IsUnique();
+        });
+
+        modelBuilder.Entity<SupabaseWatchEvent>(e =>
+        {
+            e.HasIndex(x => new { x.TmdbId, x.MediaType }).IsUnique();
+            e.HasIndex(x => x.RemoteId).IsUnique();
+            e.HasIndex(x => x.SyncedAtUtc);
         });
     }
 

@@ -1,10 +1,24 @@
-import { ExternalLink, Pin } from "lucide-react";
+import { Pin } from "lucide-react";
 import type { ReactNode } from "react";
 import { Link } from "react-router-dom";
 import { AirDateCountdown } from "../../components/ui/AirDateCountdown";
 import { MediaImage } from "../../components/ui/MediaImage";
 import { formatAirDateForDisplay } from "../../hooks/useCountdown";
+import type { StreamingDetailsLocationState } from "../../pages/StreamingDetailsPage";
 import { cn } from "../../utils/cn";
+
+export function nextEpisodeStreamDetailsState(row: {
+  showTmdbId: number;
+  showTitle: string;
+  posterUrl?: string | null;
+}): StreamingDetailsLocationState {
+  return {
+    tmdbId: row.showTmdbId,
+    mediaType: "Series",
+    title: row.showTitle,
+    posterUrl: row.posterUrl ?? null,
+  };
+}
 
 export function SeasonEpisodeBadge({
   season,
@@ -101,28 +115,36 @@ export function NextEpisodeAirRowBody({
 }
 
 type LinkedAirRowProps = AirRowBodyProps & {
-  href: string;
-  external?: boolean;
+  libraryShowId: number | null | undefined;
+  showTmdbId: number;
   className?: string;
 };
 
 /** Full-width clickable row for home embed / lists */
-export function NextEpisodeAirRowLink({ href, external, className, ...body }: LinkedAirRowProps) {
-  const interactive = true;
-  const shell = cn(rowShell(interactive, !!body.pinned), "block p-3 sm:p-4", className);
-  const inner = <NextEpisodeAirRowBody {...body} />;
-  if (external) {
+export function NextEpisodeAirRowLink({
+  libraryShowId,
+  showTmdbId,
+  showTitle,
+  posterUrl,
+  className,
+  ...body
+}: LinkedAirRowProps) {
+  const lib = libraryShowId != null;
+  const shell = cn(rowShell(true, !!body.pinned), "block p-3 sm:p-4", className);
+  const inner = <NextEpisodeAirRowBody showTitle={showTitle} posterUrl={posterUrl} {...body} />;
+  if (lib) {
     return (
-      <a href={href} target="_blank" rel="noreferrer" className={shell}>
-        <span className="pointer-events-none absolute right-3 top-3 opacity-0 transition-opacity group-hover:opacity-100">
-          <ExternalLink className="h-3.5 w-3.5 text-pitflix-muted" aria-hidden />
-        </span>
+      <Link to={`/series/${libraryShowId}`} className={shell}>
         {inner}
-      </a>
+      </Link>
     );
   }
   return (
-    <Link to={href} className={shell}>
+    <Link
+      to="/stream-details"
+      state={nextEpisodeStreamDetailsState({ showTmdbId, showTitle, posterUrl })}
+      className={shell}
+    >
       {inner}
     </Link>
   );
@@ -140,33 +162,45 @@ export function NextEpisodeAirRowInteractive({
   showTmdbId,
   onTogglePin,
   pinned,
+  showTitle,
+  posterUrl,
   ...body
 }: PageAirRowProps) {
   const lib = libraryShowId != null;
-  const href = lib ? `/series/${libraryShowId}` : `https://www.themoviedb.org/tv/${showTmdbId}`;
+  const streamState = !lib
+    ? nextEpisodeStreamDetailsState({ showTmdbId, showTitle, posterUrl })
+    : null;
   return (
     <div className={cn(rowShell(false, !!pinned), "p-3 sm:p-4")}>
-      <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
-        <NextEpisodeAirRowBody {...body} pinned={pinned} />
-      </div>
+      {lib ? (
+        <Link to={`/series/${libraryShowId}`} className="block rounded-xl focus:outline-none focus-visible:ring-2 focus-visible:ring-pitflix-primary/50">
+          <NextEpisodeAirRowBody showTitle={showTitle} posterUrl={posterUrl} pinned={pinned} {...body} />
+        </Link>
+      ) : (
+        <Link
+          to="/stream-details"
+          state={streamState!}
+          className="block rounded-xl focus:outline-none focus-visible:ring-2 focus-visible:ring-pitflix-primary/50"
+        >
+          <NextEpisodeAirRowBody showTitle={showTitle} posterUrl={posterUrl} pinned={pinned} {...body} />
+        </Link>
+      )}
       <div className="mt-3 flex flex-wrap items-center justify-end gap-2 border-t border-white/[0.06] pt-3">
         {lib ? (
           <Link
-            to={href}
+            to={`/series/${libraryShowId}`}
             className="inline-flex items-center justify-center rounded-lg border border-white/15 bg-white/5 px-3 py-1.5 text-xs font-medium text-pitflix-subtle transition-colors hover:border-pitflix-primary/40 hover:bg-white/10 hover:text-white"
           >
             Series
           </Link>
         ) : (
-          <a
-            href={href}
-            target="_blank"
-            rel="noreferrer"
-            className="inline-flex items-center gap-1.5 rounded-lg border border-white/15 bg-white/5 px-3 py-1.5 text-xs font-medium text-pitflix-subtle transition-colors hover:border-pitflix-primary/40 hover:bg-white/10 hover:text-white"
+          <Link
+            to="/stream-details"
+            state={streamState!}
+            className="inline-flex items-center justify-center rounded-lg border border-white/15 bg-white/5 px-3 py-1.5 text-xs font-medium text-pitflix-subtle transition-colors hover:border-pitflix-primary/40 hover:bg-white/10 hover:text-white"
           >
-            TMDB
-            <ExternalLink className="h-3 w-3 opacity-70" />
-          </a>
+            Stream
+          </Link>
         )}
         {lib && onTogglePin && libraryShowId ? (
           <button

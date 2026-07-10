@@ -1,19 +1,27 @@
 import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { X } from "lucide-react";
-import { getTvdbArtworks, type TvdbArtwork } from "../api/tvdb";
+import {
+  getTvdbArtworks,
+  isClearLogoType,
+  TVDB_ARTWORK,
+  type TvdbArtwork,
+} from "../api/tvdb";
 
 const TYPE_LABEL: Record<number, string> = {
-  2: "Posters",
-  3: "Backdrops",
-  11: "Logos",
+  [TVDB_ARTWORK.BANNER]: "Banners",
+  [TVDB_ARTWORK.POSTER]: "Posters",
+  [TVDB_ARTWORK.BACKGROUND]: "Backdrops",
 };
 
-function groupByType(artworks: TvdbArtwork[]) {
-  const groups: Record<number, TvdbArtwork[]> = {};
+const LOGO_GROUP_KEY = "logos";
+
+function groupArtworks(artworks: TvdbArtwork[]) {
+  const groups: Record<string, TvdbArtwork[]> = {};
   for (const a of artworks) {
-    if (!groups[a.type]) groups[a.type] = [];
-    groups[a.type].push(a);
+    const key = isClearLogoType(a.type) ? LOGO_GROUP_KEY : String(a.type);
+    if (!groups[key]) groups[key] = [];
+    groups[key].push(a);
   }
   return groups;
 }
@@ -41,27 +49,49 @@ function Lightbox({ url, onClose }: { url: string; onClose: () => void }) {
   );
 }
 
+function thumbClass(type: number) {
+  if (type === TVDB_ARTWORK.BACKGROUND) {
+    return "h-[90px] w-[160px] overflow-hidden rounded-lg border border-white/10 transition hover:border-pitflix-primary/40";
+  }
+  if (type === TVDB_ARTWORK.BANNER) {
+    return "h-[52px] w-[280px] overflow-hidden rounded-lg border border-white/10 transition hover:border-pitflix-primary/40";
+  }
+  if (isClearLogoType(type)) {
+    return "h-[60px] w-[180px] overflow-hidden rounded-lg border border-white/10 bg-white/5 transition hover:border-pitflix-primary/40";
+  }
+  return "h-[120px] w-[80px] overflow-hidden rounded-lg border border-white/10 transition hover:border-pitflix-primary/40";
+}
+
 export function TvdbArtworkSection({
   tmdbId,
   mediaType,
+  initialArtworks,
 }: {
   tmdbId: number;
   mediaType: "movie" | "series";
+  initialArtworks?: TvdbArtwork[] | null;
 }) {
   const [lightboxUrl, setLightboxUrl] = useState<string | null>(null);
 
-  const { data: artworks } = useQuery({
+  const { data: fetchedArtworks } = useQuery({
     queryKey: ["tvdb-artworks", tmdbId, mediaType],
     queryFn: () => getTvdbArtworks(tmdbId, mediaType),
-    staleTime: 1000 * 60 * 60 * 24, // 24 h — TVDB images rarely change
+    staleTime: 1000 * 60 * 60 * 24,
     retry: false,
-    enabled: tmdbId > 0,
+    enabled: tmdbId > 0 && !initialArtworks?.length,
   });
+
+  const artworks = initialArtworks?.length ? initialArtworks : fetchedArtworks;
 
   if (!artworks || artworks.length === 0) return null;
 
-  const groups = groupByType(artworks);
-  const typeOrder = [2, 3, 11]; // poster, backdrop, logo
+  const groups = groupArtworks(artworks);
+  const sectionOrder = [
+    String(TVDB_ARTWORK.POSTER),
+    String(TVDB_ARTWORK.BACKGROUND),
+    String(TVDB_ARTWORK.BANNER),
+    LOGO_GROUP_KEY,
+  ];
 
   return (
     <>
@@ -69,13 +99,17 @@ export function TvdbArtworkSection({
       <section className="mt-10">
         <h2 className="mb-3 text-lg font-semibold text-white">Images</h2>
         <div className="space-y-6">
-          {typeOrder.map((type) => {
-            const items = groups[type];
+          {sectionOrder.map((groupKey) => {
+            const items = groups[groupKey];
             if (!items || items.length === 0) return null;
+            const label =
+              groupKey === LOGO_GROUP_KEY
+                ? "Logos"
+                : TYPE_LABEL[Number(groupKey)] ?? `Type ${groupKey}`;
             return (
-              <div key={type}>
+              <div key={groupKey}>
                 <p className="mb-2 text-xs font-semibold uppercase tracking-wider text-white/40">
-                  {TYPE_LABEL[type] ?? `Type ${type}`}
+                  {label}
                 </p>
                 <div className="flex flex-wrap gap-2">
                   {items.map((a, i) => (
@@ -83,19 +117,13 @@ export function TvdbArtworkSection({
                       key={`${a.url}-${i}`}
                       type="button"
                       onClick={() => setLightboxUrl(a.url)}
-                      className={
-                        type === 3
-                          ? "h-[90px] w-[160px] overflow-hidden rounded-lg border border-white/10 transition hover:border-pitflix-primary/40"
-                          : type === 11
-                            ? "h-[60px] w-[180px] overflow-hidden rounded-lg border border-white/10 bg-white/5 transition hover:border-pitflix-primary/40"
-                            : "h-[120px] w-[80px] overflow-hidden rounded-lg border border-white/10 transition hover:border-pitflix-primary/40"
-                      }
+                      className={thumbClass(a.type)}
                     >
                       <img
                         src={a.thumbnail || a.url}
-                        alt={TYPE_LABEL[type] ?? "Artwork"}
+                        alt={label}
                         loading="lazy"
-                        className="h-full w-full object-cover"
+                        className={`h-full w-full ${isClearLogoType(a.type) ? "object-contain" : "object-cover"}`}
                       />
                     </button>
                   ))}

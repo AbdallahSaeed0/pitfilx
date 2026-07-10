@@ -25,10 +25,11 @@ public static class ContentRecommendationBuilder
         var isMovieSeed = seedMediaType.Equals("Movie", StringComparison.OrdinalIgnoreCase) ||
                           seedMediaType.Equals("movie", StringComparison.OrdinalIgnoreCase);
 
-        var genreIds = await tmdb.GetGenreIdsAsync(seedTmdbId, isMovieSeed ? "Movie" : "Series", ct)
-            .ConfigureAwait(false);
-        var keywordIds = await tmdb.GetKeywordIdsAsync(seedTmdbId, isMovieSeed ? "Movie" : "Series", ct, 12)
-            .ConfigureAwait(false);
+        var genreIdsTask = tmdb.GetGenreIdsAsync(seedTmdbId, isMovieSeed ? "Movie" : "Series", ct);
+        var keywordIdsTask = tmdb.GetKeywordIdsAsync(seedTmdbId, isMovieSeed ? "Movie" : "Series", ct, 12);
+        await Task.WhenAll(genreIdsTask, keywordIdsTask).ConfigureAwait(false);
+        var genreIds = genreIdsTask.Result;
+        var keywordIds = keywordIdsTask.Result;
         var seedGenres = genreIds.ToHashSet();
         var seedHasAnimation = seedGenres.Contains(AnimationGenreId);
 
@@ -54,92 +55,56 @@ public static class ContentRecommendationBuilder
             merged.Add((x, tier));
         }
 
-        async Task DiscoverMoviesPassAsync(IReadOnlyList<int> genres, IReadOnlyList<int> keywords, int tier, int? exclude)
+        static async Task<List<TmdbDiscoverItem>> FetchPagesAsync(Func<int, Task<List<TmdbDiscoverItem>>> fetchPage, int pageCount)
         {
-            for (var page = 1; page <= 3; page++)
-            {
-                var chunk = await tmdb
-                    .DiscoverMoviesBySignalsAsync(genres, keywords, exclude, minVote, minCount, page, ct)
-                    .ConfigureAwait(false);
-                foreach (var x in chunk)
-                    TryAdd(x, tier);
-            }
+            var chunks = await Task.WhenAll(Enumerable.Range(1, pageCount).Select(fetchPage)).ConfigureAwait(false);
+            return chunks.SelectMany(c => c).ToList();
         }
 
-        async Task DiscoverTvPassAsync(IReadOnlyList<int> genres, IReadOnlyList<int> keywords, int tier, int? exclude)
-        {
-            for (var page = 1; page <= 3; page++)
-            {
-                var chunk = await tmdb
-                    .DiscoverTvBySignalsAsync(genres, keywords, exclude, minVote, minCount, page, ct)
-                    .ConfigureAwait(false);
-                foreach (var x in chunk)
-                    TryAdd(x, tier);
-            }
-        }
+        var Empty = Task.FromResult(new List<TmdbDiscoverItem>());
 
-        // 1) TMDB “because you watched X” (recommendations) + /similar — both are directly content-tied.
-        if (wantMovie && isMovieSeed)
-        {
-            for (var p = 1; p <= 3; p++)
-            {
-                var rec = await tmdb.GetMovieApiRecommendationsAsync(seedTmdbId, p, ct).ConfigureAwait(false);
-                foreach (var x in rec)
-                    TryAdd(x, 0);
-            }
-            for (var p = 1; p <= 2; p++)
-            {
-                var sim = await tmdb.GetMovieSimilarAsync(seedTmdbId, p, ct).ConfigureAwait(false);
-                foreach (var x in sim)
-                    TryAdd(x, 0);
-            }
-        }
+        // Fire every independent TMDB pass concurrently instead of awaiting them one at a time —
+        // recs/similar, keyword discover, and genre discover don't depend on each other's results.
+        var movieRecTask = wantMovie && isMovieSeed
+            ? FetchPagesAsync(p => tmdb.GetMovieApiRecommendationsAsync(seedTmdbId, p, ct), 3)
+            : Empty;
+        var movieSimTask = wantMovie && isMovieSeed
+            ? FetchPagesAsync(p => tmdb.GetMovieSimilarAsync(seedTmdbId, p, ct), 2)
+            : Empty;
+        var tvRecTask = wantTv && !isMovieSeed
+            ? FetchPagesAsync(p => tmdb.GetTvApiRecommendationsAsync(seedTmdbId, p, ct), 3)
+            : Empty;
+        var tvSimTask = wantTv && !isMovieSeed
+            ? FetchPagesAsync(p => tmdb.GetTvSimilarAsync(seedTmdbId, p, ct), 2)
+            : Empty;
 
-        if (wantTv && !isMovieSeed)
-        {
-            for (var p = 1; p <= 3; p++)
-            {
-                var rec = await tmdb.GetTvApiRecommendationsAsync(seedTmdbId, p, ct).ConfigureAwait(false);
-                foreach (var x in rec)
-                    TryAdd(x, 0);
-            }
-            for (var p = 1; p <= 2; p++)
-            {
-                var sim = await tmdb.GetTvSimilarAsync(seedTmdbId, p, ct).ConfigureAwait(false);
-                foreach (var x in sim)
-                    TryAdd(x, 0);
-            }
-        }
+        var keywordMovieTask = wantMovie && keywordIds.Count > 0
+            ? FetchPagesAsync(p => tmdb.DiscoverMoviesBySignalsAsync(Array.Empty<int>(), keywordIds, isMovieSeed ? seedTmdbId : (int?)null, minVote, minCount, p, ct), 3)
+            : Empty;
+        var keywordTvTask = wantTv && keywordIds.Count > 0
+            ? FetchPagesAsync(p => tmdb.DiscoverTvBySignalsAsync(Array.Empty<int>(), keywordIds, !isMovieSeed ? seedTmdbId : (int?)null, minVote, minCount, p, ct), 3)
+            : Empty;
 
-        // 2) Keyword discover (still content-tied).
-        if (wantMovie)
-        {
-            var ex = isMovieSeed ? seedTmdbId : (int?)null;
-            if (keywordIds.Count > 0)
-                await DiscoverMoviesPassAsync(Array.Empty<int>(), keywordIds, 1, ex).ConfigureAwait(false);
-        }
+        var genreMovieTask = wantMovie && genreIds.Count > 0
+            ? FetchPagesAsync(p => tmdb.DiscoverMoviesBySignalsAsync(genreIds, Array.Empty<int>(), isMovieSeed ? seedTmdbId : (int?)null, minVote, minCount, p, ct), 3)
+            : Empty;
+        var genreTvTask = wantTv && genreIds.Count > 0
+            ? FetchPagesAsync(p => tmdb.DiscoverTvBySignalsAsync(genreIds, Array.Empty<int>(), !isMovieSeed ? seedTmdbId : (int?)null, minVote, minCount, p, ct), 3)
+            : Empty;
 
-        if (wantTv)
-        {
-            var ex = !isMovieSeed ? seedTmdbId : (int?)null;
-            if (keywordIds.Count > 0)
-                await DiscoverTvPassAsync(Array.Empty<int>(), keywordIds, 1, ex).ConfigureAwait(false);
-        }
+        await Task.WhenAll(movieRecTask, movieSimTask, tvRecTask, tvSimTask,
+            keywordMovieTask, keywordTvTask, genreMovieTask, genreTvTask).ConfigureAwait(false);
 
-        // 3) Genre discover — broader but still anchored to seed genres via overlap ranking below.
-        if (wantMovie)
-        {
-            var ex = isMovieSeed ? seedTmdbId : (int?)null;
-            if (genreIds.Count > 0)
-                await DiscoverMoviesPassAsync(genreIds, Array.Empty<int>(), 2, ex).ConfigureAwait(false);
-        }
-
-        if (wantTv)
-        {
-            var ex = !isMovieSeed ? seedTmdbId : (int?)null;
-            if (genreIds.Count > 0)
-                await DiscoverTvPassAsync(genreIds, Array.Empty<int>(), 2, ex).ConfigureAwait(false);
-        }
+        // Apply in the original tier order (0 = recs/similar, 1 = keyword discover, 2 = genre discover)
+        // so first-seen-wins dedup behaves exactly as it did when these passes ran sequentially.
+        foreach (var x in movieRecTask.Result) TryAdd(x, 0);
+        foreach (var x in movieSimTask.Result) TryAdd(x, 0);
+        foreach (var x in tvRecTask.Result) TryAdd(x, 0);
+        foreach (var x in tvSimTask.Result) TryAdd(x, 0);
+        foreach (var x in keywordMovieTask.Result) TryAdd(x, 1);
+        foreach (var x in keywordTvTask.Result) TryAdd(x, 1);
+        foreach (var x in genreMovieTask.Result) TryAdd(x, 2);
+        foreach (var x in genreTvTask.Result) TryAdd(x, 2);
 
         int GenreOverlap(TmdbDiscoverItem x) =>
             x.GenreIds.Count(g => seedGenres.Contains(g));

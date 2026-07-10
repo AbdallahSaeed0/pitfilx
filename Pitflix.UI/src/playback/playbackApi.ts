@@ -20,7 +20,7 @@ export type PlayerCommand =
   | { type: "Play" }
   | { type: "Pause" }
   | { type: "SetPaused"; payload: boolean }
-  | { type: "SeekRelative"; payload: number }
+  | { type: "SeekRelative"; payload: { seconds: number; exact: boolean } }
   | { type: "SeekAbsolute"; payload: number }
   | { type: "SetMute"; payload: boolean }
   | { type: "SetVolume"; payload: number }
@@ -101,8 +101,8 @@ export async function playbackSeekAbsolute(seconds: number): Promise<void> {
   await invoke("player2_send", { cmd });
 }
 
-export async function playbackSeekRelative(deltaSeconds: number): Promise<void> {
-  const cmd: PlayerCommand = { type: "SeekRelative", payload: deltaSeconds };
+export async function playbackSeekRelative(deltaSeconds: number, exact = Math.abs(deltaSeconds) <= 1): Promise<void> {
+  const cmd: PlayerCommand = { type: "SeekRelative", payload: { seconds: deltaSeconds, exact } };
   await invoke("player2_send", { cmd });
 }
 

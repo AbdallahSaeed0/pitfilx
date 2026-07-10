@@ -96,6 +96,7 @@ public sealed class AwardsCachePreloadCoordinator
                 };
             }
 
+            int cachedRowCount;
             await using (var scope0 = _scopes.CreateAsyncScope())
             {
                 var cacheRepo0 = scope0.ServiceProvider.GetRequiredService<AwardNomineeCacheRepository>();
@@ -106,6 +107,7 @@ public sealed class AwardsCachePreloadCoordinator
                 {
                     _status.CachedRowCount = n0;
                 }
+                cachedRowCount = n0;
             }
 
             var catalog = await _awards.GetCatalogAsync(ct).ConfigureAwait(false);
@@ -186,10 +188,15 @@ public sealed class AwardsCachePreloadCoordinator
                         await cacheRepo.UpsertEditionRowsAsync(a.Id, y, rows, ct).ConfigureAwait(false);
                         successRows += rows.Count;
                         processed += editionNomineeCount;
+                        // This edition had zero cached rows before the upsert (checked above), so every
+                        // upserted row is net-new — track the running total in memory instead of re-querying
+                        // a full-table COUNT(*) after every single edition.
+                        cachedRowCount += rows.Count;
                         lock (_gate)
                         {
                             _status.ProcessedNominees = processed;
                             _status.SuccessCount = successRows;
+                            _status.CachedRowCount = cachedRowCount;
                         }
                     }
                     catch (OperationCanceledException)
@@ -207,12 +214,6 @@ public sealed class AwardsCachePreloadCoordinator
                             _status.FailedCount = failedNominees;
                             _status.LastError = lastErr;
                         }
-                    }
-
-                    var cnt = await cacheRepo.CountRowsAsync(ct).ConfigureAwait(false);
-                    lock (_gate)
-                    {
-                        _status.CachedRowCount = cnt;
                     }
                 }
             }

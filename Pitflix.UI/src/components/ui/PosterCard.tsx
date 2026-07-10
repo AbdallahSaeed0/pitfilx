@@ -6,6 +6,7 @@ import { useHoverCard } from "../../hooks/useHoverCard";
 import { usePlayback } from "../../hooks/usePlayback";
 import { getMovie } from "../../api/movies";
 import { getShow } from "../../api/series";
+import type { StreamingDetailsLocationState } from "../../pages/StreamingDetailsPage";
 import type { MediaCard } from "../../types/media";
 import { cn } from "../../utils/cn";
 import { formatRating, formatYear } from "../../utils/format";
@@ -34,6 +35,9 @@ export type PosterCardProps = {
   /** `compact` tightens width/typography for dense rows. */
   size?: "md" | "sm";
   metaHints?: PosterCardMetaHints;
+  /** Cached IMDb rating — shown instead of TMDB when present. */
+  imdbRating?: number | null;
+  onContextMenu?: (e: React.MouseEvent) => void;
 };
 
 export function PosterCard({
@@ -47,6 +51,8 @@ export function PosterCard({
   rank,
   size = "md",
   metaHints,
+  imdbRating,
+  onContextMenu,
 }: PosterCardProps) {
   const navigate = useNavigate();
   const qc = useQueryClient();
@@ -61,16 +67,34 @@ export function PosterCard({
     primary && remote && remote !== primary ? toPosterSrc(remote) : undefined;
 
   const detailPath = mediaType === "Movie" ? `/movie/${item.id}` : `/series/${item.id}`;
-  const rating = item.voteAverage ?? 0;
+  const rating = imdbRating != null && imdbRating > 0 ? imdbRating : 0;
+  const ratingIsImdb = imdbRating != null && imdbRating > 0;
   const yearLabel = formatYear(item.year);
 
   const playPath = item.mediaFilePath || item.filePath;
 
-  const openDetail = () => navigate(detailPath);
+  const openDetail = () => {
+    if (item.id > 0) {
+      navigate(detailPath);
+      return;
+    }
+    if (item.tmdbId > 0) {
+      navigate("/stream-details", {
+        state: {
+          tmdbId: item.tmdbId,
+          mediaType,
+          title: item.title,
+          posterUrl: remote ?? null,
+          year: item.year != null ? String(item.year) : null,
+        } satisfies StreamingDetailsLocationState,
+      });
+    }
+  };
 
   const handleMouseEnter = () => {
     if (cardRef.current) setAnchorRect(cardRef.current.getBoundingClientRect());
     triggerProps.onMouseEnter();
+    if (item.id <= 0) return;
     if (mediaType === "Movie") {
       void qc.prefetchQuery({ queryKey: ["movie", item.id], queryFn: () => getMovie(item.id), staleTime: 30 * 60_000 });
     } else {
@@ -93,12 +117,13 @@ export function PosterCard({
       ref={cardRef}
       className={cn(
         "group relative shrink-0 cursor-pointer text-left",
-        size === "sm" ? "w-[136px]" : "w-[160px]",
+        size === "sm" ? "w-[136px]" : "w-full",
         "rounded-xl transition-[transform,filter] duration-200 hover:-translate-y-1",
         className,
       )}
       onMouseEnter={handleMouseEnter}
       onMouseLeave={triggerProps.onMouseLeave}
+      onContextMenu={onContextMenu}
     >
       <div
         role="button"
@@ -148,14 +173,15 @@ export function PosterCard({
         fallbackText={item.title.slice(0, 24)}
         loading="eager"
       />
-          {showPosterRatingOnHover ? (
+          {showPosterRatingOnHover && ratingIsImdb && rating > 0 ? (
             <div
               className={cn(
-                "pointer-events-none absolute top-2 rounded-md bg-black/70 px-1.5 py-0.5 text-xs font-medium opacity-0 transition-opacity group-hover:opacity-100",
+                "pointer-events-none absolute top-2 z-20 rounded-md px-1.5 py-0.5 text-[10px] font-semibold shadow-md",
+                "bg-[#F5C518]/90 font-bold text-black",
                 rank != null && rank > 0 ? "right-2" : "left-2",
               )}
             >
-              ★ {formatRating(rating)}
+              {`IMDb ${formatRating(rating)}`}
             </div>
           ) : null}
           {item.watchStatus === "Completed" ? (
@@ -182,7 +208,7 @@ export function PosterCard({
         ) : null}
         {showDetailsLine ? (
           <p className="truncate text-xs text-pitflix-subtle">
-            {yearLabel} · ★ {formatRating(rating)}
+            {yearLabel}
             {item.isArabic ? " · AR" : " · EN"}
           </p>
         ) : null}
@@ -205,6 +231,7 @@ export function PosterCard({
         item={item}
         mediaType={mediaType}
         anchorRect={anchorRect}
+        imdbRating={imdbRating}
         onPlay={
           playPath
             ? () => {
@@ -218,7 +245,7 @@ export function PosterCard({
               }
             : undefined
         }
-        onInfo={() => navigate(detailPath)}
+        onInfo={openDetail}
         onMouseEnter={cardProps.onMouseEnter}
         onMouseLeave={cardProps.onMouseLeave}
       />

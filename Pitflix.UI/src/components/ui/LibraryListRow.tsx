@@ -2,7 +2,7 @@ import { Heart } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 import type { MediaCard } from "../../types/media";
 import { cn } from "../../utils/cn";
-import { formatRating, formatYear } from "../../utils/format";
+import { formatYear } from "../../utils/format";
 import { toPosterSrc } from "../../utils/posterSrc";
 import { MediaImage } from "./MediaImage";
 
@@ -13,6 +13,7 @@ type Props = {
   selectionMode?: boolean;
   selected?: boolean;
   onToggleSelect?: () => void;
+  onContextMenu?: (e: React.MouseEvent) => void;
 };
 
 export function LibraryListRow({
@@ -22,6 +23,7 @@ export function LibraryListRow({
   selectionMode = false,
   selected = false,
   onToggleSelect,
+  onContextMenu,
 }: Props) {
   const navigate = useNavigate();
   const primary = item.selectedPosterPath || item.posterLocalPath;
@@ -47,6 +49,7 @@ export function LibraryListRow({
       role="button"
       tabIndex={0}
       onClick={handleClick}
+      onContextMenu={onContextMenu}
       onKeyDown={(e) => {
         if (e.key !== "Enter" && e.key !== " ") return;
         e.preventDefault();
@@ -92,7 +95,6 @@ export function LibraryListRow({
         </p>
         <p className="mt-0.5 truncate text-xs text-pitflix-subtle">
           {formatYear(item.year)}
-          {item.voteAverage ? ` · ★ ${formatRating(item.voteAverage)}` : ""}
           {item.genresCsv ? ` · ${item.genresCsv.split(",")[0]?.trim()}` : ""}
         </p>
       </div>

@@ -8,6 +8,13 @@ export type PlayerReturnTo = {
   mainScrollTop?: number;
 };
 
+/** A single live IPTV channel entry carried through router state so the player can render the full channel playlist. */
+export type LiveChannelEntry = {
+  name: string;
+  streamUrl: string;
+  logoUrl?: string | null;
+};
+
 /** Router state for `/player` (built-in mpv). */
 export type PlaybackLaunchState = {
   historyId: number;
@@ -31,4 +38,6 @@ export type PlaybackLaunchState = {
   useLibMpv?: boolean;
   /** Show / series display name (separate from `title`, which usually is the episode title). */
   seriesName?: string;
+  /** Full ordered list of live IPTV channels from the provider — enables in-player channel playlist and prev/next navigation. */
+  liveChannels?: LiveChannelEntry[];
 };

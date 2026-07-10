@@ -22,30 +22,8 @@ public sealed class TrailersCuratedPriorityProvider
         public List<Entry> Titles { get; set; } = new();
     }
 
-    private string ResolveTrailersDataRoot()
-    {
-        var fromContentRoot = Path.Combine(_env.ContentRootPath, "Data", "Trailers");
-        if (Directory.Exists(fromContentRoot)) return fromContentRoot;
-
-        var fromBaseDir = Path.Combine(AppContext.BaseDirectory, "Data", "Trailers");
-        if (Directory.Exists(fromBaseDir)) return fromBaseDir;
-
-        // Tauri NSIS installer places resources under binaries\ relative to the install dir.
-        var fromBaseDirBinaries = Path.Combine(AppContext.BaseDirectory, "binaries", "Data", "Trailers");
-        if (Directory.Exists(fromBaseDirBinaries)) return fromBaseDirBinaries;
-
-        var exeDir = Path.GetDirectoryName(Environment.ProcessPath ?? "");
-        if (!string.IsNullOrEmpty(exeDir))
-        {
-            var fromExeDir = Path.Combine(exeDir, "Data", "Trailers");
-            if (Directory.Exists(fromExeDir)) return fromExeDir;
-
-            var fromExeDirBinaries = Path.Combine(exeDir, "binaries", "Data", "Trailers");
-            if (Directory.Exists(fromExeDirBinaries)) return fromExeDirBinaries;
-        }
-
-        return fromContentRoot;
-    }
+    /// <summary>Resolves the <c>Data/Trailers</c> directory across dev, single-file, and installed builds.</summary>
+    private string ResolveTrailersDataRoot() => DataRootResolver.Resolve(_env, "Trailers");
 
     public async Task<IReadOnlyList<Entry>> TryLoadAsync(CancellationToken ct)
     {

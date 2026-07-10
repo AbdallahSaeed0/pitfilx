@@ -26,6 +26,23 @@ export type WatchStats = {
   decadeTop?: { decade: string; count: number }[];
   /** Files with 2+ play sessions (approximate rewatches). */
   rewatchSessionsApprox?: number;
+  movieWatchTimeMinutes?: number;
+  seriesWatchTimeMinutes?: number;
+  movieWatchTimeMinutesWeek?: number;
+  seriesWatchTimeMinutesWeek?: number;
+  movieWatchTimeMinutesMonth?: number;
+  seriesWatchTimeMinutesMonth?: number;
+  /** Most episodes of the same show watched on a single calendar day. */
+  longestMarathonEpisodes?: number;
+  longestMarathonShowTitle?: string;
+  /** Per-network show counts (e.g. Netflix, HBO) across completed/in-progress matched series. */
+  networkCounts?: { network: string; count: number }[];
+  topMovieGenres?: { genre: string; count: number }[];
+  topSeriesGenres?: { genre: string; count: number }[];
+  decadeTopMovies?: { decade: string; count: number }[];
+  decadeTopSeries?: { decade: string; count: number }[];
+  recentlyCompletedMovies?: MediaCard[];
+  recentlyCompletedSeries?: MediaCard[];
 };
 
 export const getWatchStats = () => api.get<WatchStats>("/stats/watch").then((r) => r.data);

@@ -25,17 +25,23 @@ public sealed class SubDlClient : IDisposable
 
     private static readonly TimeSpan CacheTtl = TimeSpan.FromMinutes(10);
 
-    private readonly HttpClient _http;
+    // Shared across instances — SubDlClient is constructed fresh per request (Program.cs),
+    // so a per-instance HttpClient would create a new socket pool on every search/download.
+    private static readonly HttpClient _http = CreateSharedClient();
     private readonly string? _apiKey;
-    private bool _disposed;
+
+    private static HttpClient CreateSharedClient()
+    {
+        var http = new HttpClient();
+        http.DefaultRequestHeaders.UserAgent.ParseAdd("Pitflix/1.0");
+        http.DefaultRequestHeaders.Accept.Add(new MediaTypeWithQualityHeaderValue("application/json"));
+        http.Timeout = TimeSpan.FromSeconds(25);
+        return http;
+    }
 
     public SubDlClient(string? apiKey = null)
     {
         _apiKey = apiKey?.Trim();
-        _http = new HttpClient();
-        _http.DefaultRequestHeaders.UserAgent.ParseAdd("Pitflix/1.0");
-        _http.DefaultRequestHeaders.Accept.Add(new MediaTypeWithQualityHeaderValue("application/json"));
-        _http.Timeout = TimeSpan.FromSeconds(25);
     }
 
     // ── Search ──────────────────────────────────────────────────────────────
@@ -338,10 +344,8 @@ public sealed class SubDlClient : IDisposable
         }
     }
 
+    /// <summary>No-op — <see cref="_http"/> is shared process-wide and outlives any one instance.</summary>
     public void Dispose()
     {
-        if (_disposed) return;
-        _disposed = true;
-        _http.Dispose();
     }
 }

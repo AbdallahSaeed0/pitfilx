@@ -34,6 +34,16 @@ export const LIST_MARK_OPTIONS: { id: string; label: string; Icon: LucideIcon }[
 
 const markIconById = Object.fromEntries(LIST_MARK_OPTIONS.map((o) => [o.id, o.Icon])) as Record<string, LucideIcon>;
 
+/** Built-in lists that cannot be deleted — map display title to picker icon id. */
+const BUILTIN_LIST_ICON_BY_TITLE: Record<string, string> = {
+  favorites: "heart",
+  "watch later": "film",
+};
+
+function builtinListIconId(displayTitle: string): string | null {
+  return BUILTIN_LIST_ICON_BY_TITLE[displayTitle.trim().toLowerCase()] ?? null;
+}
+
 export function encodeListName(iconId: string, displayTitle: string) {
   const t = displayTitle.trim();
   return `::${iconId}:: ${t}`;
@@ -54,7 +64,13 @@ export function decodeListTitle(name: string): DecodedListTitle {
   }
   const parts = raw.split(/\s+/);
   if (parts.length <= 1) return { mode: "legacy", mark: "📋", title: raw };
-  return { mode: "legacy", mark: parts[0] ?? "📋", title: parts.slice(1).join(" ").trim() || raw };
+  const title = parts.slice(1).join(" ").trim() || raw;
+  const iconId = builtinListIconId(title);
+  if (iconId) {
+    const Icon = markIconById[iconId] ?? Gem;
+    return { mode: "icon", iconId, title, Icon };
+  }
+  return { mode: "legacy", mark: parts[0] ?? "📋", title };
 }
 
 /**
@@ -71,6 +87,13 @@ export function isFavoritesListName(storedName: string): boolean {
   const lower = storedName.toLowerCase();
   const title = decodeListTitle(storedName).title.toLowerCase();
   return title.includes("favorite") || lower.includes("favorite");
+}
+
+/** Match built-in Watch Later list whether stored as legacy emoji prefix or `::film:: Watch Later`. */
+export function isWatchLaterListName(storedName: string): boolean {
+  const lower = storedName.toLowerCase();
+  const title = decodeListTitle(storedName).title.toLowerCase();
+  return title.includes("watch later") || lower.includes("watch later");
 }
 
 export function ListMarkGlyph({
