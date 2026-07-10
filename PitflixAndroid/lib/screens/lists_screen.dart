@@ -1,17 +1,13 @@
 import 'package:flutter/material.dart';
-import '../config/app_config.dart';
 import '../models/supabase_rows.dart';
-import '../services/local_backend_service.dart';
-import '../services/supabase_service.dart';
+import '../services/user_library_service.dart';
 import '../theme/app_theme.dart';
 import '../utils/list_marks.dart';
 import '../widgets/widgets.dart';
 import 'list_detail_screen.dart';
 
-/// Real data: lists come from either the local Pitflix.API backend or
-/// Supabase's `lists` table, depending on [AppConfig.useLocalBackend]. Both
-/// are read-only for now — "Create List" is local-only, no write path is
-/// wired yet, so it just appends to this screen's state for the session.
+/// Real, per-account data — lists live in Supabase's `user_lists` table
+/// (see UserLibraryService), keyed to the signed-in user.
 class ListsScreen extends StatefulWidget {
   const ListsScreen({super.key});
 
@@ -22,20 +18,28 @@ class ListsScreen extends StatefulWidget {
 class _ListsScreenState extends State<ListsScreen> {
   List<SupabaseListRow>? _lists;
   String? _error;
-  final _localLists = <SupabaseListRow>[];
 
   @override
   void initState() {
     super.initState();
     _load();
+    UserLibraryService.libraryVersion.addListener(_onLibraryChanged);
   }
+
+  @override
+  void dispose() {
+    UserLibraryService.libraryVersion.removeListener(_onLibraryChanged);
+    super.dispose();
+  }
+
+  void _onLibraryChanged() => _load(forceRefresh: true);
 
   Future<void> _load({bool forceRefresh = false}) async {
     setState(() => _error = null);
     try {
-      final rows = AppConfig.useLocalBackend
-          ? await LocalBackendService.fetchLists(forceRefresh: forceRefresh)
-          : await SupabaseService.fetchLists(forceRefresh: forceRefresh);
+      final rows = await UserLibraryService.fetchLists(
+        forceRefresh: forceRefresh,
+      );
       if (!mounted) return;
       setState(() => _lists = rows);
     } catch (e) {
@@ -45,7 +49,7 @@ class _ListsScreenState extends State<ListsScreen> {
   }
 
   List<SupabaseListRow> get _sorted {
-    final all = [...?_lists, ..._localLists];
+    final all = [...?_lists];
     int rank(SupabaseListRow l) => switch (l.type) {
       SupabaseListTypes.watchlist => 0,
       SupabaseListTypes.favorites => 1,
@@ -155,18 +159,30 @@ class _ListsScreenState extends State<ListsScreen> {
     );
 
     if (result == null || result.$1.isEmpty) return;
-    setState(() {
-      _localLists.add(
-        SupabaseListRow(
-          id: 'local-${DateTime.now().millisecondsSinceEpoch}',
-          name: result.$1,
-          type: SupabaseListTypes.custom,
-          source: 'mobile',
-          createdAt: DateTime.now(),
-          icon: result.$2,
-        ),
+    try {
+      await UserLibraryService.createList(
+        ListMarks.encode(result.$2, result.$1),
       );
-    });
+      _load(forceRefresh: true);
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text("Couldn't create list: $e")));
+    }
+  }
+
+  Future<void> _deleteList(SupabaseListRow list) async {
+    setState(() => _lists = _lists?.where((l) => l.id != list.id).toList());
+    try {
+      await UserLibraryService.deleteList(list.id);
+    } catch (e) {
+      if (!mounted) return;
+      _load(forceRefresh: true);
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text("Couldn't delete list: $e")));
+    }
   }
 
   @override
@@ -234,36 +250,7 @@ class _ListsScreenState extends State<ListsScreen> {
 
   Widget _buildBody() {
     if (_error != null && _lists == null) {
-      return Center(
-        child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 32),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Text(
-                "Couldn't load lists.\n$_error",
-                textAlign: TextAlign.center,
-                style: AppTextStyles.dmSans(
-                  fontSize: 13,
-                  color: AppColors.textMuted,
-                ),
-              ),
-              const SizedBox(height: 12),
-              GestureDetector(
-                onTap: _load,
-                child: Text(
-                  'Retry',
-                  style: AppTextStyles.dmSans(
-                    fontSize: 13,
-                    fontWeight: FontWeight.w600,
-                    color: AppColors.accent,
-                  ),
-                ),
-              ),
-            ],
-          ),
-        ),
-      );
+      return ErrorRetry(message: "Couldn't load lists.\n$_error", onRetry: _load);
     }
 
     if (_lists == null) {
@@ -272,19 +259,39 @@ class _ListsScreenState extends State<ListsScreen> {
 
     final lists = _sorted;
     if (lists.isEmpty) {
-      return Center(
-        child: Text(
-          'No lists yet.',
-          style: AppTextStyles.dmSans(fontSize: 13, color: AppColors.textMuted),
-        ),
-      );
+      return const EmptyState(message: 'No lists yet.');
     }
 
     return ListView.separated(
       padding: const EdgeInsets.fromLTRB(20, 16, 20, 20),
       itemCount: lists.length,
       separatorBuilder: (_, _) => const SizedBox(height: 10),
-      itemBuilder: (context, i) => _ListRow(list: lists[i]),
+      itemBuilder: (context, i) {
+        final list = lists[i];
+        final row = _ListRow(list: list);
+        // Watchlist/Favorites are permanent; only custom lists can be
+        // removed.
+        if (list.type != SupabaseListTypes.custom) return row;
+        return Dismissible(
+          key: ValueKey(list.id),
+          direction: DismissDirection.horizontal,
+          background: Container(
+            decoration: BoxDecoration(
+              color: AppColors.destructive.withValues(alpha: 0.85),
+              borderRadius: BorderRadius.circular(AppSpacing.cardRadiusMax),
+            ),
+            alignment: Alignment.centerLeft,
+            padding: const EdgeInsets.symmetric(horizontal: 18),
+            child: const Icon(
+              Icons.delete_outline,
+              color: AppColors.textPrimary,
+              size: 20,
+            ),
+          ),
+          onDismissed: (_) => _deleteList(list),
+          child: row,
+        );
+      },
     );
   }
 }

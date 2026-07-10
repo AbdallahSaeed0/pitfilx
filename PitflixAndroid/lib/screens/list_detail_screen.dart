@@ -1,18 +1,14 @@
 import 'package:flutter/material.dart';
-import '../config/app_config.dart';
 import '../models/title_item.dart';
-import '../services/local_backend_service.dart';
-import '../services/supabase_service.dart';
 import '../services/tmdb_service.dart';
+import '../services/user_library_service.dart';
 import '../theme/app_theme.dart';
 import '../widgets/widgets.dart';
 import 'title_detail_movie_screen.dart';
 import 'title_detail_series_screen.dart';
 
-/// Poster grid for a single list's items — real data, from either the local
-/// Pitflix.API backend (already fully resolved, no TMDB call needed) or
-/// Supabase's list_items (each resolved into a title via TMDB), depending on
-/// [AppConfig.useLocalBackend].
+/// Poster grid for a single list's items — real, per-account data from
+/// Supabase's `user_list_items` (see UserLibraryService).
 class ListDetailScreen extends StatefulWidget {
   final String listId;
   final String listName;
@@ -38,31 +34,10 @@ class _ListDetailScreenState extends State<ListDetailScreen> {
   }
 
   Future<void> _load() async {
-    if (widget.listId.startsWith('local-')) {
-      // Created via "Create List" this session — not persisted to Supabase yet.
-      setState(() {
-        _items = const [];
-        _error = null;
-      });
-      return;
-    }
-
     try {
-      List<TitleItem> resolvedItems;
-      if (AppConfig.useLocalBackend) {
-        resolvedItems = await LocalBackendService.fetchListItems(
-          int.parse(widget.listId),
-        );
-      } else {
-        final rows = await SupabaseService.fetchListItems(widget.listId);
-        final resolved = await Future.wait(
-          rows.map((row) async {
-            final kind = TmdbService.kindFromMediaType(row.mediaType);
-            return TmdbService.fetchDetails(row.tmdbId, kind);
-          }),
-        );
-        resolvedItems = resolved.whereType<TitleItem>().toList();
-      }
+      final resolvedItems = await UserLibraryService.fetchListItems(
+        widget.listId,
+      );
       if (!mounted) return;
       setState(() {
         _items = resolvedItems;
@@ -82,6 +57,25 @@ class _ListDetailScreenState extends State<ListDetailScreen> {
             : TitleDetailMovieScreen(title: title),
       ),
     );
+  }
+
+  Future<void> _removeItem(TitleItem item) async {
+    final removed = item;
+    final index = _items!.indexOf(item);
+    setState(() => _items!.remove(item));
+    try {
+      await UserLibraryService.removeFromList(
+        widget.listId,
+        removed.tmdbId!,
+        removed.isShow ? 'series' : 'movie',
+      );
+    } catch (e) {
+      if (!mounted) return;
+      setState(() => _items!.insert(index, removed));
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text("Couldn't remove: $e")));
+    }
   }
 
   @override
@@ -124,8 +118,8 @@ class _ListDetailScreenState extends State<ListDetailScreen> {
 
   Widget _buildBody() {
     if (_error != null) {
-      return _CenteredMessage(
-        text: "Couldn't load this list.\n$_error",
+      return ErrorRetry(
+        message: "Couldn't load this list.\n$_error",
         onRetry: _load,
       );
     }
@@ -133,7 +127,7 @@ class _ListDetailScreenState extends State<ListDetailScreen> {
       return const PosterGridSkeleton();
     }
     if (_items!.isEmpty) {
-      return const _CenteredMessage(text: 'Nothing in this list yet.');
+      return const EmptyState(message: 'Nothing in this list yet.');
     }
 
     return GridView.builder(
@@ -147,56 +141,46 @@ class _ListDetailScreenState extends State<ListDetailScreen> {
       itemCount: _items!.length,
       itemBuilder: (context, i) {
         final t = _items![i];
-        return PosterCard(
+        final poster = PosterCard(
           title: t.name,
           subtitle: '${t.year}',
           gradientSeed: t.gradientSeed,
           imageUrl: TmdbService.posterUrl(t.posterPath),
           onTap: () => _openTitle(t),
         );
+        return Dismissible(
+          key: ValueKey(t.id),
+          direction: DismissDirection.horizontal,
+          background: _DismissBackground(alignment: Alignment.centerLeft),
+          secondaryBackground: _DismissBackground(
+            alignment: Alignment.centerRight,
+          ),
+          onDismissed: (_) => _removeItem(t),
+          child: poster,
+        );
       },
     );
   }
 }
 
-class _CenteredMessage extends StatelessWidget {
-  final String text;
-  final VoidCallback? onRetry;
+class _DismissBackground extends StatelessWidget {
+  final Alignment alignment;
 
-  const _CenteredMessage({required this.text, this.onRetry});
+  const _DismissBackground({required this.alignment});
 
   @override
   Widget build(BuildContext context) {
-    return Center(
-      child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 32),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Text(
-              text,
-              textAlign: TextAlign.center,
-              style: AppTextStyles.dmSans(
-                fontSize: 13,
-                color: AppColors.textMuted,
-              ),
-            ),
-            if (onRetry != null) ...[
-              const SizedBox(height: 12),
-              GestureDetector(
-                onTap: onRetry,
-                child: Text(
-                  'Retry',
-                  style: AppTextStyles.dmSans(
-                    fontSize: 13,
-                    fontWeight: FontWeight.w600,
-                    color: AppColors.accent,
-                  ),
-                ),
-              ),
-            ],
-          ],
-        ),
+    return Container(
+      decoration: BoxDecoration(
+        color: AppColors.destructive.withValues(alpha: 0.85),
+        borderRadius: BorderRadius.circular(AppSpacing.cardRadiusMin),
+      ),
+      alignment: alignment,
+      padding: const EdgeInsets.symmetric(horizontal: 14),
+      child: const Icon(
+        Icons.delete_outline,
+        color: AppColors.textPrimary,
+        size: 20,
       ),
     );
   }

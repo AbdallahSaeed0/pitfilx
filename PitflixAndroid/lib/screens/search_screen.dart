@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
 import '../models/title_item.dart';
+import '../services/app_settings.dart';
 import '../services/tmdb_service.dart';
 import '../theme/app_theme.dart';
 import '../widgets/widgets.dart';
@@ -80,6 +81,7 @@ class _SearchScreenState extends State<SearchScreen> {
       _SearchCache.query = query;
       _SearchCache.filter = _filter;
       _SearchCache.results = results;
+      AppSettings.addSearchTerm(query);
       setState(() {
         _results = results;
         _loading = false;
@@ -96,6 +98,14 @@ class _SearchScreenState extends State<SearchScreen> {
   void _setFilter(int filter) {
     setState(() => _filter = filter);
     if (_controller.text.trim().isNotEmpty) _runSearch();
+  }
+
+  void _searchFor(String term) {
+    _controller.text = term;
+    _controller.selection = TextSelection.collapsed(offset: term.length);
+    _debounce?.cancel();
+    setState(() {});
+    _runSearch();
   }
 
   void _openTitle(TitleItem title) {
@@ -197,47 +207,81 @@ class _SearchScreenState extends State<SearchScreen> {
     );
   }
 
-  Widget _buildBody(String query) {
-    if (query.isEmpty) {
-      return Center(
-        child: Text(
-          'Type to search TMDB',
-          style: AppTextStyles.dmSans(fontSize: 13, color: AppColors.textMuted),
-        ),
-      );
-    }
-
-    if (_error != null) {
-      return Center(
-        child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 32),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Text(
-                "Couldn't search: $_error",
-                textAlign: TextAlign.center,
-                style: AppTextStyles.dmSans(
-                  fontSize: 13,
-                  color: AppColors.textMuted,
-                ),
+  Widget _buildRecentSearches() {
+    return ValueListenableBuilder<List<String>>(
+      valueListenable: AppSettings.searchHistory,
+      builder: (context, history, _) {
+        if (history.isEmpty) {
+          return Center(
+            child: Text(
+              'Type to search TMDB',
+              style: AppTextStyles.dmSans(
+                fontSize: 13,
+                color: AppColors.textMuted,
               ),
-              const SizedBox(height: 12),
+            ),
+          );
+        }
+        return ListView(
+          padding: const EdgeInsets.fromLTRB(20, 18, 20, 20),
+          children: [
+            Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                Text('RECENT SEARCHES', style: AppTextStyles.sectionLabel()),
+                GestureDetector(
+                  onTap: AppSettings.clearSearchHistory,
+                  child: Text(
+                    'Clear',
+                    style: AppTextStyles.dmSans(
+                      fontSize: 12,
+                      fontWeight: FontWeight.w600,
+                      color: AppColors.textMuted,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 12),
+            for (final term in history)
               GestureDetector(
-                onTap: _runSearch,
-                child: Text(
-                  'Retry',
-                  style: AppTextStyles.dmSans(
-                    fontSize: 13,
-                    fontWeight: FontWeight.w600,
-                    color: AppColors.accent,
+                onTap: () => _searchFor(term),
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(vertical: 10),
+                  child: Row(
+                    children: [
+                      const Icon(
+                        Icons.history,
+                        size: 16,
+                        color: AppColors.textMuted,
+                      ),
+                      const SizedBox(width: 12),
+                      Expanded(
+                        child: Text(
+                          term,
+                          style: AppTextStyles.dmSans(
+                            fontSize: 14,
+                            color: AppColors.textPrimary,
+                          ),
+                        ),
+                      ),
+                    ],
                   ),
                 ),
               ),
-            ],
-          ),
-        ),
-      );
+          ],
+        );
+      },
+    );
+  }
+
+  Widget _buildBody(String query) {
+    if (query.isEmpty) {
+      return _buildRecentSearches();
+    }
+
+    if (_error != null) {
+      return ErrorRetry(message: "Couldn't search: $_error", onRetry: _runSearch);
     }
 
     if (_loading && _results == null) {

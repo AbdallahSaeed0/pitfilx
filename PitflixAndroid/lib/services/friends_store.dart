@@ -1,66 +1,59 @@
-import 'dart:async';
-
 import 'package:flutter/foundation.dart';
 
-import '../data/mock_friends_data.dart';
-import '../models/friend.dart';
-import '../models/friend_request.dart';
+import '../models/social_friend_request.dart';
+import '../models/social_profile.dart';
+import 'social_service.dart';
 
-/// Session-only shared friend-request state — Pitflix.API has no social
-/// graph yet (see models/friend.dart), so this just makes the mock Friends /
-/// Add Friend / Requests screens agree with each other in-session: sending a
-/// request from Add Friend shows up as outgoing on the Friends screen, and
-/// (since there's no real other person to respond) we simulate them
-/// accepting it a few seconds later so the full send -> accept lifecycle is
-/// visible. Resets on app restart, same as the rest of the friends feature.
+/// Shared session state for the Friends screens, backed by the real social
+/// schema (see SocialService). Notifiers start empty and are populated by
+/// [refresh] — called after a successful login/signup and defensively from
+/// RootShell — rather than synchronously at app start, since it's now a
+/// network call instead of static mock data.
 abstract class FriendsStore {
-  static final ValueNotifier<List<Friend>> friends = ValueNotifier(
-    List.of(MockFriendsData.friends),
-  );
-  static final ValueNotifier<List<FriendRequest>> incoming = ValueNotifier(
-    List.of(MockFriendsData.incomingRequests),
-  );
-  static final ValueNotifier<List<FriendRequest>> outgoing = ValueNotifier(
-    List.of(MockFriendsData.outgoingRequests),
-  );
+  static final ValueNotifier<List<SocialProfile>> friends = ValueNotifier([]);
+  static final ValueNotifier<List<SocialFriendRequest>> incoming =
+      ValueNotifier([]);
+  static final ValueNotifier<List<SocialFriendRequest>> outgoing =
+      ValueNotifier([]);
+  static final ValueNotifier<bool> loaded = ValueNotifier(false);
 
-  static bool isFriend(String friendId) =>
-      friends.value.any((f) => f.id == friendId);
+  static bool isFriend(String profileId) =>
+      friends.value.any((f) => f.id == profileId);
 
-  static bool isPending(String friendId) =>
-      incoming.value.any((r) => r.friend.id == friendId) ||
-      outgoing.value.any((r) => r.friend.id == friendId);
+  static bool isPending(String profileId) =>
+      incoming.value.any((r) => r.profile.id == profileId) ||
+      outgoing.value.any((r) => r.profile.id == profileId);
 
-  static void sendRequest(Friend friend) {
-    if (isFriend(friend.id) || isPending(friend.id)) return;
-    final request = FriendRequest(
-      id: 'out-${friend.id}-${DateTime.now().microsecondsSinceEpoch}',
-      friend: friend,
-      direction: FriendRequestDirection.outgoing,
-      sentAt: DateTime.now(),
-    );
-    outgoing.value = [...outgoing.value, request];
-    Timer(const Duration(seconds: 4), () => _autoAccept(request));
+  static Future<void> refresh() async {
+    final results = await Future.wait([
+      SocialService.fetchFriends(),
+      SocialService.fetchIncomingRequests(),
+      SocialService.fetchOutgoingRequests(),
+    ]);
+    friends.value = results[0] as List<SocialProfile>;
+    incoming.value = results[1] as List<SocialFriendRequest>;
+    outgoing.value = results[2] as List<SocialFriendRequest>;
+    loaded.value = true;
   }
 
-  /// Stands in for the other person accepting — only fires if the request
-  /// wasn't cancelled in the meantime.
-  static void _autoAccept(FriendRequest request) {
-    if (!outgoing.value.any((r) => r.id == request.id)) return;
-    outgoing.value = outgoing.value.where((r) => r.id != request.id).toList();
-    friends.value = [...friends.value, request.friend];
+  static Future<void> sendRequest(SocialProfile profile) async {
+    if (isFriend(profile.id) || isPending(profile.id)) return;
+    await SocialService.sendFriendRequest(profile.id);
+    await refresh();
   }
 
-  static void acceptRequest(FriendRequest request) {
-    incoming.value = incoming.value.where((r) => r.id != request.id).toList();
-    friends.value = [...friends.value, request.friend];
+  static Future<void> acceptRequest(SocialFriendRequest request) async {
+    await SocialService.acceptFriendRequest(request.id);
+    await refresh();
   }
 
-  static void declineRequest(FriendRequest request) {
-    incoming.value = incoming.value.where((r) => r.id != request.id).toList();
+  static Future<void> declineRequest(SocialFriendRequest request) async {
+    await SocialService.declineFriendRequest(request.id);
+    await refresh();
   }
 
-  static void cancelOutgoing(FriendRequest request) {
-    outgoing.value = outgoing.value.where((r) => r.id != request.id).toList();
+  static Future<void> cancelOutgoing(SocialFriendRequest request) async {
+    await SocialService.cancelOutgoingRequest(request.id);
+    await refresh();
   }
 }

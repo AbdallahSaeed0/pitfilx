@@ -1,8 +1,6 @@
-/// Row shapes matching the Supabase tables created by
-/// Pitflix.API/Services/Supabase/sql/001_pitflix_mobile_sync_schema.sql.
-/// Mirrors the desktop sync module's schema — see that folder's DTOs
-/// (SupabaseListDto / SupabaseListItemDto / SupabaseWatchEventDto) for the
-/// server-side equivalents.
+/// Row shape for a list (Watch Later/Favorites/custom) — used by both the
+/// desktop-sync path's `lists` table and Supabase's per-account
+/// `user_lists` table (see UserLibraryService), which share this shape.
 library;
 
 import '../utils/list_marks.dart';
@@ -44,76 +42,3 @@ class SupabaseListRow {
     );
   }
 }
-
-class SupabaseListItemRow {
-  final String id;
-  final String listId;
-  final int tmdbId;
-  final String mediaType; // "movie" | "tv" (or desktop's "Movie"/"Series")
-  final DateTime addedAt;
-
-  const SupabaseListItemRow({
-    required this.id,
-    required this.listId,
-    required this.tmdbId,
-    required this.mediaType,
-    required this.addedAt,
-  });
-
-  factory SupabaseListItemRow.fromJson(Map<String, dynamic> json) =>
-      SupabaseListItemRow(
-        id: json['id'] as String,
-        listId: json['list_id'] as String,
-        tmdbId: (json['tmdb_id'] as num?)?.toInt() ?? 0,
-        mediaType: json['media_type'] as String? ?? 'movie',
-        addedAt:
-            DateTime.tryParse(json['added_at'] as String? ?? '') ??
-            DateTime.now(),
-      );
-}
-
-class SupabaseWatchEventRow {
-  final String id;
-  final int tmdbId;
-  final String mediaType;
-  final String? title;
-  final String? posterPath;
-  final DateTime watchedAt;
-  final int? rating;
-  final String source;
-  final DateTime syncedAt;
-
-  const SupabaseWatchEventRow({
-    required this.id,
-    required this.tmdbId,
-    required this.mediaType,
-    required this.title,
-    required this.posterPath,
-    required this.watchedAt,
-    required this.rating,
-    required this.source,
-    required this.syncedAt,
-  });
-
-  factory SupabaseWatchEventRow.fromJson(Map<String, dynamic> json) =>
-      SupabaseWatchEventRow(
-        id: json['id'] as String,
-        tmdbId: (json['tmdb_id'] as num?)?.toInt() ?? 0,
-        mediaType: json['media_type'] as String? ?? 'movie',
-        title: json['title'] as String?,
-        posterPath: json['poster_path'] as String?,
-        watchedAt:
-            DateTime.tryParse(json['watched_at'] as String? ?? '') ??
-            DateTime.now(),
-        rating: (json['rating'] as num?)?.toInt(),
-        source: json['source'] as String? ?? 'desktop',
-        syncedAt:
-            DateTime.tryParse(json['synced_at'] as String? ?? '') ??
-            DateTime.now(),
-      );
-}
-
-/// True if [mediaType] represents a TV/series item, across both the
-/// mobile/TMDB convention ("tv") and the desktop convention ("Series").
-bool isSeriesMediaType(String mediaType) =>
-    mediaType.toLowerCase() == 'tv' || mediaType.toLowerCase() == 'series';

@@ -50,6 +50,11 @@ dependencies:
   # Persists small user preferences (e.g. rating scale) across app restarts
   shared_preferences: ^2.3.3
 
+  # Real Supabase Auth (login/signup/session) + PostgREST client for the
+  # social schema (friends/activity/comments/likes)
+  supabase_flutter: ^2.8.0
+  url_launcher: ^6.3.2
+
 dev_dependencies:
   flutter_test:
     sdk: flutter

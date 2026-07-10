@@ -43,6 +43,8 @@ export type WatchStats = {
   decadeTopSeries?: { decade: string; count: number }[];
   recentlyCompletedMovies?: MediaCard[];
   recentlyCompletedSeries?: MediaCard[];
+  /** Last 7 calendar days (today inclusive), oldest first — completions + which titles that day. */
+  last7Days?: { date: string; count: number; titles: string[] }[];
 };
 
 export const getWatchStats = () => api.get<WatchStats>("/stats/watch").then((r) => r.data);

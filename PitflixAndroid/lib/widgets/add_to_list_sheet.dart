@@ -1,8 +1,7 @@
 import 'package:flutter/material.dart';
 import '../models/supabase_rows.dart';
 import '../models/title_item.dart';
-import '../services/local_backend_service.dart';
-import '../services/tmdb_service.dart';
+import '../services/user_library_service.dart';
 import '../theme/app_theme.dart';
 import 'auth_text_field.dart';
 
@@ -37,7 +36,7 @@ class _AddToListSheetState extends State<_AddToListSheet> {
   String? _error;
   String? _busyListId;
 
-  String get _mediaType => widget.title.isShow ? 'Series' : 'Movie';
+  String get _mediaType => widget.title.isShow ? 'series' : 'movie';
 
   @override
   void initState() {
@@ -48,11 +47,11 @@ class _AddToListSheetState extends State<_AddToListSheet> {
   Future<void> _load() async {
     setState(() => _error = null);
     try {
-      final lists = await LocalBackendService.fetchLists(forceRefresh: true);
+      final lists = await UserLibraryService.fetchLists(forceRefresh: true);
       final memberships = await Future.wait(
         lists.map(
-          (l) => LocalBackendService.isInList(
-            int.parse(l.id),
+          (l) => UserLibraryService.isInList(
+            l.id,
             widget.title.tmdbId!,
             _mediaType,
           ),
@@ -73,23 +72,22 @@ class _AddToListSheetState extends State<_AddToListSheet> {
   }
 
   Future<void> _toggle(SupabaseListRow list) async {
-    final listId = int.parse(list.id);
     final isMember = _memberListIds.contains(list.id);
     setState(() => _busyListId = list.id);
     try {
       if (isMember) {
-        await LocalBackendService.removeFromList(
-          listId,
+        await UserLibraryService.removeFromList(
+          list.id,
           widget.title.tmdbId!,
           _mediaType,
         );
       } else {
-        await LocalBackendService.addToList(
-          listId,
+        await UserLibraryService.addToList(
+          list.id,
           tmdbId: widget.title.tmdbId!,
           mediaType: _mediaType,
           title: widget.title.name,
-          posterRemoteUrl: TmdbService.posterUrl(widget.title.posterPath),
+          posterPath: widget.title.posterPath,
         );
       }
       if (!mounted) return;
@@ -166,13 +164,13 @@ class _AddToListSheetState extends State<_AddToListSheet> {
     if (name == null || name.isEmpty || !mounted) return;
 
     try {
-      final listId = await LocalBackendService.createList(name);
-      await LocalBackendService.addToList(
+      final listId = await UserLibraryService.createList(name);
+      await UserLibraryService.addToList(
         listId,
         tmdbId: widget.title.tmdbId!,
         mediaType: _mediaType,
         title: widget.title.name,
-        posterRemoteUrl: TmdbService.posterUrl(widget.title.posterPath),
+        posterPath: widget.title.posterPath,
       );
       await _load();
     } catch (e) {

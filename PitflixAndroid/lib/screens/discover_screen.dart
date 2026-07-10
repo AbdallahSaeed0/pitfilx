@@ -1,8 +1,7 @@
 import 'package:flutter/material.dart';
-import '../data/mock_data.dart';
-import '../models/friend.dart';
+import '../models/social_activity_item.dart';
 import '../models/title_item.dart';
-import '../services/friends_store.dart';
+import '../services/social_service.dart';
 import '../services/tmdb_service.dart';
 import '../theme/app_theme.dart';
 import '../widgets/friend_avatar.dart';
@@ -52,11 +51,36 @@ class _DiscoverScreenState extends State<DiscoverScreen> {
     for (final c in _categories) c.name: null,
   };
 
+  List<SocialActivityItem>? _watchedByFriends;
+
   @override
   void initState() {
     super.initState();
     for (final category in _categories) {
       _loadCategory(category);
+    }
+    _loadWatchedByFriends();
+  }
+
+  /// Real friends' recent "watched" activity, deduped so each title only
+  /// shows once (attributed to whichever friend appears first). RLS already
+  /// scopes the feed to self + friends, so this is filtered client-side just
+  /// for the action type.
+  Future<void> _loadWatchedByFriends() async {
+    try {
+      final feed = await SocialService.fetchActivityFeed();
+      if (!mounted) return;
+      final seen = <String>{};
+      final deduped = <SocialActivityItem>[];
+      for (final item in feed) {
+        if (item.action != SocialActivityAction.watched) continue;
+        final key = '${item.tmdbId}-${item.mediaType}';
+        if (!seen.add(key)) continue;
+        deduped.add(item);
+      }
+      setState(() => _watchedByFriends = deduped);
+    } catch (_) {
+      // Decorative section — skip silently if it fails to load.
     }
   }
 
@@ -75,31 +99,32 @@ class _DiscoverScreenState extends State<DiscoverScreen> {
     }
   }
 
-  /// One (friend, title) entry per title a friend has recently watched
-  /// (mock data — see models/friend.dart), deduped so each title only shows
-  /// once (attributed to whichever friend appears first).
-  List<(Friend, TitleItem)> _watchedByFriends(List<Friend> friends) {
-    final seen = <String>{};
-    final entries = <(Friend, TitleItem)>[];
-    for (final friend in friends) {
-      for (final titleId in friend.recentTitleIds) {
-        if (!seen.add(titleId)) continue;
-        try {
-          entries.add((friend, MockData.byId(titleId)));
-        } catch (_) {
-          // Unknown id — skip.
-        }
-      }
-    }
-    return entries;
-  }
-
   void _openTitle(TitleItem title) {
     Navigator.of(context).push(
       MaterialPageRoute(
         builder: (_) => title.isShow
             ? TitleDetailSeriesScreen(title: title)
             : TitleDetailMovieScreen(title: title),
+      ),
+    );
+  }
+
+  void _openActivityTitle(SocialActivityItem item) {
+    final kind = TmdbService.kindFromMediaType(item.mediaType);
+    _openTitle(
+      TitleItem(
+        id: 'tmdb-${item.tmdbId}',
+        name: item.title ?? 'Untitled',
+        kind: kind,
+        year: 0,
+        network: kind == TitleKind.movie ? 'Theaters' : 'TV',
+        rating: 0,
+        genres: const [],
+        overview: '',
+        gradientSeed: item.tmdbId % 6,
+        posterPath: item.posterPath,
+        tmdbId: item.tmdbId,
+        isSummaryOnly: true,
       ),
     );
   }
@@ -163,24 +188,15 @@ class _DiscoverScreenState extends State<DiscoverScreen> {
               child: ListView(
                 padding: const EdgeInsets.only(top: 10, bottom: 24),
                 children: [
-                  ValueListenableBuilder<List<Friend>>(
-                    valueListenable: FriendsStore.friends,
-                    builder: (context, friends, _) {
-                      final entries = _watchedByFriends(friends);
-                      if (entries.isEmpty) return const SizedBox.shrink();
-                      return Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          SectionHeader(title: 'Watched by Friends'),
-                          SizedBox(
-                            height: 162,
-                            child: _buildWatchedByFriendsRow(entries),
-                          ),
-                          const SizedBox(height: AppSpacing.sectionGap),
-                        ],
-                      );
-                    },
-                  ),
+                  if (_watchedByFriends != null &&
+                      _watchedByFriends!.isNotEmpty) ...[
+                    SectionHeader(title: 'Watched by Friends'),
+                    SizedBox(
+                      height: 162,
+                      child: _buildWatchedByFriendsRow(_watchedByFriends!),
+                    ),
+                    const SizedBox(height: AppSpacing.sectionGap),
+                  ],
                   for (final category in _categories) ...[
                     SectionHeader(title: category.name),
                     SizedBox(height: 162, child: _buildCategoryRow(category)),
@@ -195,14 +211,14 @@ class _DiscoverScreenState extends State<DiscoverScreen> {
     );
   }
 
-  Widget _buildWatchedByFriendsRow(List<(Friend, TitleItem)> entries) {
+  Widget _buildWatchedByFriendsRow(List<SocialActivityItem> entries) {
     return ListView.separated(
       scrollDirection: Axis.horizontal,
       padding: const EdgeInsets.symmetric(horizontal: AppSpacing.screenPadding),
       itemCount: entries.length,
       separatorBuilder: (_, _) => const SizedBox(width: AppSpacing.posterGap),
       itemBuilder: (context, i) {
-        final (friend, title) = entries[i];
+        final item = entries[i];
         return SizedBox(
           width: 110,
           height: 162,
@@ -211,16 +227,16 @@ class _DiscoverScreenState extends State<DiscoverScreen> {
               PosterCard(
                 width: 110,
                 height: 162,
-                title: title.name,
-                subtitle: 'Watched by ${friend.name}',
-                gradientSeed: title.gradientSeed,
-                imageUrl: TmdbService.posterUrl(title.posterPath),
-                onTap: () => _openTitle(title),
+                title: item.title ?? 'Untitled',
+                subtitle: 'Watched by ${item.profile.name}',
+                gradientSeed: item.tmdbId % 6,
+                imageUrl: TmdbService.posterUrl(item.posterPath),
+                onTap: () => _openActivityTitle(item),
               ),
               Positioned(
                 top: 6,
                 right: 6,
-                child: FriendAvatar(friend: friend, size: 26),
+                child: FriendAvatar(profile: item.profile, size: 26),
               ),
             ],
           ),

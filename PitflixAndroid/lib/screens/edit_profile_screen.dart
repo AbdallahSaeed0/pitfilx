@@ -1,15 +1,15 @@
 import 'dart:typed_data';
 import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
-import '../data/mock_data.dart';
+import '../services/auth_service.dart';
 import '../services/profile_photo_store.dart';
+import '../services/social_service.dart';
 import '../theme/app_theme.dart';
 import '../widgets/widgets.dart';
 
-/// UI only, placeholder data — "Save" just pops back without persisting
-/// (username/email aren't wired to a backend yet). The photo picker itself
-/// is fully functional; the picked image is just kept in memory for the
-/// session (see [ProfilePhotoStore]) since there's no upload endpoint yet.
+/// Username/display name are real (`profiles` table). The photo picker is
+/// still session-only (see [ProfilePhotoStore]) — there's no Supabase
+/// Storage bucket wired up yet to actually upload/persist an avatar.
 class EditProfileScreen extends StatefulWidget {
   const EditProfileScreen({super.key});
 
@@ -18,9 +18,29 @@ class EditProfileScreen extends StatefulWidget {
 }
 
 class _EditProfileScreenState extends State<EditProfileScreen> {
-  late final _usernameController = TextEditingController(
-    text: MockData.userName,
-  );
+  final _usernameController = TextEditingController();
+  bool _loading = true;
+  bool _saving = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _load();
+  }
+
+  Future<void> _load() async {
+    try {
+      final profile = await SocialService.myProfile();
+      if (!mounted) return;
+      setState(() {
+        _usernameController.text = profile?.username ?? '';
+        _loading = false;
+      });
+    } catch (_) {
+      if (!mounted) return;
+      setState(() => _loading = false);
+    }
+  }
 
   @override
   void dispose() {
@@ -28,8 +48,33 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
     super.dispose();
   }
 
-  void _save() {
-    Navigator.of(context).pop();
+  String get _initials {
+    final name = _usernameController.text.trim();
+    if (name.isNotEmpty) return name[0].toUpperCase();
+    final email = AuthService.currentUser?.email ?? '';
+    return email.isNotEmpty ? email[0].toUpperCase() : '?';
+  }
+
+  Future<void> _save() async {
+    final username = _usernameController.text.trim();
+    if (username.isEmpty) {
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('Username can\'t be empty')));
+      return;
+    }
+    setState(() => _saving = true);
+    try {
+      await SocialService.updateProfile(username: username);
+      if (!mounted) return;
+      Navigator.of(context).pop();
+    } catch (e) {
+      if (!mounted) return;
+      setState(() => _saving = false);
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text(e.toString())));
+    }
   }
 
   Future<void> _pickPhoto() async {
@@ -147,7 +192,7 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
                                     height: 96,
                                   )
                                 : Text(
-                                    MockData.userInitials,
+                                    _initials,
                                     style: AppTextStyles.bebas(
                                       fontSize: 36,
                                       color: AppColors.accent,
@@ -200,7 +245,7 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
                       ),
                     ),
                     child: Text(
-                      MockData.userEmail,
+                      AuthService.currentUser?.email ?? '',
                       style: AppTextStyles.dmSans(
                         fontSize: 15,
                         color: AppColors.textMuted,
@@ -209,7 +254,7 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
                   ),
                   const SizedBox(height: 28),
                   ElevatedButton(
-                    onPressed: _save,
+                    onPressed: _loading || _saving ? null : _save,
                     style: ElevatedButton.styleFrom(
                       backgroundColor: AppColors.buttonPurple,
                       padding: const EdgeInsets.symmetric(vertical: 14),
@@ -218,14 +263,23 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
                       ),
                       elevation: 0,
                     ),
-                    child: Text(
-                      'SAVE',
-                      style: AppTextStyles.bebas(
-                        fontSize: 20,
-                        letterSpacing: 0.12,
-                        color: AppColors.textPrimary,
-                      ),
-                    ),
+                    child: _saving
+                        ? const SizedBox(
+                            width: 20,
+                            height: 20,
+                            child: CircularProgressIndicator(
+                              strokeWidth: 2.4,
+                              color: AppColors.textPrimary,
+                            ),
+                          )
+                        : Text(
+                            'SAVE',
+                            style: AppTextStyles.bebas(
+                              fontSize: 20,
+                              letterSpacing: 0.12,
+                              color: AppColors.textPrimary,
+                            ),
+                          ),
                   ),
                 ],
               ),

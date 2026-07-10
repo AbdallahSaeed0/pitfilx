@@ -1,12 +1,14 @@
 import 'dart:typed_data';
 import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
-import '../data/mock_data.dart';
+import '../models/social_profile.dart';
 import '../models/title_item.dart';
+import '../services/auth_service.dart';
 import '../services/cover_photo_store.dart';
-import '../services/local_backend_service.dart';
 import '../services/profile_photo_store.dart';
+import '../services/social_service.dart';
 import '../services/tmdb_service.dart';
+import '../services/user_library_service.dart';
 import '../theme/app_theme.dart';
 import '../services/friends_store.dart';
 import '../utils/format_minutes.dart';
@@ -37,12 +39,42 @@ class _ProfileScreenState extends State<ProfileScreen> {
   int? _totalWatchTimeMinutes;
   int? _totalEpisodesWatched;
   int? _totalMoviesWatched;
+  SocialProfile? _myProfile;
 
   @override
   void initState() {
     super.initState();
     _loadWatchLater();
     _loadRecentlyWatched();
+    _loadMyProfile();
+    UserLibraryService.libraryVersion.addListener(_onLibraryChanged);
+  }
+
+  @override
+  void dispose() {
+    UserLibraryService.libraryVersion.removeListener(_onLibraryChanged);
+    super.dispose();
+  }
+
+  void _onLibraryChanged() {
+    _loadWatchLater(forceRefresh: true);
+    _loadRecentlyWatched();
+  }
+
+  Future<void> _loadMyProfile() async {
+    try {
+      final profile = await SocialService.myProfile();
+      if (!mounted) return;
+      setState(() => _myProfile = profile);
+    } catch (_) {
+      // Decorative — falls back to the account email if this fails.
+    }
+  }
+
+  String get _myInitials {
+    if (_myProfile != null) return _myProfile!.initials;
+    final email = AuthService.currentUser?.email ?? '';
+    return email.isNotEmpty ? email[0].toUpperCase() : '?';
   }
 
   Future<void> _loadWatchLater({bool forceRefresh = false}) async {
@@ -60,7 +92,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
   Future<void> _loadRecentlyWatched() async {
     setState(() => _recentError = null);
     try {
-      final result = await LocalBackendService.fetchRecentlyWatched();
+      final result = await UserLibraryService.fetchProfileSummary();
       if (!mounted) return;
       setState(() {
         _recentMovies = result.movies;
@@ -91,10 +123,11 @@ class _ProfileScreenState extends State<ProfileScreen> {
     ).push(MaterialPageRoute(builder: (_) => const SettingsScreen()));
   }
 
-  void _openEditProfile() {
-    Navigator.of(
+  Future<void> _openEditProfile() async {
+    await Navigator.of(
       context,
     ).push(MaterialPageRoute(builder: (_) => const EditProfileScreen()));
+    _loadMyProfile();
   }
 
   Future<void> _pickCover() async {
@@ -250,7 +283,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
                                   height: 64,
                                 )
                               : Text(
-                                  MockData.userInitials,
+                                  _myInitials,
                                   style: AppTextStyles.bebas(
                                     fontSize: 26,
                                     color: AppColors.accent,
@@ -272,7 +305,9 @@ class _ProfileScreenState extends State<ProfileScreen> {
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
                         Text(
-                          MockData.userName,
+                          _myProfile?.name ??
+                              AuthService.currentUser?.email ??
+                              '',
                           style: AppTextStyles.dmSans(
                             fontSize: 18,
                             fontWeight: FontWeight.w600,
@@ -280,10 +315,25 @@ class _ProfileScreenState extends State<ProfileScreen> {
                         ),
                         const SizedBox(height: 2),
                         Text(
-                          MockData.userEmail,
+                          AuthService.currentUser?.email ?? '',
                           style: AppTextStyles.dmSans(
                             fontSize: 12,
                             color: AppColors.textMuted,
+                          ),
+                        ),
+                        const SizedBox(height: 4),
+                        ValueListenableBuilder(
+                          valueListenable: FriendsStore.friends,
+                          builder: (context, friends, _) => GestureDetector(
+                            onTap: _openFriends,
+                            child: Text(
+                              '${friends.length} friend${friends.length == 1 ? '' : 's'}',
+                              style: AppTextStyles.dmSans(
+                                fontSize: 11,
+                                fontWeight: FontWeight.w600,
+                                color: AppColors.logoAccent,
+                              ),
+                            ),
                           ),
                         ),
                       ],
@@ -301,9 +351,11 @@ class _ProfileScreenState extends State<ProfileScreen> {
                           width: 1,
                         ),
                       ),
-                      child: ValueListenableBuilder(
-                        valueListenable: FriendsStore.incoming,
-                        builder: (context, incoming, _) => Stack(
+                      child: AnimatedBuilder(
+                        animation: FriendsStore.incoming,
+                        builder: (context, _) {
+                          final incoming = FriendsStore.incoming.value;
+                          return Stack(
                           clipBehavior: Clip.none,
                           children: [
                             const Icon(
@@ -325,7 +377,8 @@ class _ProfileScreenState extends State<ProfileScreen> {
                                 ),
                               ),
                           ],
-                        ),
+                          );
+                        },
                       ),
                     ),
                   ),
@@ -455,37 +508,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
     required VoidCallback onRetry,
   }) {
     if (error != null) {
-      return Padding(
-        padding: const EdgeInsets.symmetric(
-          horizontal: AppSpacing.screenPadding,
-        ),
-        child: Row(
-          children: [
-            Expanded(
-              child: Text(
-                "Couldn't load: $error",
-                maxLines: 2,
-                overflow: TextOverflow.ellipsis,
-                style: AppTextStyles.dmSans(
-                  fontSize: 12,
-                  color: AppColors.textMuted,
-                ),
-              ),
-            ),
-            GestureDetector(
-              onTap: onRetry,
-              child: Text(
-                'Retry',
-                style: AppTextStyles.dmSans(
-                  fontSize: 12,
-                  fontWeight: FontWeight.w600,
-                  color: AppColors.accent,
-                ),
-              ),
-            ),
-          ],
-        ),
-      );
+      return InlineErrorRetry(message: "Couldn't load: $error", onRetry: onRetry);
     }
 
     if (items == null) {
@@ -493,13 +516,10 @@ class _ProfileScreenState extends State<ProfileScreen> {
     }
 
     if (items.isEmpty) {
-      return Padding(
-        padding: const EdgeInsets.symmetric(
+      return const EmptyState(
+        message: 'Nothing here yet.',
+        padding: EdgeInsets.symmetric(
           horizontal: AppSpacing.screenPadding,
-        ),
-        child: Text(
-          'Nothing here yet.',
-          style: AppTextStyles.dmSans(fontSize: 12, color: AppColors.textMuted),
         ),
       );
     }

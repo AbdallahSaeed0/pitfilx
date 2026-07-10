@@ -1,10 +1,13 @@
 import 'package:flutter/material.dart';
-import '../config/app_config.dart';
 import '../data/mock_data.dart';
 import '../models/cast_member.dart';
+import '../models/social_activity_item.dart';
 import '../models/title_item.dart';
+import '../services/app_settings.dart';
 import '../services/local_backend_service.dart';
+import '../services/social_service.dart';
 import '../services/tmdb_service.dart';
+import '../services/user_library_service.dart';
 import '../theme/app_theme.dart';
 import '../services/session_stats_store.dart';
 import '../utils/favorites.dart';
@@ -28,7 +31,7 @@ class _TitleDetailMovieScreenState extends State<TitleDetailMovieScreen> {
   late bool _watchLater = widget.title.watchLater;
   TitleItem? _enriched;
   Map<String, dynamic>? _ratings;
-  int? _favoritesListId;
+  String? _favoritesListId;
   bool? _isFavorite;
   String _review = '';
   String? _reaction;
@@ -43,24 +46,24 @@ class _TitleDetailMovieScreenState extends State<TitleDetailMovieScreen> {
         if (mounted && full != null) setState(() => _enriched = full);
       });
     }
-    if (AppConfig.useLocalBackend && widget.title.tmdbId != null) {
+    if (AppSettings.desktopSyncActive && widget.title.tmdbId != null) {
       LocalBackendService.fetchRatings(widget.title.tmdbId!, 'movie').then((
         data,
       ) {
         if (mounted && data != null) setState(() => _ratings = data);
       });
-      _loadFavorite();
     }
+    if (widget.title.tmdbId != null) _loadFavorite();
   }
 
   Future<void> _loadFavorite() async {
     try {
       final listId = await findFavoritesListId();
       if (listId == null || !mounted) return;
-      final isFav = await LocalBackendService.isInList(
+      final isFav = await UserLibraryService.isInList(
         listId,
         widget.title.tmdbId!,
-        'Movie',
+        'movie',
       );
       if (!mounted) return;
       setState(() {
@@ -81,15 +84,22 @@ class _TitleDetailMovieScreenState extends State<TitleDetailMovieScreen> {
     try {
       if (newValue) {
         final t = _enriched ?? widget.title;
-        await LocalBackendService.addToList(
+        await UserLibraryService.addToList(
           listId,
           tmdbId: tmdbId,
-          mediaType: 'Movie',
+          mediaType: 'movie',
           title: t.name,
-          posterRemoteUrl: TmdbService.posterUrl(t.posterPath),
+          posterPath: t.posterPath,
+        );
+        SocialService.logActivity(
+          action: SocialActivityAction.addedToWatchlist,
+          tmdbId: tmdbId,
+          mediaType: 'movie',
+          title: t.name,
+          posterPath: t.posterPath,
         );
       } else {
-        await LocalBackendService.removeFromList(listId, tmdbId, 'Movie');
+        await UserLibraryService.removeFromList(listId, tmdbId, 'movie');
       }
     } catch (e) {
       if (!mounted) return;
@@ -113,6 +123,28 @@ class _TitleDetailMovieScreenState extends State<TitleDetailMovieScreen> {
     if (result == null) return;
     SessionStatsStore.logRating(result.$1, null);
     SessionStatsStore.logReaction(result.$4);
+    if (t.tmdbId != null) {
+      SocialService.logActivity(
+        action: result.$1 > 0
+            ? SocialActivityAction.rated
+            : SocialActivityAction.watched,
+        tmdbId: t.tmdbId!,
+        mediaType: 'movie',
+        title: t.name,
+        posterPath: t.posterPath,
+        rating: result.$1 > 0 ? result.$1 : null,
+      );
+      UserLibraryService.logWatched(
+        tmdbId: t.tmdbId!,
+        mediaType: 'movie',
+        title: t.name,
+        posterPath: t.posterPath,
+        genres: t.genres,
+        releaseYear: t.year > 0 ? t.year : null,
+        rating: result.$1 > 0 ? result.$1 : null,
+        estimatedMinutes: _runtimeMinutes(t.runtimeLabel),
+      );
+    }
     setState(() {
       _rating = result.$1;
       _review = result.$2;
@@ -261,6 +293,17 @@ class _TitleDetailMovieScreenState extends State<TitleDetailMovieScreen> {
     }
     return null;
   }
+}
+
+/// Parses "2h 46m" (see [TitleItem.runtimeLabel]) into total minutes, for
+/// [UserLibraryService.logWatched]'s estimated watch-time.
+int _runtimeMinutes(String? label) {
+  if (label == null) return 0;
+  final match = RegExp(r'(?:(\d+)h)?\s*(?:(\d+)m)?').firstMatch(label);
+  if (match == null) return 0;
+  final hours = int.tryParse(match.group(1) ?? '') ?? 0;
+  final minutes = int.tryParse(match.group(2) ?? '') ?? 0;
+  return hours * 60 + minutes;
 }
 
 void _openActor(BuildContext context, CastMember member) {

@@ -29,6 +29,11 @@ public class AppSettings
     /// <summary>Supabase service-role (or anon, in the no-auth phase) key for the mobile-sync module.</summary>
     public static string? ResolvedSupabaseServiceRoleKey { get; set; }
 
+    /// <summary>Supabase anon (public) key — required by GoTrue's `/auth/v1/token` endpoint as the
+    /// `apikey` header when the mobile-account-link feature signs in as a specific per-user account
+    /// (see MobileAccountSyncService). Set via Settings → "Link Mobile Account".</summary>
+    public static string? ResolvedSupabaseAnonKey { get; set; }
+
     /// <summary>
     /// Call after <see cref="LibraryRepository"/> is available.
     /// Order: SQLite <c>TmdbApiKey</c>, then appsettings.local.json, then <c>TMDB_API_KEY</c> env.
@@ -185,41 +190,52 @@ public class AppSettings
         }
     }
 
-    /// <summary>Order: DB <c>SupabaseUrl</c>/<c>SupabaseServiceRoleKey</c>, then appsettings.local.json
-    /// (<c>Pitflix:Supabase:Url</c>/<c>ServiceRoleKey</c>), then <c>SUPABASE_URL</c>/<c>SUPABASE_SERVICE_ROLE_KEY</c> env.</summary>
+    /// <summary>Same project the mobile app is hardcoded to (see PitflixAndroid's
+    /// lib/config/app_config.dart) — a Supabase anon key is meant to be public/embedded in
+    /// client apps, so defaulting to it here (only when no DB/file/env override is set) means
+    /// the "Link Mobile Account" feature works with zero manual config. The service-role key
+    /// has no such default — it's a real secret and must be configured explicitly.</summary>
+    private const string DefaultSupabaseUrl = "https://enmcbbwunzhjxgwehzuf.supabase.co";
+    private const string DefaultSupabaseAnonKey =
+        "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImVubWNiYnd1bnpoanhnd2VoenVmIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODM2MzA3MDUsImV4cCI6MjA5OTIwNjcwNX0.mI4WcBNg_9isetbZbWckP6HbFWZFPs_w7k5sfa2mUZ4";
+
+    /// <summary>Order: DB <c>SupabaseUrl</c>/<c>SupabaseServiceRoleKey</c>/<c>SupabaseAnonKey</c>,
+    /// then appsettings.local.json (<c>Pitflix:Supabase:Url</c>/<c>ServiceRoleKey</c>), then
+    /// <c>SUPABASE_URL</c>/<c>SUPABASE_SERVICE_ROLE_KEY</c> env, then the hardcoded default
+    /// project (url + anon key only — see above).</summary>
     public static void ResolveSupabaseCredentialsFromSources(LibraryRepository repository)
     {
         string? url;
         string? key;
+        string? anonKey;
         try
         {
             url = repository.GetSettingAsync("SupabaseUrl").GetAwaiter().GetResult();
             key = repository.GetSettingAsync("SupabaseServiceRoleKey").GetAwaiter().GetResult();
+            anonKey = repository.GetSettingAsync("SupabaseAnonKey").GetAwaiter().GetResult();
         }
         catch
         {
             url = null;
             key = null;
+            anonKey = null;
         }
 
-        if (!string.IsNullOrWhiteSpace(url) && !string.IsNullOrWhiteSpace(key))
+        if (string.IsNullOrWhiteSpace(url) || string.IsNullOrWhiteSpace(key))
         {
-            ResolvedSupabaseUrl = url.Trim().TrimEnd('/');
-            ResolvedSupabaseServiceRoleKey = key.Trim();
-            return;
+            TryLoadSupabaseCredentialsFromLocalFile(out var fileUrl, out var fileKey);
+            if (!string.IsNullOrWhiteSpace(fileUrl)) url ??= fileUrl;
+            if (!string.IsNullOrWhiteSpace(fileKey)) key ??= fileKey;
         }
 
-        TryLoadSupabaseCredentialsFromLocalFile(out var fileUrl, out var fileKey);
-        if (!string.IsNullOrWhiteSpace(fileUrl) && !string.IsNullOrWhiteSpace(fileKey))
-        {
-            ResolvedSupabaseUrl = fileUrl.TrimEnd('/');
-            ResolvedSupabaseServiceRoleKey = fileKey;
-            return;
-        }
+        if (string.IsNullOrWhiteSpace(url))
+            url = Environment.GetEnvironmentVariable("SUPABASE_URL");
+        if (string.IsNullOrWhiteSpace(key))
+            key = Environment.GetEnvironmentVariable("SUPABASE_SERVICE_ROLE_KEY");
 
-        var envUrl = Environment.GetEnvironmentVariable("SUPABASE_URL");
-        ResolvedSupabaseUrl = string.IsNullOrWhiteSpace(envUrl) ? null : envUrl.Trim().TrimEnd('/');
-        ResolvedSupabaseServiceRoleKey = Environment.GetEnvironmentVariable("SUPABASE_SERVICE_ROLE_KEY");
+        ResolvedSupabaseUrl = string.IsNullOrWhiteSpace(url) ? DefaultSupabaseUrl : url.Trim().TrimEnd('/');
+        ResolvedSupabaseServiceRoleKey = string.IsNullOrWhiteSpace(key) ? null : key.Trim();
+        ResolvedSupabaseAnonKey = string.IsNullOrWhiteSpace(anonKey) ? DefaultSupabaseAnonKey : anonKey.Trim();
     }
 
     private static void TryLoadSupabaseCredentialsFromLocalFile(out string? url, out string? serviceRoleKey)

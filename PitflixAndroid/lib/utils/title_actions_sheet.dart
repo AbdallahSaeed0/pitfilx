@@ -1,8 +1,8 @@
 import 'package:flutter/material.dart';
 import '../models/title_item.dart';
 import '../screens/image_picker_screen.dart';
-import '../services/local_backend_service.dart';
-import '../services/tmdb_service.dart';
+import '../services/app_settings.dart';
+import '../services/user_library_service.dart';
 import '../theme/app_theme.dart';
 import '../widgets/add_to_list_sheet.dart';
 import '../widgets/recommend_friend_sheet.dart';
@@ -12,14 +12,16 @@ enum _TitleAction { addToList, drop, recommend, changePoster, changeBackdrop }
 /// The Title Detail "..." menu — Add to List and Drop work for any real
 /// title (only need a tmdbId); Change Poster/Change Backdrop additionally
 /// require [TitleItem.libraryId] (the title must already be matched in the
-/// local library), so those two are hidden otherwise.
+/// local library) AND Settings' "Sync with Desktop" to be on (the picker
+/// calls the local backend directly), so those two are hidden otherwise.
 Future<void> showTitleActionsSheet(
   BuildContext context,
   TitleItem title,
   ValueChanged<TitleItem> onArtworkUpdated,
 ) async {
   if (title.tmdbId == null) return;
-  final canChangeArtwork = title.libraryId != null;
+  final canChangeArtwork =
+      title.libraryId != null && AppSettings.desktopSyncActive;
 
   final action = await showModalBottomSheet<_TitleAction>(
     context: context,
@@ -120,22 +122,22 @@ Future<void> showTitleActionsSheet(
 /// exist) — represented as adding the title to a "Dropped" list instead,
 /// creating it on first use.
 Future<void> _dropTitle(BuildContext context, TitleItem title) async {
-  final mediaType = title.isShow ? 'Series' : 'Movie';
+  final mediaType = title.isShow ? 'series' : 'movie';
   try {
-    final lists = await LocalBackendService.fetchLists(forceRefresh: true);
-    int listId;
+    final lists = await UserLibraryService.fetchLists(forceRefresh: true);
+    String listId;
     final existing = lists.where((l) => l.name.toLowerCase() == 'dropped');
     if (existing.isNotEmpty) {
-      listId = int.parse(existing.first.id);
+      listId = existing.first.id;
     } else {
-      listId = await LocalBackendService.createList('Dropped');
+      listId = await UserLibraryService.createList('Dropped');
     }
-    await LocalBackendService.addToList(
+    await UserLibraryService.addToList(
       listId,
       tmdbId: title.tmdbId!,
       mediaType: mediaType,
       title: title.name,
-      posterRemoteUrl: TmdbService.posterUrl(title.posterPath),
+      posterPath: title.posterPath,
     );
     if (!context.mounted) return;
     ScaffoldMessenger.of(

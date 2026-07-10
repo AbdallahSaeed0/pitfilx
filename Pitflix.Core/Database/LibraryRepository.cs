@@ -5007,6 +5007,45 @@ public sealed class LibraryRepository
                 recentOrdered.Add(recentShows.First(s => s.Id == x.Id));
         }
 
+        // Last 7 calendar days (today inclusive) of completions, with the actual titles finished
+        // each day — drives the Stats page's daily activity calendar.
+        var sevenDaysAgo = now.Date.AddDays(-6);
+        var last7MovieRows = await _db.Movies.AsNoTracking()
+            .Where(m => m.IsMatched && m.CompletedAt != null && m.CompletedAt >= sevenDaysAgo)
+            .Select(m => new { m.CompletedAt, m.Title })
+            .ToListAsync(cancellationToken).ConfigureAwait(false);
+        var last7EpisodeRows = await (
+                from ep in _db.Episodes.AsNoTracking()
+                join s in _db.Shows.AsNoTracking() on ep.ShowId equals s.Id
+                where ep.CompletedAt != null && ep.CompletedAt >= sevenDaysAgo
+                select new { ep.CompletedAt, ShowTitle = s.Title })
+            .ToListAsync(cancellationToken).ConfigureAwait(false);
+
+        var byDay = new Dictionary<DateTime, (int Count, List<string> Titles)>();
+        for (var i = 0; i < 7; i++)
+        {
+            var day = sevenDaysAgo.AddDays(i);
+            byDay[day] = (0, new List<string>());
+        }
+        void AddDailyActivity(DateTime completedAt, string title)
+        {
+            var day = completedAt.Date;
+            if (!byDay.TryGetValue(day, out var entry))
+                return;
+            entry.Count++;
+            if (!string.IsNullOrWhiteSpace(title) &&
+                entry.Titles.Count < 8 &&
+                !entry.Titles.Contains(title, StringComparer.OrdinalIgnoreCase))
+                entry.Titles.Add(title);
+            byDay[day] = entry;
+        }
+        foreach (var m in last7MovieRows) AddDailyActivity(m.CompletedAt!.Value, m.Title);
+        foreach (var ep in last7EpisodeRows) AddDailyActivity(ep.CompletedAt!.Value, ep.ShowTitle);
+
+        var last7Days = byDay.OrderBy(kv => kv.Key)
+            .Select(kv => new DailyWatchActivity(kv.Key.ToString("yyyy-MM-dd"), kv.Value.Count, kv.Value.Titles))
+            .ToList();
+
         return new WatchStatisticsBundle(
             (int)(totalSeconds / 60),
             (int)(weekSeconds / 60),
@@ -5043,7 +5082,8 @@ public sealed class LibraryRepository
             decadeTopMovies,
             decadeTopSeries,
             recentMovies.Cast<object>().ToList(),
-            recentShows.Cast<object>().ToList());
+            recentShows.Cast<object>().ToList(),
+            last7Days);
     }
 
     private static void AddDecade(Dictionary<string, int> map, int year)
@@ -5960,9 +6000,13 @@ public sealed record WatchStatisticsBundle(
     IReadOnlyList<WatchDecadeCount> DecadeTopMovies,
     IReadOnlyList<WatchDecadeCount> DecadeTopSeries,
     IReadOnlyList<object> RecentlyCompletedMovies,
-    IReadOnlyList<object> RecentlyCompletedSeries);
+    IReadOnlyList<object> RecentlyCompletedSeries,
+    IReadOnlyList<DailyWatchActivity> Last7Days);
 
 public sealed record WatchNetworkCount(string Network, int Count);
+
+/// <summary>One calendar day's completions (movies + episodes) for the Stats page activity calendar.</summary>
+public sealed record DailyWatchActivity(string Date, int Count, IReadOnlyList<string> Titles);
 
 public sealed record ListItemDisplayRow(int TmdbId, string MediaType, string Title, int? Year, string? PosterLocalPath,
     int? LibraryDatabaseId, string? PosterRemoteUrl = null, string? ImdbId = null);

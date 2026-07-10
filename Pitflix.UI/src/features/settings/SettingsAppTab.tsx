@@ -2,6 +2,7 @@ import { isTauri } from "@tauri-apps/api/core";
 import { Eye, EyeOff, RefreshCw } from "lucide-react";
 import { AppUpdateSection } from "../../components/updater/AppUpdateSection";
 import { setDesktopAutostart, isWindowsHost } from "../../utils/autostart";
+import { SettingsMobileSyncSection } from "./SettingsMobileSyncSection";
 import type { SettingsPageModel } from "./useSettingsPageModel";
 
 type Props = { model: SettingsPageModel };
@@ -164,6 +165,10 @@ export function SettingsAppTab({ model }: Props) {
 
           <div id="settings-updates">
             <AppUpdateSection />
+          </div>
+
+          <div id="settings-mobile-sync" className="mt-4">
+            <SettingsMobileSyncSection />
           </div>
     </>
   );

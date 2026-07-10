@@ -1,15 +1,14 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
-import '../data/mock_friends_data.dart';
-import '../models/friend.dart';
+import '../models/social_profile.dart';
 import '../services/friends_store.dart';
+import '../services/social_service.dart';
 import '../theme/app_theme.dart';
 import '../widgets/friend_avatar.dart';
 import '../widgets/widgets.dart';
 
-/// UI-only — see models/friend.dart. Searches a mock directory; "Add" sends
-/// the request through [FriendsStore] so it actually shows up as outgoing
-/// on the Friends screen (and gets auto-accepted a few seconds later, since
-/// there's no real backend/other person to respond).
+/// Real data — searches `profiles` by username. "Add" sends a real
+/// `friend_requests` row through [FriendsStore].
 class AddFriendScreen extends StatefulWidget {
   const AddFriendScreen({super.key});
 
@@ -19,29 +18,49 @@ class AddFriendScreen extends StatefulWidget {
 
 class _AddFriendScreenState extends State<AddFriendScreen> {
   final _controller = TextEditingController();
+  Timer? _debounce;
+  List<SocialProfile>? _results;
+  String? _error;
 
   @override
   void dispose() {
+    _debounce?.cancel();
     _controller.dispose();
     super.dispose();
   }
 
-  List<Friend> get _results {
-    final query = _controller.text.trim().toLowerCase();
-    if (query.isEmpty) return MockFriendsData.directory;
-    return MockFriendsData.directory
-        .where(
-          (f) =>
-              f.name.toLowerCase().contains(query) ||
-              f.username.toLowerCase().contains(query),
-        )
-        .toList();
+  void _onQueryChanged() {
+    setState(() {});
+    _debounce?.cancel();
+    final query = _controller.text.trim();
+    if (query.isEmpty) {
+      setState(() {
+        _results = null;
+        _error = null;
+      });
+      return;
+    }
+    _debounce = Timer(const Duration(milliseconds: 400), _runSearch);
   }
 
-  void _sendRequest(Friend friend) {
-    FriendsStore.sendRequest(friend);
+  Future<void> _runSearch() async {
+    final query = _controller.text.trim();
+    if (query.isEmpty) return;
+    setState(() => _error = null);
+    try {
+      final results = await SocialService.searchProfiles(query);
+      if (!mounted) return;
+      setState(() => _results = results);
+    } catch (e) {
+      if (!mounted) return;
+      setState(() => _error = e.toString());
+    }
+  }
+
+  void _sendRequest(SocialProfile profile) {
+    FriendsStore.sendRequest(profile);
     ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text('Friend request sent to ${friend.name}')),
+      SnackBar(content: Text('Friend request sent to ${profile.name}')),
     );
   }
 
@@ -105,7 +124,7 @@ class _AddFriendScreenState extends State<AddFriendScreen> {
                     Expanded(
                       child: TextField(
                         controller: _controller,
-                        onChanged: (_) => setState(() {}),
+                        onChanged: (_) => _onQueryChanged(),
                         style: AppTextStyles.dmSans(
                           fontSize: 15,
                           color: AppColors.textPrimary,
@@ -113,7 +132,7 @@ class _AddFriendScreenState extends State<AddFriendScreen> {
                         decoration: const InputDecoration(
                           isDense: true,
                           border: InputBorder.none,
-                          hintText: 'Search by name or username',
+                          hintText: 'Search by username',
                         ),
                       ),
                     ),
@@ -129,23 +148,28 @@ class _AddFriendScreenState extends State<AddFriendScreen> {
   }
 
   Widget _buildBody() {
+    final query = _controller.text.trim();
+    if (query.isEmpty) {
+      return const EmptyState(message: 'Search for a username to add a friend.');
+    }
+    if (_error != null) {
+      return ErrorRetry(message: "Couldn't search: $_error", onRetry: _runSearch);
+    }
     final results = _results;
+    if (results == null) {
+      return const ListRowsSkeleton();
+    }
     if (results.isEmpty) {
-      return Center(
-        child: Text(
-          'No one found.',
-          style: AppTextStyles.dmSans(fontSize: 13, color: AppColors.textMuted),
-        ),
-      );
+      return const EmptyState(message: 'No one found.');
     }
     return ListView.separated(
       padding: const EdgeInsets.fromLTRB(20, 16, 20, 20),
       itemCount: results.length,
       separatorBuilder: (_, _) => const SizedBox(height: 10),
       itemBuilder: (context, i) {
-        final friend = results[i];
-        final isFriend = FriendsStore.isFriend(friend.id);
-        final isPending = !isFriend && FriendsStore.isPending(friend.id);
+        final profile = results[i];
+        final isFriend = FriendsStore.isFriend(profile.id);
+        final isPending = !isFriend && FriendsStore.isPending(profile.id);
 
         return Container(
           padding: const EdgeInsets.all(12),
@@ -155,27 +179,29 @@ class _AddFriendScreenState extends State<AddFriendScreen> {
           ),
           child: Row(
             children: [
-              FriendAvatar(friend: friend),
+              FriendAvatar(profile: profile),
               const SizedBox(width: 12),
               Expanded(
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Text(
-                      friend.name,
+                      profile.name,
                       style: AppTextStyles.dmSans(
                         fontSize: 14,
                         fontWeight: FontWeight.w600,
                       ),
                     ),
-                    const SizedBox(height: 2),
-                    Text(
-                      friend.username,
-                      style: AppTextStyles.dmSans(
-                        fontSize: 11,
-                        color: AppColors.textMuted,
+                    if (profile.username != null) ...[
+                      const SizedBox(height: 2),
+                      Text(
+                        '@${profile.username}',
+                        style: AppTextStyles.dmSans(
+                          fontSize: 11,
+                          color: AppColors.textMuted,
+                        ),
                       ),
-                    ),
+                    ],
                   ],
                 ),
               ),
@@ -199,7 +225,7 @@ class _AddFriendScreenState extends State<AddFriendScreen> {
                 )
               else
                 GestureDetector(
-                  onTap: () => _sendRequest(friend),
+                  onTap: () => _sendRequest(profile),
                   child: Container(
                     padding: const EdgeInsets.symmetric(
                       horizontal: 14,

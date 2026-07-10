@@ -1,19 +1,20 @@
 import 'package:flutter/material.dart';
-import '../config/app_config.dart';
-import '../models/supabase_rows.dart';
-import '../services/local_backend_service.dart';
+import '../models/profile_highlights.dart';
 import '../services/session_stats_store.dart';
-import '../services/supabase_service.dart';
+import '../services/user_library_service.dart';
 import '../theme/app_theme.dart';
 import '../utils/format_minutes.dart';
 import '../utils/reactions.dart';
 import '../widgets/widgets.dart';
 
-/// Real data: from the local Pitflix.API backend's `/api/stats/watch` +
-/// `/api/history` (already-aggregated totals, plus real per-session
-/// timestamps bucketed into a daily chart here) or Supabase's `watch_events`
-/// table (aggregated client-side here), depending on
-/// [AppConfig.useLocalBackend]. Both paths feed the same generic cards below.
+/// Real, per-account data — from Supabase's `watch_records`/`watch_log`
+/// (see UserLibraryService.fetchStatsSource). Watch streak/longest-marathon/
+/// rewatch-session-detection aren't computable from this schema (that logic
+/// depends on the desktop's full local library metadata, which the mobile
+/// app has no equivalent source for) — those sections simply show what's
+/// genuinely available and stay empty otherwise, rather than showing fake
+/// data. Network breakdown IS computable, but only for series synced via
+/// Settings' desktop import (mobile-only series have no `network`).
 class StatsScreen extends StatefulWidget {
   const StatsScreen({super.key});
 
@@ -30,26 +31,24 @@ class _StatsScreenState extends State<StatsScreen> {
   void initState() {
     super.initState();
     _load();
+    UserLibraryService.libraryVersion.addListener(_load);
+  }
+
+  @override
+  void dispose() {
+    UserLibraryService.libraryVersion.removeListener(_load);
+    super.dispose();
   }
 
   Future<void> _load() async {
     setState(() => _error = null);
     try {
-      _StatsData data;
-      if (AppConfig.useLocalBackend) {
-        final results = await Future.wait([
-          LocalBackendService.fetchWatchStats(),
-          LocalBackendService.fetchHistory(),
-        ]);
-        data = _StatsData.fromLocalBackendBundle(
-          results[0] as Map<String, dynamic>,
-          results[1] as List<Map<String, dynamic>>,
-        );
-      } else {
-        data = _StatsData.fromSupabaseEvents(
-          await SupabaseService.fetchWatchEvents(),
-        );
-      }
+      final source = await UserLibraryService.fetchStatsSource();
+      final data = _StatsData.fromUserLibrary(
+        source.watchRecords,
+        source.watchLog,
+        source.episodeRewatches,
+      );
       if (!mounted) return;
       setState(() => _data = data);
     } catch (e) {
@@ -89,36 +88,7 @@ class _StatsScreenState extends State<StatsScreen> {
 
   Widget _buildBody() {
     if (_error != null) {
-      return Center(
-        child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 32),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Text(
-                "Couldn't load stats.\n$_error",
-                textAlign: TextAlign.center,
-                style: AppTextStyles.dmSans(
-                  fontSize: 13,
-                  color: AppColors.textMuted,
-                ),
-              ),
-              const SizedBox(height: 12),
-              GestureDetector(
-                onTap: _load,
-                child: Text(
-                  'Retry',
-                  style: AppTextStyles.dmSans(
-                    fontSize: 13,
-                    fontWeight: FontWeight.w600,
-                    color: AppColors.accent,
-                  ),
-                ),
-              ),
-            ],
-          ),
-        ),
-      );
+      return ErrorRetry(message: "Couldn't load stats.\n$_error", onRetry: _load);
     }
 
     final data = _data;
@@ -129,9 +99,14 @@ class _StatsScreenState extends State<StatsScreen> {
     final showTab = _tab == 0;
     final tabScoped = showTab ? data.shows : data.movies;
 
+    final highlights = data.highlights;
     return ListView(
       padding: const EdgeInsets.fromLTRB(20, 18, 20, 24),
       children: [
+        if (highlights != null && !highlights.isEmpty) ...[
+          SizedBox(height: 84, child: _buildHighlightsRow(highlights)),
+          const SizedBox(height: 14),
+        ],
         _HeroMetricCard(
           label: data.heroLabel,
           value: tabScoped.heroValue,
@@ -152,17 +127,10 @@ class _StatsScreenState extends State<StatsScreen> {
         ),
         const SizedBox(height: 14),
         _CountCardsRow(
-          leftLabel: 'MOVIES',
-          leftValue: '${data.movieCount}',
-          rightLabel: 'TV SHOWS',
-          rightValue: '${data.showCount}',
-        ),
-        const SizedBox(height: 14),
-        _CountCardsRow(
-          leftLabel: 'COMPLETED',
-          leftValue: '${data.showCount}',
-          rightLabel: 'MOVIES SEEN',
-          rightValue: '${data.movieCount}',
+          leftLabel: showTab ? 'SERIES COMPLETED' : 'MOVIES SEEN',
+          leftValue: '${tabScoped.completedCount}',
+          rightLabel: showTab ? 'TOTAL SERIES' : 'TOTAL MOVIES',
+          rightValue: '${tabScoped.totalCount}',
         ),
         const SizedBox(height: 14),
         _RankedListCard(
@@ -176,6 +144,46 @@ class _StatsScreenState extends State<StatsScreen> {
           rows: tabScoped.rankedRows,
           emptyText: 'Nothing here yet.',
         ),
+        if (data.hasBackendExtras) ...[
+          const SizedBox(height: 14),
+          _CountCardsRow(
+            leftLabel: 'AVG RATING',
+            leftValue: tabScoped.averageRating != null && tabScoped.averageRating! > 0
+                ? '${tabScoped.averageRating!.toStringAsFixed(1)}★'
+                : '—',
+            rightLabel: 'REWATCH SESSIONS',
+            rightValue: '${data.rewatchSessionsApprox ?? 0}',
+          ),
+          const SizedBox(height: 14),
+          _ProgressListCard(
+            title: 'MOVIES VS SERIES',
+            rows: [
+              (
+                'Movies',
+                '${(data.moviePercent ?? 0).toStringAsFixed(0)}%',
+                (data.moviePercent ?? 0) / 100,
+              ),
+              (
+                'Series',
+                '${(data.seriesPercent ?? 0).toStringAsFixed(0)}%',
+                (data.seriesPercent ?? 0) / 100,
+              ),
+            ],
+            emptyText: 'Nothing here yet.',
+          ),
+          const SizedBox(height: 14),
+          _ProgressListCard(
+            title: 'TOP NETWORKS',
+            rows: data.networkRows,
+            emptyText: 'Nothing here yet.',
+          ),
+          const SizedBox(height: 14),
+          _ProgressListCard(
+            title: 'BY DECADE',
+            rows: tabScoped.decadeRows,
+            emptyText: 'Nothing here yet.',
+          ),
+        ],
         const SizedBox(height: 14),
         ValueListenableBuilder<Map<int, int>>(
           valueListenable: SessionStatsStore.ratings,
@@ -189,6 +197,90 @@ class _StatsScreenState extends State<StatsScreen> {
               _ReactionsCard(reactions: reactionsMap),
         ),
       ],
+    );
+  }
+
+  Widget _buildHighlightsRow(ProfileHighlights h) {
+    final chips = <(IconData, String, String)>[
+      if (h.watchStreak > 0)
+        (
+          Icons.local_fire_department,
+          '${h.watchStreak}-day streak',
+          'Watch Streak',
+        ),
+      if (h.longestMarathonEpisodes > 0)
+        (
+          Icons.movie_filter_outlined,
+          '${h.longestMarathonEpisodes} eps'
+              '${h.longestMarathonShowTitle != null ? ' · ${h.longestMarathonShowTitle}' : ''}',
+          'Longest Marathon',
+        ),
+      if (h.favoriteDecade != null)
+        (Icons.calendar_month_outlined, h.favoriteDecade!, 'Favorite Decade'),
+      if (h.topNetwork != null)
+        (Icons.live_tv_outlined, h.topNetwork!, 'Top Network'),
+      if (h.mostWatchedGenre != null)
+        (Icons.theater_comedy_outlined, h.mostWatchedGenre!, 'Top Genre'),
+    ];
+
+    return ListView.separated(
+      scrollDirection: Axis.horizontal,
+      itemCount: chips.length,
+      separatorBuilder: (_, _) => const SizedBox(width: 10),
+      itemBuilder: (context, i) {
+        final (icon, value, label) = chips[i];
+        return _HighlightChip(icon: icon, value: value, label: label);
+      },
+    );
+  }
+}
+
+/// Small "quick glance" badge for Stats' Highlights row — a stat that's
+/// interesting on its own but not deep enough to warrant a full card (see
+/// [ProfileHighlights]).
+class _HighlightChip extends StatelessWidget {
+  final IconData icon;
+  final String value;
+  final String label;
+
+  const _HighlightChip({
+    required this.icon,
+    required this.value,
+    required this.label,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: 132,
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: AppColors.bgCard,
+        borderRadius: BorderRadius.circular(AppSpacing.cardRadiusMax),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Icon(icon, size: 16, color: AppColors.logoAccent),
+          const SizedBox(height: 8),
+          Text(
+            value,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: AppTextStyles.dmSans(
+              fontSize: 13,
+              fontWeight: FontWeight.w600,
+            ),
+          ),
+          const SizedBox(height: 2),
+          Text(
+            label,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: AppTextStyles.dmSans(fontSize: 10, color: AppColors.textMuted),
+          ),
+        ],
+      ),
     );
   }
 }
@@ -245,6 +337,17 @@ class _TabScopedStats {
   final List<_RankedRow> recentRows;
   final List<_ProgressRow> rankedRows;
 
+  /// Completed / total counts *for this tab only* (e.g. completed series
+  /// and total series tracked when this is the Shows tab) — used for the
+  /// "X SEEN"/"TOTAL" overview row so it never shows the other tab's data.
+  final int completedCount;
+  final int totalCount;
+
+  /// Extras only populated on the local-backend path — null/empty on the
+  /// Supabase path, which doesn't compute them.
+  final double? averageRating;
+  final List<_ProgressRow> decadeRows;
+
   const _TabScopedStats({
     required this.heroValue,
     required this.heroSubLabel,
@@ -254,6 +357,10 @@ class _TabScopedStats {
     required this.monthTotalLabel,
     required this.recentRows,
     required this.rankedRows,
+    required this.completedCount,
+    required this.totalCount,
+    this.averageRating,
+    this.decadeRows = const [],
   });
 }
 
@@ -268,6 +375,18 @@ class _StatsData {
   final _TabScopedStats shows;
   final _TabScopedStats movies;
 
+  /// Extras only populated on the local-backend path (see
+  /// [_TabScopedStats]'s doc) — the Stats screen renders their sections
+  /// conditionally on [hasBackendExtras].
+  final double? moviePercent;
+  final double? seriesPercent;
+  final int? rewatchSessionsApprox;
+  final List<_ProgressRow> networkRows;
+  final int? seriesCompletionPercent;
+  final ProfileHighlights? highlights;
+
+  bool get hasBackendExtras => moviePercent != null;
+
   const _StatsData({
     required this.heroLabel,
     required this.recentTitle,
@@ -276,181 +395,196 @@ class _StatsData {
     required this.showCount,
     required this.shows,
     required this.movies,
+    this.moviePercent,
+    this.seriesPercent,
+    this.rewatchSessionsApprox,
+    this.networkRows = const [],
+    this.seriesCompletionPercent,
+    this.highlights,
   });
 
-  /// Buckets real per-session minutes into the last 7 calendar days.
-  static List<int> _dailyMinutesFromHistory(
-    List<Map<String, dynamic>> history,
-    bool wantShows,
+  /// Buckets watch_log minutes into the last 7 calendar days.
+  static List<int> _dailyMinutesFromLog(
+    List<Map<String, dynamic>> log,
+    String mediaType,
   ) {
     final buckets = List<int>.filled(7, 0);
     final now = DateTime.now();
-    for (final row in history) {
-      final mediaType = row['mediaType'] as String? ?? '';
-      if (isSeriesMediaType(mediaType) != wantShows) continue;
-      final openedAt = DateTime.tryParse(row['openedAt'] as String? ?? '');
-      if (openedAt == null) continue;
-      final daysAgo = now.difference(openedAt).inDays;
+    for (final row in log) {
+      if (row['media_type'] != mediaType) continue;
+      final loggedAt = DateTime.tryParse(row['logged_at'] as String? ?? '');
+      if (loggedAt == null) continue;
+      final daysAgo = now.difference(loggedAt).inDays;
       if (daysAgo < 0 || daysAgo > 6) continue;
-      final seconds =
-          (row['trustedResumeSeconds'] as num?)?.toInt() ??
-          (row['estimatedSeconds'] as num?)?.toInt() ??
-          0;
-      buckets[6 - daysAgo] += seconds ~/ 60;
+      buckets[6 - daysAgo] += (row['minutes'] as num?)?.toInt() ?? 0;
     }
     return buckets;
   }
 
-  /// Pitflix.API's `/api/stats/watch` (aggregated totals) + `/api/history`
-  /// (real per-session timestamps, bucketed into the daily chart here).
-  factory _StatsData.fromLocalBackendBundle(
-    Map<String, dynamic> b,
-    List<Map<String, dynamic>> history,
+  /// Supabase's `watch_records`/`watch_log`/`episode_watch_status` (see
+  /// UserLibraryService.fetchStatsSource) — aggregated here, client-side.
+  factory _StatsData.fromUserLibrary(
+    List<Map<String, dynamic>> watchRecords,
+    List<Map<String, dynamic>> watchLog,
+    List<Map<String, dynamic>> episodeRewatches,
   ) {
     int asInt(dynamic v) => (v as num?)?.toInt() ?? 0;
 
-    List<_ProgressRow> genreRows(String key) {
-      final list = (b[key] as List? ?? []).cast<Map<String, dynamic>>();
-      final maxCount = list.isEmpty
+    _TabScopedStats scoped(String mediaType) {
+      final records = watchRecords
+          .where((r) => r['media_type'] == mediaType)
+          .toList();
+      final completed = records
+          .where((r) => r['status'] == 'completed')
+          .toList()
+        ..sort(
+          (a, b) => (b['updated_at'] as String).compareTo(
+            a['updated_at'] as String,
+          ),
+        );
+      final log = watchLog.where((r) => r['media_type'] == mediaType);
+      final now = DateTime.now();
+      final logMinutes = (DateTime cutoff) => log
+          .where(
+            (r) =>
+                DateTime.tryParse(
+                  r['logged_at'] as String? ?? '',
+                )?.isAfter(cutoff) ??
+                false,
+          )
+          .fold<int>(0, (sum, r) => sum + asInt(r['minutes']));
+      final totalMinutes = log.fold<int>(
+        0,
+        (sum, r) => sum + asInt(r['minutes']),
+      );
+      final weekMinutes = logMinutes(now.subtract(const Duration(days: 7)));
+      final monthMinutes = logMinutes(now.subtract(const Duration(days: 30)));
+
+      // Genre breakdown — flatten genres[] across all of this tab's records.
+      final genreCounts = <String, int>{};
+      for (final r in records) {
+        for (final g in (r['genres'] as List? ?? const [])) {
+          genreCounts[g as String] = (genreCounts[g] ?? 0) + 1;
+        }
+      }
+      final sortedGenres = genreCounts.entries.toList()
+        ..sort((a, b) => b.value.compareTo(a.value));
+      final maxGenreCount = sortedGenres.isEmpty ? 1 : sortedGenres.first.value;
+      final genreRows = sortedGenres
+          .take(5)
+          .map<_ProgressRow>((e) => (e.key, '${e.value}', e.value / maxGenreCount))
+          .toList();
+
+      // Decade breakdown.
+      final decadeCounts = <String, int>{};
+      for (final r in records) {
+        final year = (r['release_year'] as num?)?.toInt();
+        if (year == null || year <= 0) continue;
+        final decade = '${(year ~/ 10) * 10}s';
+        decadeCounts[decade] = (decadeCounts[decade] ?? 0) + 1;
+      }
+      final sortedDecades = decadeCounts.entries.toList()
+        ..sort((a, b) => b.value.compareTo(a.value));
+      final maxDecadeCount = sortedDecades.isEmpty
           ? 1
-          : list
-                .map((g) => asInt(g['count']))
-                .reduce((a, c) => a > c ? a : c)
-                .clamp(1, 1 << 30);
-      return list
+          : sortedDecades.first.value;
+      final decadeRows = sortedDecades
           .take(5)
           .map<_ProgressRow>(
-            (g) => (
-              g['genre'] as String? ?? '',
-              '${asInt(g['count'])}',
-              asInt(g['count']) / maxCount,
-            ),
+            (e) => (e.key, '${e.value}', e.value / maxDecadeCount),
           )
           .toList();
-    }
 
-    List<_RankedRow> recentRows(String key) {
-      final list = (b[key] as List? ?? []).cast<Map<String, dynamic>>();
-      return list
-          .take(5)
-          .map<_RankedRow>(
-            (c) => (
-              c['title'] as String? ?? 'Untitled',
-              c['year'] != null ? '${c['year']}' : '',
-            ),
-          )
+      final ratings = records
+          .map((r) => (r['rating'] as num?)?.toInt())
+          .whereType<int>()
           .toList();
+      final averageRating = ratings.isEmpty
+          ? null
+          : ratings.reduce((a, b) => a + b) / ratings.length;
+
+      return _TabScopedStats(
+        heroValue: formatMinutes(totalMinutes),
+        heroSubLabel: '+${formatMinutes(weekMinutes)} in the last 7 days',
+        dailyValues: _dailyMinutesFromLog(watchLog, mediaType),
+        dailyLabels: _dayLabels,
+        weekTotalLabel: formatMinutes(weekMinutes),
+        monthTotalLabel: formatMinutes(monthMinutes),
+        recentRows: completed
+            .take(5)
+            .map<_RankedRow>(
+              (r) => (
+                r['title'] as String? ?? 'Untitled',
+                (r['release_year'] as num?) != null
+                    ? '${r['release_year']}'
+                    : '',
+              ),
+            )
+            .toList(),
+        rankedRows: genreRows,
+        completedCount: completed.length,
+        totalCount: records.length,
+        averageRating: averageRating,
+        decadeRows: decadeRows,
+      );
     }
 
-    final shows = _TabScopedStats(
-      heroValue: formatMinutes(asInt(b['seriesWatchTimeMinutes'])),
-      heroSubLabel:
-          '+${formatMinutes(asInt(b['seriesWatchTimeMinutesWeek']))} in the last 7 days',
-      dailyValues: _dailyMinutesFromHistory(history, true),
-      dailyLabels: _dayLabels,
-      weekTotalLabel: formatMinutes(asInt(b['seriesWatchTimeMinutesWeek'])),
-      monthTotalLabel: formatMinutes(asInt(b['seriesWatchTimeMinutesMonth'])),
-      recentRows: recentRows('recentlyCompletedSeries'),
-      rankedRows: genreRows('topSeriesGenres'),
-    );
+    final movieCount = watchRecords
+        .where((r) => r['media_type'] == 'movie' && r['status'] == 'completed')
+        .length;
+    final seriesRecords = watchRecords.where((r) => r['media_type'] == 'series');
+    final seriesCompletedCount = seriesRecords
+        .where((r) => r['status'] == 'completed')
+        .length;
+    final totalTitles = movieCount + seriesRecords.length;
+    final moviePercent = totalTitles == 0
+        ? 0.0
+        : movieCount / totalTitles * 100;
+    final seriesPercent = totalTitles == 0
+        ? 0.0
+        : seriesRecords.length / totalTitles * 100;
+    final seriesCompletionPercent = seriesRecords.isEmpty
+        ? 0
+        : (seriesCompletedCount / seriesRecords.length * 100).round();
 
-    final movies = _TabScopedStats(
-      heroValue: formatMinutes(asInt(b['movieWatchTimeMinutes'])),
-      heroSubLabel:
-          '+${formatMinutes(asInt(b['movieWatchTimeMinutesWeek']))} in the last 7 days',
-      dailyValues: _dailyMinutesFromHistory(history, false),
-      dailyLabels: _dayLabels,
-      weekTotalLabel: formatMinutes(asInt(b['movieWatchTimeMinutesWeek'])),
-      monthTotalLabel: formatMinutes(asInt(b['movieWatchTimeMinutesMonth'])),
-      recentRows: recentRows('recentlyCompletedMovies'),
-      rankedRows: genreRows('topMovieGenres'),
-    );
+    // Network breakdown — only series carry a `network` (set on desktop-
+    // import; mobile-only series won't have one, and are simply excluded).
+    final networkCounts = <String, int>{};
+    for (final r in seriesRecords) {
+      final network = r['network'] as String?;
+      if (network == null || network.isEmpty) continue;
+      networkCounts[network] = (networkCounts[network] ?? 0) + 1;
+    }
+    final sortedNetworks = networkCounts.entries.toList()
+      ..sort((a, b) => b.value.compareTo(a.value));
+    final maxNetworkCount = sortedNetworks.isEmpty
+        ? 1
+        : sortedNetworks.first.value;
+    final networkRows = sortedNetworks
+        .take(5)
+        .map<_ProgressRow>(
+          (e) => (e.key, '${e.value}', e.value / maxNetworkCount),
+        )
+        .toList();
 
     return _StatsData(
       heroLabel: 'TIME WATCHED',
       recentTitle: 'RECENTLY COMPLETED',
       rankedTitle: 'TOP GENRES',
-      movieCount: asInt(b['totalMoviesWatched']),
-      showCount: asInt(b['totalSeriesCompleted']),
-      shows: shows,
-      movies: movies,
+      movieCount: movieCount,
+      showCount: seriesCompletedCount,
+      shows: scoped('series'),
+      movies: scoped('movie'),
+      moviePercent: moviePercent,
+      seriesPercent: seriesPercent,
+      rewatchSessionsApprox: episodeRewatches.fold<int>(
+        0,
+        (sum, r) => sum + asInt(r['rewatch_count']),
+      ),
+      networkRows: networkRows,
+      seriesCompletionPercent: seriesCompletionPercent,
+      highlights: ProfileHighlights.fromUserLibraryBundle(watchRecords),
     );
-  }
-
-  /// Supabase's `watch_events` — aggregated here, client-side. There's no
-  /// duration data in this table (just discrete "watched" events), so here
-  /// "week/month/daily" mean *counts* of titles watched, not time.
-  factory _StatsData.fromSupabaseEvents(List<SupabaseWatchEventRow> all) {
-    _TabScopedStats scoped(bool wantShows) {
-      final events = all
-          .where((e) => isSeriesMediaType(e.mediaType) == wantShows)
-          .toList();
-      final now = DateTime.now();
-      final last7d = events
-          .where((e) => now.difference(e.watchedAt).inDays < 7)
-          .length;
-      final last30d = events
-          .where((e) => now.difference(e.watchedAt).inDays < 30)
-          .length;
-
-      final daily = List<int>.filled(7, 0);
-      for (final e in events) {
-        final daysAgo = now.difference(e.watchedAt).inDays;
-        if (daysAgo < 0 || daysAgo > 6) continue;
-        daily[6 - daysAgo]++;
-      }
-
-      final recentSorted = [...events]
-        ..sort((a, b) => b.watchedAt.compareTo(a.watchedAt));
-      final recentRows = recentSorted
-          .take(5)
-          .map<_RankedRow>(
-            (e) => (
-              e.title ?? 'TMDB ${e.tmdbId}',
-              e.rating != null ? '${e.rating} ★' : _relativeLabel(e.watchedAt),
-            ),
-          )
-          .toList();
-
-      final rated = events.where((e) => e.rating != null).toList()
-        ..sort((a, b) => b.rating!.compareTo(a.rating!));
-      final rankedRows = rated
-          .take(5)
-          .map<_ProgressRow>(
-            (e) =>
-                (e.title ?? 'TMDB ${e.tmdbId}', '${e.rating}/5', e.rating! / 5),
-          )
-          .toList();
-
-      return _TabScopedStats(
-        heroValue: '${events.length}',
-        heroSubLabel: '+$last7d in the last 7 days',
-        dailyValues: daily,
-        dailyLabels: _dayLabels,
-        weekTotalLabel: '$last7d title${last7d == 1 ? '' : 's'}',
-        monthTotalLabel: '$last30d title${last30d == 1 ? '' : 's'}',
-        recentRows: recentRows,
-        rankedRows: rankedRows,
-      );
-    }
-
-    return _StatsData(
-      heroLabel: 'TITLES WATCHED',
-      recentTitle: 'RECENTLY WATCHED',
-      rankedTitle: 'TOP RATED',
-      movieCount: all.where((e) => !isSeriesMediaType(e.mediaType)).length,
-      showCount: all.where((e) => isSeriesMediaType(e.mediaType)).length,
-      shows: scoped(true),
-      movies: scoped(false),
-    );
-  }
-
-  static String _relativeLabel(DateTime dt) {
-    final days = DateTime.now().difference(dt).inDays;
-    if (days <= 0) return 'Today';
-    if (days == 1) return 'Yesterday';
-    if (days < 30) return '${days}d ago';
-    return '${dt.year}-${dt.month.toString().padLeft(2, '0')}-${dt.day.toString().padLeft(2, '0')}';
   }
 }
 

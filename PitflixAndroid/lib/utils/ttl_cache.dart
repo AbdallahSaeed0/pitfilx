@@ -21,4 +21,9 @@ class TtlCache<T> {
     _value = value;
     _storedAt = DateTime.now();
   }
+
+  void clear() {
+    _value = null;
+    _storedAt = null;
+  }
 }

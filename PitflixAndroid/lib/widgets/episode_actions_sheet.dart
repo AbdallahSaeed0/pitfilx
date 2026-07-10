@@ -2,7 +2,6 @@ import 'package:flutter/material.dart';
 import '../models/cast_member.dart';
 import '../models/episode.dart';
 import '../services/app_settings.dart';
-import '../services/local_backend_service.dart';
 import '../services/tmdb_service.dart';
 import '../theme/app_theme.dart';
 import '../utils/reactions.dart';
@@ -11,10 +10,10 @@ import 'star_rating.dart';
 
 /// Bottom sheet opened by tapping an episode row — lets the user rate it,
 /// toggle watched, mark it rewatched (more than once), react, and pick a
-/// favorite cast member for that episode. Watched status is persisted via
-/// the real backend when [Episode.libraryId] is set (title matched in the
-/// local library); everything else has no backend support at all yet, so
-/// it's session-only regardless.
+/// favorite cast member for that episode. Purely local state — the caller
+/// persists the returned [Episode] (watched status via
+/// UserLibraryService.setEpisodeWatched, rating/reaction via SocialService),
+/// since it has the show's TMDB id and season number this sheet doesn't.
 Future<Episode?> showEpisodeActionsSheet(
   BuildContext context, {
   required Episode episode,
@@ -54,26 +53,9 @@ class _EpisodeActionsSheetState extends State<_EpisodeActionsSheet> {
   late int _rating = widget.episode.rating ?? 0;
   late String? _reaction = widget.episode.reaction;
   late CastMember? _favoritePerson = widget.episode.favoritePerson;
-  bool _saving = false;
-  String? _error;
 
-  Future<void> _setWatched(bool value) async {
-    if (widget.episode.libraryId != null) {
-      setState(() {
-        _saving = true;
-        _error = null;
-      });
-      try {
-        await LocalBackendService.setEpisodeWatchStatus(
-          widget.episode.libraryId!,
-          value ? 'Completed' : 'Unwatched',
-        );
-      } catch (e) {
-        if (mounted) setState(() => _error = "Couldn't save: $e");
-      }
-      if (mounted) setState(() => _saving = false);
-    }
-    if (mounted) setState(() => _watched = value);
+  void _setWatched(bool value) {
+    setState(() => _watched = value);
   }
 
   void _markRewatched() {
@@ -133,7 +115,6 @@ class _EpisodeActionsSheetState extends State<_EpisodeActionsSheet> {
                           ? Icons.check_circle
                           : Icons.check_circle_outline,
                       active: _watched,
-                      loading: _saving,
                       onTap: () => _setWatched(!_watched),
                     ),
                   ),
@@ -150,26 +131,6 @@ class _EpisodeActionsSheetState extends State<_EpisodeActionsSheet> {
                   ),
                 ],
               ),
-              if (_error != null) ...[
-                const SizedBox(height: 10),
-                Text(
-                  _error!,
-                  style: AppTextStyles.dmSans(
-                    fontSize: 11,
-                    color: AppColors.destructive,
-                  ),
-                ),
-              ],
-              if (widget.episode.libraryId == null) ...[
-                const SizedBox(height: 10),
-                Text(
-                  "This episode isn't matched in your local library yet, so watched status won't sync with the desktop app — only kept for this session, same as rating/rewatch.",
-                  style: AppTextStyles.dmSans(
-                    fontSize: 11,
-                    color: AppColors.textMuted,
-                  ),
-                ),
-              ],
               const SizedBox(height: 22),
               Text('REACTION', style: AppTextStyles.sectionLabel()),
               const SizedBox(height: 10),
@@ -313,7 +274,6 @@ class _SheetActionButton extends StatelessWidget {
   final String label;
   final IconData icon;
   final bool active;
-  final bool loading;
   final VoidCallback onTap;
 
   const _SheetActionButton({
@@ -321,13 +281,12 @@ class _SheetActionButton extends StatelessWidget {
     required this.icon,
     required this.active,
     required this.onTap,
-    this.loading = false,
   });
 
   @override
   Widget build(BuildContext context) {
     return GestureDetector(
-      onTap: loading ? null : onTap,
+      onTap: onTap,
       child: Container(
         padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 10),
         decoration: BoxDecoration(
@@ -340,17 +299,7 @@ class _SheetActionButton extends StatelessWidget {
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            if (loading)
-              const SizedBox(
-                width: 18,
-                height: 18,
-                child: CircularProgressIndicator(
-                  strokeWidth: 2,
-                  color: AppColors.textPrimary,
-                ),
-              )
-            else
-              Icon(icon, size: 18, color: AppColors.textPrimary),
+            Icon(icon, size: 18, color: AppColors.textPrimary),
             const SizedBox(height: 6),
             Text(
               label,

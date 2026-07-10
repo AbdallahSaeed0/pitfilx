@@ -1,12 +1,12 @@
 import 'package:flutter/material.dart';
-import '../models/friend.dart';
+import '../models/social_profile.dart';
 import '../services/friends_store.dart';
 import '../theme/app_theme.dart';
 import 'friend_avatar.dart';
 
-/// "Recommend to Friend" bottom sheet — UI-only, see models/friend.dart.
-/// Tapping a friend just flips that row to "Sent" for this sheet's lifetime;
-/// there's no backend to actually deliver a recommendation to yet.
+/// "Recommend to Friend" bottom sheet — friends list is real, but there's no
+/// `recommendations` table yet, so tapping a friend just flips that row to
+/// "Sent" for this sheet's lifetime without actually delivering anything.
 Future<void> showRecommendFriendSheet(BuildContext context, String titleName) {
   return showModalBottomSheet<void>(
     context: context,
@@ -31,11 +31,11 @@ class _RecommendFriendSheet extends StatefulWidget {
 class _RecommendFriendSheetState extends State<_RecommendFriendSheet> {
   final Set<String> _sentIds = {};
 
-  void _send(Friend friend) {
-    setState(() => _sentIds.add(friend.id));
+  void _send(SocialProfile profile) {
+    setState(() => _sentIds.add(profile.id));
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
-        content: Text('Recommended "${widget.titleName}" to ${friend.name}'),
+        content: Text('Recommended "${widget.titleName}" to ${profile.name}'),
       ),
     );
   }
@@ -86,25 +86,27 @@ class _RecommendFriendSheetState extends State<_RecommendFriendSheet> {
                     shrinkWrap: true,
                     itemCount: friends.length,
                     itemBuilder: (context, i) {
-                      final friend = friends[i];
-                      final sent = _sentIds.contains(friend.id);
+                      final profile = friends[i];
+                      final sent = _sentIds.contains(profile.id);
                       return ListTile(
                         contentPadding: EdgeInsets.zero,
-                        leading: FriendAvatar(friend: friend, size: 40),
+                        leading: FriendAvatar(profile: profile, size: 40),
                         title: Text(
-                          friend.name,
+                          profile.name,
                           style: AppTextStyles.dmSans(
                             fontSize: 14,
                             fontWeight: FontWeight.w600,
                           ),
                         ),
-                        subtitle: Text(
-                          friend.username,
-                          style: AppTextStyles.dmSans(
-                            fontSize: 11,
-                            color: AppColors.textMuted,
-                          ),
-                        ),
+                        subtitle: profile.username != null
+                            ? Text(
+                                '@${profile.username}',
+                                style: AppTextStyles.dmSans(
+                                  fontSize: 11,
+                                  color: AppColors.textMuted,
+                                ),
+                              )
+                            : null,
                         trailing: sent
                             ? const Icon(
                                 Icons.check_circle,
@@ -115,7 +117,7 @@ class _RecommendFriendSheetState extends State<_RecommendFriendSheet> {
                                 size: 18,
                                 color: AppColors.textMuted,
                               ),
-                        onTap: sent ? null : () => _send(friend),
+                        onTap: sent ? null : () => _send(profile),
                       );
                     },
                   ),

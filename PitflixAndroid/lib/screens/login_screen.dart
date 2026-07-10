@@ -1,4 +1,7 @@
 import 'package:flutter/material.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
+import '../services/auth_service.dart';
+import '../services/friends_store.dart';
 import '../theme/app_theme.dart';
 import '../widgets/widgets.dart';
 import 'root_shell.dart';
@@ -12,8 +15,9 @@ class LoginScreen extends StatefulWidget {
 }
 
 class _LoginScreenState extends State<LoginScreen> {
-  final _emailController = TextEditingController(text: 'you@example.com');
-  final _passwordController = TextEditingController(text: 'password');
+  final _emailController = TextEditingController();
+  final _passwordController = TextEditingController();
+  bool _loading = false;
 
   @override
   void dispose() {
@@ -22,10 +26,51 @@ class _LoginScreenState extends State<LoginScreen> {
     super.dispose();
   }
 
-  void _logIn() {
-    Navigator.of(
-      context,
-    ).pushReplacement(MaterialPageRoute(builder: (_) => const RootShell()));
+  Future<void> _logIn() async {
+    final input = _emailController.text.trim();
+    final password = _passwordController.text;
+    if (input.isEmpty || password.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Enter your email/username and password')),
+      );
+      return;
+    }
+    setState(() => _loading = true);
+    try {
+      String email;
+      if (input.contains('@')) {
+        email = input;
+      } else {
+        final resolved = await AuthService.emailForUsername(input);
+        if (resolved == null) {
+          if (!mounted) return;
+          setState(() => _loading = false);
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text('No account found for "$input"')),
+          );
+          return;
+        }
+        email = resolved;
+      }
+      await AuthService.signIn(email, password);
+      await FriendsStore.refresh();
+      if (!mounted) return;
+      Navigator.of(
+        context,
+      ).pushReplacement(MaterialPageRoute(builder: (_) => const RootShell()));
+    } on AuthException catch (e) {
+      if (!mounted) return;
+      setState(() => _loading = false);
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text(e.message)));
+    } catch (e) {
+      if (!mounted) return;
+      setState(() => _loading = false);
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text("Couldn't log in: $e")));
+    }
   }
 
   @override
@@ -85,7 +130,7 @@ class _LoginScreenState extends State<LoginScreen> {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-              Text('EMAIL', style: AppTextStyles.sectionLabel()),
+              Text('EMAIL OR USERNAME', style: AppTextStyles.sectionLabel()),
               const SizedBox(height: 8),
               AuthTextField(controller: _emailController),
               const SizedBox(height: 14),
@@ -94,7 +139,7 @@ class _LoginScreenState extends State<LoginScreen> {
               AuthTextField(controller: _passwordController, obscureText: true),
               const SizedBox(height: 28),
               ElevatedButton(
-                onPressed: _logIn,
+                onPressed: _loading ? null : _logIn,
                 style: ElevatedButton.styleFrom(
                   backgroundColor: AppColors.buttonPurple,
                   foregroundColor: AppColors.textPrimary,
@@ -104,14 +149,23 @@ class _LoginScreenState extends State<LoginScreen> {
                   ),
                   elevation: 0,
                 ),
-                child: Text(
-                  'LOG IN',
-                  style: AppTextStyles.bebas(
-                    fontSize: 22,
-                    color: AppColors.textPrimary,
-                    letterSpacing: 0.14,
-                  ),
-                ),
+                child: _loading
+                    ? const SizedBox(
+                        width: 22,
+                        height: 22,
+                        child: CircularProgressIndicator(
+                          strokeWidth: 2.4,
+                          color: AppColors.textPrimary,
+                        ),
+                      )
+                    : Text(
+                        'LOG IN',
+                        style: AppTextStyles.bebas(
+                          fontSize: 22,
+                          color: AppColors.textPrimary,
+                          letterSpacing: 0.14,
+                        ),
+                      ),
               ),
               const SizedBox(height: 16),
               Center(

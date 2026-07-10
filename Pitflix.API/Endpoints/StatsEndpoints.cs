@@ -123,7 +123,8 @@ public static class StatsEndpoints
                 decadeTopMovies = b.DecadeTopMovies.Select(d => new { decade = d.DecadeLabel, count = d.Count }).ToList(),
                 decadeTopSeries = b.DecadeTopSeries.Select(d => new { decade = d.DecadeLabel, count = d.Count }).ToList(),
                 recentlyCompletedMovies = recentMoviesMapped,
-                recentlyCompletedSeries = recentSeriesMapped
+                recentlyCompletedSeries = recentSeriesMapped,
+                last7Days = b.Last7Days.Select(d => new { date = d.Date, count = d.Count, titles = d.Titles }).ToList()
             }, jsonSerializerOptions);
         });
 

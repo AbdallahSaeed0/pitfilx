@@ -122,6 +122,8 @@ export function StatsPage() {
         </div>
       </div>
 
+      <Last7DaysCard days={data.last7Days ?? []} />
+
       <div className="flex gap-2 rounded-full bg-pitflix-card/40 p-1.5 w-fit">
         <TabButton active={tab === "movies"} onClick={() => setTab("movies")}>
           Movies
@@ -351,6 +353,70 @@ function SeriesTab({
           Avg TMDB rating — series: <span className="text-white">{data.averageSeriesRating.toFixed(1)}</span>
         </p>
       </div>
+    </div>
+  );
+}
+
+function Last7DaysCard({ days }: { days: { date: string; count: number; titles: string[] }[] }) {
+  const maxCount = Math.max(1, ...days.map((d) => d.count));
+  const todayStr = new Date().toISOString().slice(0, 10);
+
+  const intensityClass = (count: number) => {
+    if (count <= 0) return "bg-pitflix-bg border-pitflix-card/50";
+    const ratio = count / maxCount;
+    if (ratio >= 0.75) return "bg-pitflix-primary border-pitflix-primary";
+    if (ratio >= 0.4) return "bg-pitflix-primary/60 border-pitflix-primary/60";
+    return "bg-pitflix-primary/25 border-pitflix-primary/25";
+  };
+
+  return (
+    <div className="rounded-2xl border border-pitflix-card/50 bg-gradient-to-b from-pitflix-surface/60 to-pitflix-bg/40 p-6 shadow-lg shadow-black/20">
+      <h2 className="mb-1 text-lg font-semibold text-white">Last 7 days</h2>
+      <p className="mb-5 text-xs text-pitflix-muted">Movies and episodes finished each day</p>
+      {days.length === 0 ? (
+        <p className="text-sm text-pitflix-muted">No activity yet this week.</p>
+      ) : (
+        <div className="grid grid-cols-7 gap-2">
+          {days.map((d) => {
+            const dt = new Date(`${d.date}T00:00:00`);
+            const dayLabel = dt.toLocaleDateString(undefined, { weekday: "short" });
+            const dateLabel = dt.toLocaleDateString(undefined, { month: "short", day: "numeric" });
+            const isToday = d.date === todayStr;
+            return (
+              <div
+                key={d.date}
+                className="flex flex-col items-center gap-1.5"
+                title={d.titles.length > 0 ? d.titles.join(", ") : "Nothing finished"}
+              >
+                <p className={cn("text-[10px] font-medium uppercase tracking-wide", isToday ? "text-pitflix-primary" : "text-pitflix-subtle")}>
+                  {dayLabel}
+                </p>
+                <div
+                  className={cn(
+                    "flex h-14 w-full items-center justify-center rounded-lg border text-sm font-bold text-white",
+                    intensityClass(d.count),
+                  )}
+                >
+                  {d.count > 0 ? d.count : ""}
+                </div>
+                <p className="text-[9px] text-pitflix-subtle">{dateLabel}</p>
+                {d.titles.length > 0 ? (
+                  <div className="mt-0.5 w-full space-y-0.5">
+                    {d.titles.slice(0, 3).map((t) => (
+                      <p key={t} className="truncate text-center text-[9px] leading-tight text-white/60" title={t}>
+                        {t}
+                      </p>
+                    ))}
+                    {d.titles.length > 3 ? (
+                      <p className="text-center text-[9px] text-pitflix-subtle">+{d.titles.length - 3} more</p>
+                    ) : null}
+                  </div>
+                ) : null}
+              </div>
+            );
+          })}
+        </div>
+      )}
     </div>
   );
 }

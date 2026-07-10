@@ -149,6 +149,11 @@ builder.Services.AddScoped<SupabaseSyncRepository>();
 builder.Services.AddScoped<SupabaseSyncService>();
 builder.Services.AddSingleton<SupabaseRestClient>();
 builder.Services.AddHostedService<SupabaseSyncHostedService>();
+builder.Services.AddScoped<LibraryExportBuilder>();
+builder.Services.AddSingleton<SupabaseAuthClient>();
+builder.Services.AddSingleton<SupabaseUserClient>();
+builder.Services.AddScoped<MobileAccountSyncService>();
+builder.Services.AddHostedService<MobileAccountSyncHostedService>();
 builder.Services.AddResponseCompression(options =>
 {
     options.EnableForHttps = true;
@@ -316,6 +321,8 @@ app.MapLibraryDetailEndpoints(jsonSerializerOptions);
 // ?? Library ??
 
 app.MapLibraryEndpoints(jsonSerializerOptions);
+app.MapLibraryExportEndpoints(jsonSerializerOptions);
+app.MapMobileSyncEndpoints(jsonSerializerOptions);
 
 app.MapUnmatchedEndpoints(jsonSerializerOptions);
 

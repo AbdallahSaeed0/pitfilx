@@ -1,10 +1,15 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
+import '../config/app_config.dart';
+import '../services/auth_service.dart';
+import '../services/friends_store.dart';
 import '../theme/app_theme.dart';
 import '../widgets/animated_wordmark.dart';
 import 'login_screen.dart';
+import 'root_shell.dart';
 
-/// Shown once at app launch, then hands off to Login.
+/// Shown once at app launch, then hands off to RootShell if there's a valid
+/// Supabase session, or Login otherwise.
 class SplashScreen extends StatefulWidget {
   const SplashScreen({super.key});
 
@@ -22,12 +27,31 @@ class _SplashScreenState extends State<SplashScreen> {
     // before handing off, landing the cut during the post-cycle pause so we
     // never navigate away mid-reveal (which would freeze partially-faded
     // letters right as the screen changes).
-    _timer = Timer(const Duration(milliseconds: 2900), () {
+    _timer = Timer(const Duration(milliseconds: 2900), _handOff);
+  }
+
+  Future<void> _handOff() async {
+    // Supabase.initialize only runs (in main.dart) when configured — never
+    // touch AuthService otherwise, since Supabase.instance.client throws if
+    // it was never initialized.
+    final signedIn = AppConfig.isSupabaseConfigured && AuthService.isSignedIn;
+    if (!signedIn) {
       if (!mounted) return;
       Navigator.of(
         context,
       ).pushReplacement(MaterialPageRoute(builder: (_) => const LoginScreen()));
-    });
+      return;
+    }
+    try {
+      await FriendsStore.refresh();
+    } catch (_) {
+      // Best-effort — still let the user in; screens that need this data
+      // have their own loading/error states.
+    }
+    if (!mounted) return;
+    Navigator.of(
+      context,
+    ).pushReplacement(MaterialPageRoute(builder: (_) => const RootShell()));
   }
 
   @override

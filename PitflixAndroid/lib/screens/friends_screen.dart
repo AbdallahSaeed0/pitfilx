@@ -1,10 +1,10 @@
 import 'package:flutter/material.dart';
-import '../data/mock_data.dart';
-import '../data/mock_friends_data.dart';
-import '../models/activity_item.dart';
-import '../models/friend.dart';
-import '../models/friend_request.dart';
+import '../models/social_activity_item.dart';
+import '../models/social_friend_request.dart';
+import '../models/social_profile.dart';
+import '../services/app_settings.dart';
 import '../services/friends_store.dart';
+import '../services/social_service.dart';
 import '../theme/app_theme.dart';
 import '../utils/time_ago.dart';
 import '../widgets/friend_avatar.dart';
@@ -13,9 +13,9 @@ import 'activity_detail_screen.dart';
 import 'add_friend_screen.dart';
 import 'friend_profile_screen.dart';
 
-/// UI-only — see models/friend.dart. Friends/requests/activity are all mock
-/// data, but backed by [FriendsStore] (rather than local state) so sending a
-/// request from Add Friend actually shows up here and vice versa.
+/// Real data — friends/requests come from [FriendsStore] (shared session
+/// state backed by the social schema), activity is fetched fresh each time
+/// the Activity tab is opened.
 class FriendsScreen extends StatefulWidget {
   const FriendsScreen({super.key});
 
@@ -25,6 +25,27 @@ class FriendsScreen extends StatefulWidget {
 
 class _FriendsScreenState extends State<FriendsScreen> {
   int _tab = 0; // 0 Friends, 1 Requests, 2 Activity
+  List<SocialActivityItem>? _activity;
+  String? _activityError;
+
+  @override
+  void initState() {
+    super.initState();
+    FriendsStore.refresh();
+    _loadActivity();
+  }
+
+  Future<void> _loadActivity() async {
+    setState(() => _activityError = null);
+    try {
+      final items = await SocialService.fetchActivityFeed();
+      if (!mounted) return;
+      setState(() => _activity = items);
+    } catch (e) {
+      if (!mounted) return;
+      setState(() => _activityError = e.toString());
+    }
+  }
 
   void _openAddFriend() {
     Navigator.of(
@@ -32,24 +53,39 @@ class _FriendsScreenState extends State<FriendsScreen> {
     ).push(MaterialPageRoute(builder: (_) => const AddFriendScreen()));
   }
 
-  void _openFriendProfile(Friend friend) {
+  void _openFriendProfile(SocialProfile profile) {
     Navigator.of(context).push(
-      MaterialPageRoute(builder: (_) => FriendProfileScreen(friend: friend)),
+      MaterialPageRoute(builder: (_) => FriendProfileScreen(profile: profile)),
     );
   }
 
-  void _acceptRequest(FriendRequest request) {
+  void _acceptRequest(SocialFriendRequest request) {
     FriendsStore.acceptRequest(request);
     ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text('You and ${request.friend.name} are now friends')),
+      SnackBar(
+        content: Text('You and ${request.profile.name} are now friends'),
+      ),
     );
   }
 
-  void _declineRequest(FriendRequest request) =>
+  void _declineRequest(SocialFriendRequest request) =>
       FriendsStore.declineRequest(request);
 
-  void _cancelOutgoing(FriendRequest request) =>
+  void _cancelOutgoing(SocialFriendRequest request) =>
       FriendsStore.cancelOutgoing(request);
+
+  int get _unseenActivityCount {
+    final items = _activity;
+    if (items == null) return 0;
+    final lastSeen = AppSettings.lastSeenActivityAt.value;
+    if (lastSeen == null) return items.length;
+    return items.where((a) => a.createdAt.isAfter(lastSeen)).length;
+  }
+
+  void _setTab(int i) {
+    setState(() => _tab = i);
+    if (i == 2) AppSettings.markActivitySeen();
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -58,6 +94,7 @@ class _FriendsScreenState extends State<FriendsScreen> {
         FriendsStore.friends,
         FriendsStore.incoming,
         FriendsStore.outgoing,
+        AppSettings.lastSeenActivityAt,
       ]),
       builder: (context, _) => _buildScaffold(),
     );
@@ -67,6 +104,7 @@ class _FriendsScreenState extends State<FriendsScreen> {
     final friends = FriendsStore.friends.value;
     final incoming = FriendsStore.incoming.value;
     final outgoing = FriendsStore.outgoing.value;
+    final unseenActivity = _unseenActivityCount;
     return Scaffold(
       backgroundColor: AppColors.bgBase,
       body: SafeArea(
@@ -130,10 +168,10 @@ class _FriendsScreenState extends State<FriendsScreen> {
               tabs: [
                 'Friends (${friends.length})',
                 incoming.isEmpty ? 'Requests' : 'Requests (${incoming.length})',
-                'Activity',
+                unseenActivity == 0 ? 'Activity' : 'Activity ($unseenActivity)',
               ],
               activeIndex: _tab,
-              onChanged: (i) => setState(() => _tab = i),
+              onChanged: _setTab,
             ),
             Expanded(child: _buildBody(friends, incoming, outgoing)),
           ],
@@ -143,9 +181,9 @@ class _FriendsScreenState extends State<FriendsScreen> {
   }
 
   Widget _buildBody(
-    List<Friend> friends,
-    List<FriendRequest> incoming,
-    List<FriendRequest> outgoing,
+    List<SocialProfile> friends,
+    List<SocialFriendRequest> incoming,
+    List<SocialFriendRequest> outgoing,
   ) {
     return switch (_tab) {
       1 => _buildRequests(incoming, outgoing),
@@ -154,14 +192,12 @@ class _FriendsScreenState extends State<FriendsScreen> {
     };
   }
 
-  Widget _buildFriends(List<Friend> friends) {
+  Widget _buildFriends(List<SocialProfile> friends) {
+    if (!FriendsStore.loaded.value) {
+      return const ListRowsSkeleton();
+    }
     if (friends.isEmpty) {
-      return Center(
-        child: Text(
-          'No friends yet — add some!',
-          style: AppTextStyles.dmSans(fontSize: 13, color: AppColors.textMuted),
-        ),
-      );
+      return const EmptyState(message: 'No friends yet — add some!');
     }
     return ListView.separated(
       padding: const EdgeInsets.fromLTRB(20, 16, 20, 20),
@@ -179,7 +215,7 @@ class _FriendsScreenState extends State<FriendsScreen> {
             ),
             child: Row(
               children: [
-                FriendAvatar(friend: friend),
+                FriendAvatar(profile: friend),
                 const SizedBox(width: 12),
                 Expanded(
                   child: Column(
@@ -192,18 +228,18 @@ class _FriendsScreenState extends State<FriendsScreen> {
                           fontWeight: FontWeight.w600,
                         ),
                       ),
-                      const SizedBox(height: 2),
-                      Text(
-                        friend.currentlyWatching != null
-                            ? 'Watching ${friend.currentlyWatching}'
-                            : friend.username,
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: AppTextStyles.dmSans(
-                          fontSize: 11,
-                          color: AppColors.textMuted,
+                      if (friend.username != null) ...[
+                        const SizedBox(height: 2),
+                        Text(
+                          '@${friend.username}',
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: AppTextStyles.dmSans(
+                            fontSize: 11,
+                            color: AppColors.textMuted,
+                          ),
                         ),
-                      ),
+                      ],
                     ],
                   ),
                 ),
@@ -221,16 +257,14 @@ class _FriendsScreenState extends State<FriendsScreen> {
   }
 
   Widget _buildRequests(
-    List<FriendRequest> incoming,
-    List<FriendRequest> outgoing,
+    List<SocialFriendRequest> incoming,
+    List<SocialFriendRequest> outgoing,
   ) {
+    if (!FriendsStore.loaded.value) {
+      return const ListRowsSkeleton();
+    }
     if (incoming.isEmpty && outgoing.isEmpty) {
-      return Center(
-        child: Text(
-          'No pending requests.',
-          style: AppTextStyles.dmSans(fontSize: 13, color: AppColors.textMuted),
-        ),
-      );
+      return const EmptyState(message: 'No pending requests.');
     }
     return ListView(
       padding: const EdgeInsets.fromLTRB(20, 16, 20, 20),
@@ -240,9 +274,9 @@ class _FriendsScreenState extends State<FriendsScreen> {
           const SizedBox(height: 10),
           for (final request in incoming) ...[
             _RequestRow(
-              friend: request.friend,
-              subtitle: 'Sent ${timeAgo(request.sentAt)}',
-              onTapFriend: () => _openFriendProfile(request.friend),
+              profile: request.profile,
+              subtitle: 'Sent ${timeAgo(request.createdAt)}',
+              onTapFriend: () => _openFriendProfile(request.profile),
               trailing: Row(
                 mainAxisSize: MainAxisSize.min,
                 children: [
@@ -292,9 +326,9 @@ class _FriendsScreenState extends State<FriendsScreen> {
           const SizedBox(height: 10),
           for (final request in outgoing) ...[
             _RequestRow(
-              friend: request.friend,
-              subtitle: 'Pending · sent ${timeAgo(request.sentAt)}',
-              onTapFriend: () => _openFriendProfile(request.friend),
+              profile: request.profile,
+              subtitle: 'Pending · sent ${timeAgo(request.createdAt)}',
+              onTapFriend: () => _openFriendProfile(request.profile),
               trailing: GestureDetector(
                 onTap: () => _cancelOutgoing(request),
                 child: Text(
@@ -315,14 +349,18 @@ class _FriendsScreenState extends State<FriendsScreen> {
   }
 
   Widget _buildActivity() {
-    final items = MockFriendsData.activity;
-    if (items.isEmpty) {
-      return Center(
-        child: Text(
-          'No recent activity.',
-          style: AppTextStyles.dmSans(fontSize: 13, color: AppColors.textMuted),
-        ),
+    if (_activityError != null) {
+      return ErrorRetry(
+        message: "Couldn't load activity.\n$_activityError",
+        onRetry: _loadActivity,
       );
+    }
+    final items = _activity;
+    if (items == null) {
+      return const ListRowsSkeleton();
+    }
+    if (items.isEmpty) {
+      return const EmptyState(message: 'No recent activity.');
     }
     return ListView.separated(
       padding: const EdgeInsets.fromLTRB(20, 16, 20, 20),
@@ -336,7 +374,7 @@ class _FriendsScreenState extends State<FriendsScreen> {
         ),
         child: _ActivityRow(
           item: items[i],
-          onTapFriend: () => _openFriendProfile(items[i].friend),
+          onTapFriend: () => _openFriendProfile(items[i].profile),
         ),
       ),
     );
@@ -344,13 +382,13 @@ class _FriendsScreenState extends State<FriendsScreen> {
 }
 
 class _RequestRow extends StatelessWidget {
-  final Friend friend;
+  final SocialProfile profile;
   final String subtitle;
   final Widget trailing;
   final VoidCallback? onTapFriend;
 
   const _RequestRow({
-    required this.friend,
+    required this.profile,
     required this.subtitle,
     required this.trailing,
     this.onTapFriend,
@@ -361,60 +399,59 @@ class _RequestRow extends StatelessWidget {
     return GestureDetector(
       onTap: onTapFriend,
       child: Container(
-      padding: const EdgeInsets.all(12),
-      decoration: BoxDecoration(
-        color: AppColors.bgCard,
-        borderRadius: BorderRadius.circular(AppSpacing.cardRadiusMax),
-      ),
-      child: Row(
-        children: [
-          FriendAvatar(friend: friend),
-          const SizedBox(width: 12),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  friend.name,
-                  style: AppTextStyles.dmSans(
-                    fontSize: 14,
-                    fontWeight: FontWeight.w600,
+        padding: const EdgeInsets.all(12),
+        decoration: BoxDecoration(
+          color: AppColors.bgCard,
+          borderRadius: BorderRadius.circular(AppSpacing.cardRadiusMax),
+        ),
+        child: Row(
+          children: [
+            FriendAvatar(profile: profile),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    profile.name,
+                    style: AppTextStyles.dmSans(
+                      fontSize: 14,
+                      fontWeight: FontWeight.w600,
+                    ),
                   ),
-                ),
-                const SizedBox(height: 2),
-                Text(
-                  subtitle,
-                  style: AppTextStyles.dmSans(
-                    fontSize: 11,
-                    color: AppColors.textMuted,
+                  const SizedBox(height: 2),
+                  Text(
+                    subtitle,
+                    style: AppTextStyles.dmSans(
+                      fontSize: 11,
+                      color: AppColors.textMuted,
+                    ),
                   ),
-                ),
-              ],
+                ],
+              ),
             ),
-          ),
-          trailing,
-        ],
+            trailing,
+          ],
+        ),
       ),
-    ),
     );
   }
 }
 
 class _ActivityRow extends StatelessWidget {
-  final ActivityItem item;
+  final SocialActivityItem item;
   final VoidCallback onTapFriend;
 
   const _ActivityRow({required this.item, required this.onTapFriend});
 
   String get _verb => switch (item.action) {
-    ActivityAction.watched => 'watched',
-    ActivityAction.rated => 'rated',
-    ActivityAction.addedToWatchLater => 'added to Watch Later',
+    SocialActivityAction.watched => 'watched',
+    SocialActivityAction.rated => 'rated',
+    SocialActivityAction.addedToWatchlist => 'added to Watch Later',
   };
 
   @override
   Widget build(BuildContext context) {
-    final title = MockData.byId(item.titleId);
     return Container(
       padding: const EdgeInsets.all(12),
       decoration: BoxDecoration(
@@ -426,7 +463,7 @@ class _ActivityRow extends StatelessWidget {
         children: [
           GestureDetector(
             onTap: onTapFriend,
-            child: FriendAvatar(friend: item.friend, size: 40),
+            child: FriendAvatar(profile: item.profile, size: 40),
           ),
           const SizedBox(width: 12),
           Expanded(
@@ -441,15 +478,15 @@ class _ActivityRow extends StatelessWidget {
                     ),
                     children: [
                       TextSpan(
-                        text: item.friend.name,
+                        text: item.profile.name,
                         style: const TextStyle(fontWeight: FontWeight.w600),
                       ),
                       TextSpan(text: ' $_verb '),
                       TextSpan(
-                        text: title.name,
+                        text: item.title ?? 'something',
                         style: const TextStyle(fontWeight: FontWeight.w600),
                       ),
-                      if (item.action == ActivityAction.rated &&
+                      if (item.action == SocialActivityAction.rated &&
                           item.rating != null)
                         TextSpan(text: ' (${item.rating}★)'),
                     ],
@@ -457,7 +494,7 @@ class _ActivityRow extends StatelessWidget {
                 ),
                 const SizedBox(height: 4),
                 Text(
-                  timeAgo(item.timestamp),
+                  timeAgo(item.createdAt),
                   style: AppTextStyles.dmSans(
                     fontSize: 11,
                     color: AppColors.textMuted,
@@ -472,7 +509,7 @@ class _ActivityRow extends StatelessWidget {
               width: 32,
               height: 46,
               decoration: BoxDecoration(
-                gradient: PosterGradients.of(title.gradientSeed),
+                gradient: PosterGradients.of(item.tmdbId % 6),
               ),
             ),
           ),

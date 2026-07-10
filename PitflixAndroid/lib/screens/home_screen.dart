@@ -1,9 +1,10 @@
 import 'package:flutter/material.dart';
-import '../config/app_config.dart';
 import '../models/coming_soon_item.dart';
 import '../models/title_item.dart';
+import '../services/app_settings.dart';
 import '../services/local_backend_service.dart';
 import '../services/tmdb_service.dart';
+import '../services/user_library_service.dart';
 import '../theme/app_theme.dart';
 import '../utils/watch_later.dart';
 import '../widgets/widgets.dart';
@@ -12,6 +13,7 @@ import 'lists_screen.dart';
 import 'search_screen.dart';
 import 'title_detail_movie_screen.dart';
 import 'title_detail_series_screen.dart';
+import 'title_grid_screen.dart';
 
 class HomeScreen extends StatefulWidget {
   final VoidCallback? onAvatarTap;
@@ -44,10 +46,22 @@ class _HomeScreenState extends State<HomeScreen> {
     _loadWatchLater();
     _loadCurrentlyWatching();
     _loadComingSoon();
+    UserLibraryService.libraryVersion.addListener(_onLibraryChanged);
+  }
+
+  @override
+  void dispose() {
+    UserLibraryService.libraryVersion.removeListener(_onLibraryChanged);
+    super.dispose();
+  }
+
+  void _onLibraryChanged() {
+    _loadWatchLater(forceRefresh: true);
+    _loadCurrentlyWatching();
   }
 
   Future<void> _loadComingSoon() async {
-    if (!AppConfig.useLocalBackend) {
+    if (!AppSettings.desktopSyncActive) {
       setState(() => _comingSoon = const []);
       return;
     }
@@ -63,20 +77,17 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   Future<void> _loadCurrentlyWatching() async {
-    if (!AppConfig.useLocalBackend) {
-      setState(() => _currentlyWatching = const []);
-      return;
-    }
     setState(() => _currentlyWatchingError = null);
     try {
-      final rows = await LocalBackendService.fetchWatchingCurrently();
+      final rows = await UserLibraryService.fetchCurrentlyWatching();
       if (!mounted) return;
       setState(() {
         _currentlyWatching = rows.map((r) {
-          final tmdbId = (r['showTmdbId'] as num?)?.toInt() ?? 0;
+          final tmdbId = (r['tmdb_id'] as num).toInt();
+          final watchedCount = (r['watched_episode_count'] as num?)?.toInt() ?? 0;
           return TitleItem(
-            id: 'currently-watching-${r['libraryShowId']}',
-            name: r['showTitle'] as String? ?? 'Untitled',
+            id: 'currently-watching-$tmdbId',
+            name: r['title'] as String? ?? 'Untitled',
             kind: TitleKind.show,
             year: 0,
             network: 'TV',
@@ -84,12 +95,10 @@ class _HomeScreenState extends State<HomeScreen> {
             genres: const [],
             overview: '',
             gradientSeed: tmdbId % 6,
-            posterPath: r['posterUrl'] as String?,
+            posterPath: r['poster_path'] as String?,
             tmdbId: tmdbId,
             isSummaryOnly: true,
-            episodeSub: r['nextLabel'] as String?,
-            progress: (r['progressFraction'] as num?)?.toDouble(),
-            libraryId: (r['libraryShowId'] as num?)?.toInt(),
+            episodeSub: '$watchedCount episode${watchedCount == 1 ? '' : 's'} watched',
           );
         }).toList();
       });
@@ -146,6 +155,14 @@ class _HomeScreenState extends State<HomeScreen> {
     Navigator.of(
       context,
     ).push(MaterialPageRoute(builder: (_) => const ListsScreen()));
+  }
+
+  void _openTitleGrid(String title, List<TitleItem>? items) {
+    Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (_) => TitleGridScreen(title: title, items: items ?? const []),
+      ),
+    );
   }
 
   void _openComingSoon() {
@@ -246,6 +263,10 @@ class _HomeScreenState extends State<HomeScreen> {
                             onRetry: _loadCurrentlyWatching,
                             showProgress: true,
                             onTap: _openTitle,
+                            onSeeAll: () => _openTitleGrid(
+                              'Currently Watching',
+                              _currentlyWatching,
+                            ),
                           ),
                           const SizedBox(height: AppSpacing.sectionGap),
                           _ComingSoonPosterRow(
@@ -262,6 +283,8 @@ class _HomeScreenState extends State<HomeScreen> {
                             errorText: _trendingError,
                             onRetry: _loadTrending,
                             onTap: _openTitle,
+                            onSeeAll: () =>
+                                _openTitleGrid('Trending', _trendingShows),
                           ),
                           const SizedBox(height: AppSpacing.sectionGap),
                           _PosterRow(
@@ -290,6 +313,8 @@ class _HomeScreenState extends State<HomeScreen> {
                             errorText: _trendingError,
                             onRetry: _loadTrending,
                             onTap: _openTitle,
+                            onSeeAll: () =>
+                                _openTitleGrid('Trending', _trendingMovies),
                           ),
                           const SizedBox(height: AppSpacing.sectionGap),
                           _PosterRow(
@@ -342,37 +367,9 @@ class _ComingSoonPosterRow extends StatelessWidget {
 
   Widget _buildContent() {
     if (errorText != null) {
-      return Padding(
-        padding: const EdgeInsets.symmetric(
-          horizontal: AppSpacing.screenPadding,
-        ),
-        child: Row(
-          children: [
-            Expanded(
-              child: Text(
-                "Couldn't load: $errorText",
-                maxLines: 2,
-                overflow: TextOverflow.ellipsis,
-                style: AppTextStyles.dmSans(
-                  fontSize: 12,
-                  color: AppColors.textMuted,
-                ),
-              ),
-            ),
-            if (onRetry != null)
-              GestureDetector(
-                onTap: onRetry,
-                child: Text(
-                  'Retry',
-                  style: AppTextStyles.dmSans(
-                    fontSize: 12,
-                    fontWeight: FontWeight.w600,
-                    color: AppColors.accent,
-                  ),
-                ),
-              ),
-          ],
-        ),
+      return InlineErrorRetry(
+        message: "Couldn't load: $errorText",
+        onRetry: onRetry,
       );
     }
 
@@ -381,13 +378,10 @@ class _ComingSoonPosterRow extends StatelessWidget {
     }
 
     if (items!.isEmpty) {
-      return Padding(
-        padding: const EdgeInsets.symmetric(
+      return const EmptyState(
+        message: 'Nothing pinned yet.',
+        padding: EdgeInsets.symmetric(
           horizontal: AppSpacing.screenPadding,
-        ),
-        child: Text(
-          'Nothing pinned yet.',
-          style: AppTextStyles.dmSans(fontSize: 12, color: AppColors.textMuted),
         ),
       );
     }
@@ -445,37 +439,9 @@ class _PosterRow extends StatelessWidget {
 
   Widget _buildContent() {
     if (errorText != null) {
-      return Padding(
-        padding: const EdgeInsets.symmetric(
-          horizontal: AppSpacing.screenPadding,
-        ),
-        child: Row(
-          children: [
-            Expanded(
-              child: Text(
-                "Couldn't load: $errorText",
-                maxLines: 2,
-                overflow: TextOverflow.ellipsis,
-                style: AppTextStyles.dmSans(
-                  fontSize: 12,
-                  color: AppColors.textMuted,
-                ),
-              ),
-            ),
-            if (onRetry != null)
-              GestureDetector(
-                onTap: onRetry,
-                child: Text(
-                  'Retry',
-                  style: AppTextStyles.dmSans(
-                    fontSize: 12,
-                    fontWeight: FontWeight.w600,
-                    color: AppColors.accent,
-                  ),
-                ),
-              ),
-          ],
-        ),
+      return InlineErrorRetry(
+        message: "Couldn't load: $errorText",
+        onRetry: onRetry,
       );
     }
 
@@ -484,13 +450,10 @@ class _PosterRow extends StatelessWidget {
     }
 
     if (items!.isEmpty) {
-      return Padding(
-        padding: const EdgeInsets.symmetric(
+      return const EmptyState(
+        message: 'Nothing here yet.',
+        padding: EdgeInsets.symmetric(
           horizontal: AppSpacing.screenPadding,
-        ),
-        child: Text(
-          'Nothing here yet.',
-          style: AppTextStyles.dmSans(fontSize: 12, color: AppColors.textMuted),
         ),
       );
     }

@@ -1,4 +1,7 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
+import '../services/friends_store.dart';
+import '../services/user_library_service.dart';
 import '../theme/app_theme.dart';
 import '../widgets/widgets.dart';
 import 'discover_screen.dart';
@@ -32,15 +35,32 @@ class _RootShellState extends State<RootShell> {
     ),
   ];
 
+  Timer? _autoSyncTimer;
+
   @override
   void initState() {
     super.initState();
     RootShell.tabNotifier.addListener(_onTabChanged);
+    // Defensive — covers entry paths that skip Login/SignUp's own refresh
+    // (e.g. hot restart while already signed in).
+    if (!FriendsStore.loaded.value) FriendsStore.refresh();
+
+    // Periodic re-fetch of this account's Supabase library — picks up
+    // whatever the desktop app has pushed via its own "Link Mobile Account"
+    // background sync (see Pitflix.API's MobileAccountSyncHostedService),
+    // without this app ever needing to reach the desktop over the local
+    // network itself. A plain version bump, not a network call — screens
+    // that listen to UserLibraryService.libraryVersion do the actual fetch.
+    _autoSyncTimer = Timer.periodic(
+      const Duration(minutes: 5),
+      (_) => UserLibraryService.libraryVersion.value++,
+    );
   }
 
   @override
   void dispose() {
     RootShell.tabNotifier.removeListener(_onTabChanged);
+    _autoSyncTimer?.cancel();
     super.dispose();
   }
 

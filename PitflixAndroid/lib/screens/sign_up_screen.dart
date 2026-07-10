@@ -1,8 +1,11 @@
 import 'package:flutter/material.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
+import '../services/auth_service.dart';
+import '../services/friends_store.dart';
 import '../theme/app_theme.dart';
 import '../widgets/widgets.dart';
+import 'root_shell.dart';
 
-/// UI only — no auth wiring yet. "Sign Up" just pops back to Login.
 class SignUpScreen extends StatefulWidget {
   const SignUpScreen({super.key});
 
@@ -14,6 +17,7 @@ class _SignUpScreenState extends State<SignUpScreen> {
   final _emailController = TextEditingController();
   final _passwordController = TextEditingController();
   final _confirmPasswordController = TextEditingController();
+  bool _loading = false;
 
   @override
   void dispose() {
@@ -23,8 +27,56 @@ class _SignUpScreenState extends State<SignUpScreen> {
     super.dispose();
   }
 
-  void _signUp() {
-    Navigator.of(context).pop();
+  Future<void> _signUp() async {
+    final email = _emailController.text.trim();
+    final password = _passwordController.text;
+    if (email.isEmpty || !email.contains('@') || password.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Enter a valid email and password')),
+      );
+      return;
+    }
+    if (password != _confirmPasswordController.text) {
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('Passwords don’t match')));
+      return;
+    }
+    setState(() => _loading = true);
+    try {
+      final response = await AuthService.signUp(email, password);
+      if (!mounted) return;
+      if (response.session != null) {
+        // Email confirmation disabled — Supabase returned a session
+        // immediately, so log straight into the app.
+        await FriendsStore.refresh();
+        if (!mounted) return;
+        Navigator.of(context).pushReplacement(
+          MaterialPageRoute(builder: (_) => const RootShell()),
+        );
+      } else {
+        // Defensive path in case email confirmation gets re-enabled later.
+        setState(() => _loading = false);
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Check your email to confirm your account'),
+          ),
+        );
+        Navigator.of(context).pop();
+      }
+    } on AuthException catch (e) {
+      if (!mounted) return;
+      setState(() => _loading = false);
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text(e.message)));
+    } catch (e) {
+      if (!mounted) return;
+      setState(() => _loading = false);
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text("Couldn't sign up: $e")));
+    }
   }
 
   @override
@@ -121,7 +173,7 @@ class _SignUpScreenState extends State<SignUpScreen> {
               ),
               const SizedBox(height: 28),
               ElevatedButton(
-                onPressed: _signUp,
+                onPressed: _loading ? null : _signUp,
                 style: ElevatedButton.styleFrom(
                   backgroundColor: AppColors.buttonPurple,
                   foregroundColor: AppColors.textPrimary,
@@ -131,14 +183,23 @@ class _SignUpScreenState extends State<SignUpScreen> {
                   ),
                   elevation: 0,
                 ),
-                child: Text(
-                  'SIGN UP',
-                  style: AppTextStyles.bebas(
-                    fontSize: 22,
-                    color: AppColors.textPrimary,
-                    letterSpacing: 0.14,
-                  ),
-                ),
+                child: _loading
+                    ? const SizedBox(
+                        width: 22,
+                        height: 22,
+                        child: CircularProgressIndicator(
+                          strokeWidth: 2.4,
+                          color: AppColors.textPrimary,
+                        ),
+                      )
+                    : Text(
+                        'SIGN UP',
+                        style: AppTextStyles.bebas(
+                          fontSize: 22,
+                          color: AppColors.textPrimary,
+                          letterSpacing: 0.14,
+                        ),
+                      ),
               ),
               const SizedBox(height: 16),
               Center(

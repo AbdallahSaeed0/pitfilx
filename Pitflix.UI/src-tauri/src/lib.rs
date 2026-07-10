@@ -550,32 +550,132 @@ fn is_path_inside(child: &str, parent: &str) -> bool {
     child_key.starts_with(&prefix)
 }
 
-fn copy_path_recursively(src: &std::path::Path, dst: &std::path::Path) -> Result<(), String> {
-    if src.is_dir() {
-        std::fs::create_dir_all(dst).map_err(|e| e.to_string())?;
-        for entry in std::fs::read_dir(src).map_err(|e| e.to_string())? {
-            let entry = entry.map_err(|e| e.to_string())?;
-            copy_path_recursively(&entry.path(), &dst.join(entry.file_name()))?;
-        }
-        Ok(())
-    } else {
-        std::fs::copy(src, dst)
-            .map(|_| ())
-            .map_err(|e| e.to_string())
-    }
-}
-
 fn is_cross_device_move_error(err: &std::io::Error) -> bool {
     err.kind() == std::io::ErrorKind::CrossesDevices
         || err.raw_os_error() == Some(17) // Windows ERROR_NOT_SAME_DEVICE
         || err.raw_os_error() == Some(18) // EXDEV on Unix
 }
 
-fn move_path(src: &std::path::Path, target: &std::path::Path) -> Result<(), String> {
+/// Recursively sums file sizes under `paths` (used up front to know the denominator for a
+/// move/copy progress bar — this is a cheap metadata-only walk, no file contents are read).
+fn total_size_of_paths(paths: &[PathBuf]) -> u64 {
+    fn dir_size(p: &std::path::Path) -> u64 {
+        let mut total = 0u64;
+        if let Ok(entries) = std::fs::read_dir(p) {
+            for entry in entries.flatten() {
+                let path = entry.path();
+                match entry.metadata() {
+                    Ok(meta) if meta.is_dir() => total += dir_size(&path),
+                    Ok(meta) => total += meta.len(),
+                    Err(_) => {}
+                }
+            }
+        }
+        total
+    }
+    paths
+        .iter()
+        .map(|p| {
+            if p.is_dir() {
+                dir_size(p)
+            } else {
+                std::fs::metadata(p).map(|m| m.len()).unwrap_or(0)
+            }
+        })
+        .sum()
+}
+
+/// Shared, throttled progress emitter for a whole move/copy operation (spans multiple files).
+/// Emits `device-transfer-progress` at most ~5x/second so large transfers don't flood the webview
+/// with events, while still updating often enough to feel live.
+struct TransferProgress {
+    app: tauri::AppHandle,
+    copied: std::sync::atomic::AtomicU64,
+    total: u64,
+    last_emit: Mutex<std::time::Instant>,
+}
+
+impl TransferProgress {
+    fn new(app: tauri::AppHandle, total: u64) -> Self {
+        Self {
+            app,
+            copied: std::sync::atomic::AtomicU64::new(0),
+            total,
+            last_emit: Mutex::new(std::time::Instant::now()),
+        }
+    }
+
+    fn add(&self, n: u64) {
+        if n == 0 {
+            return;
+        }
+        let copied = self
+            .copied
+            .fetch_add(n, std::sync::atomic::Ordering::Relaxed)
+            + n;
+        let mut last = self.last_emit.lock().unwrap();
+        if last.elapsed() >= Duration::from_millis(200) || copied >= self.total {
+            *last = std::time::Instant::now();
+            let _ = self.app.emit(
+                "device-transfer-progress",
+                serde_json::json!({ "copiedBytes": copied, "totalBytes": self.total }),
+            );
+        }
+    }
+}
+
+fn copy_file_with_progress(
+    src: &std::path::Path,
+    dst: &std::path::Path,
+    progress: &TransferProgress,
+) -> Result<(), String> {
+    use std::io::{Read, Write};
+    let mut reader = std::fs::File::open(src).map_err(|e| e.to_string())?;
+    let mut writer = std::fs::File::create(dst).map_err(|e| e.to_string())?;
+    let mut buf = vec![0u8; 4 * 1024 * 1024];
+    loop {
+        let n = reader.read(&mut buf).map_err(|e| e.to_string())?;
+        if n == 0 {
+            break;
+        }
+        writer.write_all(&buf[..n]).map_err(|e| e.to_string())?;
+        progress.add(n as u64);
+    }
+    Ok(())
+}
+
+fn copy_path_recursively_with_progress(
+    src: &std::path::Path,
+    dst: &std::path::Path,
+    progress: &TransferProgress,
+) -> Result<(), String> {
+    if src.is_dir() {
+        std::fs::create_dir_all(dst).map_err(|e| e.to_string())?;
+        for entry in std::fs::read_dir(src).map_err(|e| e.to_string())? {
+            let entry = entry.map_err(|e| e.to_string())?;
+            copy_path_recursively_with_progress(&entry.path(), &dst.join(entry.file_name()), progress)?;
+        }
+        Ok(())
+    } else {
+        copy_file_with_progress(src, dst, progress)
+    }
+}
+
+fn move_path_with_progress(
+    src: &std::path::Path,
+    target: &std::path::Path,
+    progress: &TransferProgress,
+) -> Result<(), String> {
+    // Compute the item's size up front — a same-device rename below is instant (no bytes actually
+    // move through this process), so without this the progress bar wouldn't advance for it at all.
+    let item_size = total_size_of_paths(std::slice::from_ref(&src.to_path_buf()));
     match std::fs::rename(src, target) {
-        Ok(()) => Ok(()),
+        Ok(()) => {
+            progress.add(item_size);
+            Ok(())
+        }
         Err(err) if is_cross_device_move_error(&err) => {
-            copy_path_recursively(src, target)?;
+            copy_path_recursively_with_progress(src, target, progress)?;
             if src.is_dir() {
                 std::fs::remove_dir_all(src)
                     .map_err(|e| format!("Copied but failed to remove source folder: {e}"))?;
@@ -590,19 +690,34 @@ fn move_path(src: &std::path::Path, target: &std::path::Path) -> Result<(), Stri
 }
 
 #[tauri::command]
-async fn device_move_entries(paths: Vec<String>, destination_dir: String) -> Result<(), String> {
-    tauri::async_runtime::spawn_blocking(move || device_move_entries_sync(paths, destination_dir))
+async fn device_move_entries(
+    app: tauri::AppHandle,
+    paths: Vec<String>,
+    destination_dir: String,
+) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || device_move_entries_sync(app, paths, destination_dir))
         .await
         .map_err(|e| format!("Move interrupted: {e}"))?
 }
 
-fn device_move_entries_sync(paths: Vec<String>, destination_dir: String) -> Result<(), String> {
+fn device_move_entries_sync(
+    app: tauri::AppHandle,
+    paths: Vec<String>,
+    destination_dir: String,
+) -> Result<(), String> {
     let dest = PathBuf::from(destination_dir.trim());
     if !dest.is_dir() {
         return Err("Destination is not a directory".into());
     }
 
     let dest_key = normalize_path_key(&dest.to_string_lossy());
+    let total_bytes = total_size_of_paths(
+        &paths
+            .iter()
+            .map(|p| PathBuf::from(p.trim()))
+            .collect::<Vec<_>>(),
+    );
+    let progress = TransferProgress::new(app, total_bytes);
 
     for path_str in paths {
         let src = PathBuf::from(path_str.trim());
@@ -634,7 +749,7 @@ fn device_move_entries_sync(paths: Vec<String>, destination_dir: String) -> Resu
             ));
         }
 
-        move_path(&src, &target).map_err(|e| {
+        move_path_with_progress(&src, &target, &progress).map_err(|e| {
             format!(
                 "Failed to move \"{}\": {e}",
                 file_name.to_string_lossy()
@@ -686,19 +801,34 @@ fn device_delete_entries_sync(paths: Vec<String>) -> Result<(), String> {
 }
 
 #[tauri::command]
-async fn device_copy_entries(paths: Vec<String>, destination_dir: String) -> Result<(), String> {
-    tauri::async_runtime::spawn_blocking(move || device_copy_entries_sync(paths, destination_dir))
+async fn device_copy_entries(
+    app: tauri::AppHandle,
+    paths: Vec<String>,
+    destination_dir: String,
+) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || device_copy_entries_sync(app, paths, destination_dir))
         .await
         .map_err(|e| format!("Copy interrupted: {e}"))?
 }
 
-fn device_copy_entries_sync(paths: Vec<String>, destination_dir: String) -> Result<(), String> {
+fn device_copy_entries_sync(
+    app: tauri::AppHandle,
+    paths: Vec<String>,
+    destination_dir: String,
+) -> Result<(), String> {
     let dest = PathBuf::from(destination_dir.trim());
     if !dest.is_dir() {
         return Err("Destination is not a directory".into());
     }
 
     let dest_key = normalize_path_key(&dest.to_string_lossy());
+    let total_bytes = total_size_of_paths(
+        &paths
+            .iter()
+            .map(|p| PathBuf::from(p.trim()))
+            .collect::<Vec<_>>(),
+    );
+    let progress = TransferProgress::new(app, total_bytes);
 
     for path_str in paths {
         let src = PathBuf::from(path_str.trim());
@@ -730,7 +860,7 @@ fn device_copy_entries_sync(paths: Vec<String>, destination_dir: String) -> Resu
             ));
         }
 
-        copy_path_recursively(&src, &target).map_err(|e| {
+        copy_path_recursively_with_progress(&src, &target, &progress).map_err(|e| {
             format!(
                 "Failed to copy \"{}\": {e}",
                 file_name.to_string_lossy()

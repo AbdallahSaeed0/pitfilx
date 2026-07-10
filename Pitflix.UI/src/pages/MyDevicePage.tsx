@@ -1,4 +1,5 @@
 import { invoke, isTauri } from "@tauri-apps/api/core";
+import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { open } from "@tauri-apps/plugin-dialog";
 import { openPath } from "@tauri-apps/plugin-opener";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
@@ -92,6 +93,7 @@ export function MyDevicePage() {
   const [scanBusy, setScanBusy] = useState(false);
   const [fsBusy, setFsBusy] = useState(false);
   const [fsBusyLabel, setFsBusyLabel] = useState<string | null>(null);
+  const [transferProgress, setTransferProgress] = useState<{ copiedBytes: number; totalBytes: number } | null>(null);
   const [folderPicker, setFolderPicker] = useState<{
     mode: "move" | "copy";
     paths: string[];
@@ -105,6 +107,18 @@ export function MyDevicePage() {
     x: number;
     y: number;
   } | null>(null);
+  useEffect(() => {
+    if (!isTauri()) return;
+    let unlisten: UnlistenFn | undefined;
+    void listen<{ copiedBytes: number; totalBytes: number }>("device-transfer-progress", (event) => {
+      setTransferProgress(event.payload);
+    }).then((u) => {
+      unlisten = u;
+    });
+    return () => {
+      unlisten?.();
+    };
+  }, []);
   const [newFolderOpen, setNewFolderOpen] = useState(false);
   const [newFolderDraft, setNewFolderDraft] = useState("New folder");
   const [entryRename, setEntryRename] = useState<{ path: string; name: string } | null>(null);
@@ -509,6 +523,7 @@ export function MyDevicePage() {
         ? "Moving files…"
         : "Copying files…",
     );
+    setTransferProgress(null);
     setScanErr(null);
     try {
       await invoke(mode === "move" ? "device_move_entries" : "device_copy_entries", {
@@ -523,6 +538,7 @@ export function MyDevicePage() {
     } finally {
       setFsBusy(false);
       setFsBusyLabel(null);
+      setTransferProgress(null);
     }
   }, [exitSelectionMode, refreshCurrentDir]);
 
@@ -1124,9 +1140,27 @@ export function MyDevicePage() {
       {/* FS busy overlay */}
       {fsBusy ? (
         <div className="pointer-events-none fixed inset-0 z-[90] flex items-center justify-center bg-black/35 backdrop-blur-[1px]">
-          <div className="pointer-events-auto rounded-2xl border border-white/10 bg-zinc-900/95 px-6 py-4 text-center shadow-xl">
+          <div className="pointer-events-auto w-[min(320px,90vw)] rounded-2xl border border-white/10 bg-zinc-900/95 px-6 py-4 text-center shadow-xl">
             <p className="text-sm font-medium text-white">{fsBusyLabel ?? 'Working…'}</p>
-            <p className="mt-1 max-w-xs text-xs text-pitflix-muted">Large files copied across drives can take a minute. You can keep using the app.</p>
+            {transferProgress && transferProgress.totalBytes > 0 ? (
+              <>
+                <div className="mt-3 h-1.5 w-full overflow-hidden rounded-full bg-white/10">
+                  <div
+                    className="h-full rounded-full bg-pitflix-primary transition-[width] duration-200 ease-out"
+                    style={{
+                      width: `${Math.min(100, (100 * transferProgress.copiedBytes) / transferProgress.totalBytes)}%`,
+                    }}
+                  />
+                </div>
+                <p className="mt-1.5 text-[11px] text-pitflix-muted">
+                  {formatBytes(Math.min(transferProgress.copiedBytes, transferProgress.totalBytes))} of{" "}
+                  {formatBytes(transferProgress.totalBytes)} ·{" "}
+                  {Math.min(100, Math.round((100 * transferProgress.copiedBytes) / transferProgress.totalBytes))}%
+                </p>
+              </>
+            ) : (
+              <p className="mt-1 max-w-xs text-xs text-pitflix-muted">Large files copied across drives can take a minute. You can keep using the app.</p>
+            )}
           </div>
         </div>
       ) : null}

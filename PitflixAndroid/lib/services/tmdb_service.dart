@@ -24,6 +24,12 @@ class TmdbService {
     TitleKind.show: TtlCache<List<TitleItem>>(),
   };
 
+  static void clearCache() {
+    for (final cache in _trendingCache.values) {
+      cache.clear();
+    }
+  }
+
   static Future<List<TitleItem>> fetchTrending(
     TitleKind kind, {
     bool forceRefresh = false,

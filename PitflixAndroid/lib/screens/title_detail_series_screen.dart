@@ -1,13 +1,16 @@
 import 'package:flutter/material.dart';
-import '../config/app_config.dart';
 import '../data/mock_data.dart';
 import '../models/cast_member.dart';
 import '../models/episode.dart';
 import '../models/season.dart';
+import '../models/social_activity_item.dart';
 import '../models/title_item.dart';
+import '../services/app_settings.dart';
 import '../services/local_backend_service.dart';
 import '../services/session_stats_store.dart';
+import '../services/social_service.dart';
 import '../services/tmdb_service.dart';
+import '../services/user_library_service.dart';
 import '../theme/app_theme.dart';
 import '../utils/favorites.dart';
 import '../utils/title_actions_sheet.dart';
@@ -36,7 +39,7 @@ class _TitleDetailSeriesScreenState extends State<TitleDetailSeriesScreen> {
   /// at which point it takes over from `t.seasons` entirely.
   List<Season>? _seasonsOverride;
 
-  int? _favoritesListId;
+  String? _favoritesListId;
   bool? _isFavorite;
 
   @override
@@ -66,16 +69,20 @@ class _TitleDetailSeriesScreenState extends State<TitleDetailSeriesScreen> {
             _expandedSeason ??= full.seasons.first.number;
           }
         });
-        _mergeLibraryEpisodes(full.seasons);
+        _mergeWatchedEpisodes(full.seasons);
       });
     } else {
-      _mergeLibraryEpisodes(widget.title.seasons);
+      _mergeWatchedEpisodes(widget.title.seasons);
     }
-    if (AppConfig.useLocalBackend && widget.title.tmdbId != null) {
-      LocalBackendService.fetchRatings(widget.title.tmdbId!, 'tv').then((data) {
-        if (mounted && data != null) setState(() => _ratings = data);
-      });
+    if (widget.title.tmdbId != null) {
       _loadFavorite();
+      if (AppSettings.desktopSyncActive) {
+        LocalBackendService.fetchRatings(widget.title.tmdbId!, 'tv').then((
+          data,
+        ) {
+          if (mounted && data != null) setState(() => _ratings = data);
+        });
+      }
     }
   }
 
@@ -83,10 +90,10 @@ class _TitleDetailSeriesScreenState extends State<TitleDetailSeriesScreen> {
     try {
       final listId = await findFavoritesListId();
       if (listId == null || !mounted) return;
-      final isFav = await LocalBackendService.isInList(
+      final isFav = await UserLibraryService.isInList(
         listId,
         widget.title.tmdbId!,
-        'Series',
+        'series',
       );
       if (!mounted) return;
       setState(() {
@@ -107,15 +114,22 @@ class _TitleDetailSeriesScreenState extends State<TitleDetailSeriesScreen> {
     try {
       if (newValue) {
         final t = _enriched ?? widget.title;
-        await LocalBackendService.addToList(
+        await UserLibraryService.addToList(
           listId,
           tmdbId: tmdbId,
-          mediaType: 'Series',
+          mediaType: 'series',
           title: t.name,
-          posterRemoteUrl: TmdbService.posterUrl(t.posterPath),
+          posterPath: t.posterPath,
+        );
+        SocialService.logActivity(
+          action: SocialActivityAction.addedToWatchlist,
+          tmdbId: tmdbId,
+          mediaType: 'series',
+          title: t.name,
+          posterPath: t.posterPath,
         );
       } else {
-        await LocalBackendService.removeFromList(listId, tmdbId, 'Series');
+        await UserLibraryService.removeFromList(listId, tmdbId, 'series');
       }
     } catch (e) {
       if (!mounted) return;
@@ -126,48 +140,26 @@ class _TitleDetailSeriesScreenState extends State<TitleDetailSeriesScreen> {
     }
   }
 
-  /// Cross-references TMDB-sourced [seasons] against the local backend's
-  /// `GET /api/series/{libraryId}` episode list (matched by season +
-  /// episode number) so each episode gets a real `libraryId`/`watchStatus`,
-  /// letting the popup persist "mark watched" via the real API. Only
-  /// possible when this title is already matched in the local library.
-  Future<void> _mergeLibraryEpisodes(List<Season> seasons) async {
-    final libraryId = widget.title.libraryId;
-    if (!AppConfig.useLocalBackend || libraryId == null || seasons.isEmpty) {
-      return;
-    }
+  /// Cross-references TMDB-sourced [seasons] against this account's real
+  /// per-episode watch status (keyed by TMDB show id + season/episode
+  /// number — see UserLibraryService.fetchEpisodeWatchStatuses).
+  Future<void> _mergeWatchedEpisodes(List<Season> seasons) async {
+    final tmdbId = widget.title.tmdbId;
+    if (tmdbId == null || seasons.isEmpty) return;
     try {
-      final groups = await LocalBackendService.fetchLibrarySeriesEpisodeGroups(
-        libraryId,
+      final watchStatuses = await UserLibraryService.fetchEpisodeWatchStatuses(
+        tmdbId,
       );
-      final byKey = <String, Map<String, dynamic>>{};
-      for (final group in groups) {
-        final seasonNum = (group['season'] as num?)?.toInt() ?? 0;
-        final eps = (group['episodes'] as List? ?? [])
-            .cast<Map<String, dynamic>>();
-        for (final ep in eps) {
-          final epNum = (ep['episodeNumber'] as num?)?.toInt() ?? 0;
-          byKey['$seasonNum-$epNum'] = ep;
-        }
-      }
-      if (byKey.isEmpty || !mounted) return;
+      if (watchStatuses.isEmpty || !mounted) return;
       setState(() {
         _seasonsOverride = seasons.map((season) {
           var updated = season;
           for (final ep in season.episodes) {
-            final match = byKey['${season.number}-${ep.number}'];
-            if (match == null) continue;
-            final localStill = match['stillLocalPath'] as String?;
+            final rewatchCount = watchStatuses['${season.number}-${ep.number}'];
+            if (rewatchCount == null) continue;
             updated = updated.replaceEpisode(
               ep.number,
-              (e) => e.copyWith(
-                libraryId: (match['id'] as num?)?.toInt(),
-                watchStatus: match['watchStatus'] as String?,
-                watched: match['watchStatus'] == 'Completed',
-                stillPath: (localStill != null && localStill.isNotEmpty)
-                    ? localStill
-                    : e.stillPath,
-              ),
+              (e) => e.copyWith(watched: true, rewatchCount: rewatchCount),
             );
           }
           return updated;
@@ -179,7 +171,62 @@ class _TitleDetailSeriesScreenState extends State<TitleDetailSeriesScreen> {
     }
   }
 
+  /// Logs a real activity_events row for the whole series (not the
+  /// individual episode) — matches how the desktop/other-friends' feeds
+  /// think about "watched"/"rated" a show. Also upserts the account's
+  /// watch_records row (Stats source data).
+  void _logEpisodeActivity(Episode updated) {
+    final tmdbId = widget.title.tmdbId;
+    if (tmdbId == null) return;
+    final t = _enriched ?? widget.title;
+    SocialService.logActivity(
+      action: updated.rating != null
+          ? SocialActivityAction.rated
+          : SocialActivityAction.watched,
+      tmdbId: tmdbId,
+      mediaType: 'series',
+      title: t.name,
+      posterPath: t.posterPath,
+      rating: updated.rating,
+    );
+    UserLibraryService.logWatched(
+      tmdbId: tmdbId,
+      mediaType: 'series',
+      title: t.name,
+      posterPath: t.posterPath,
+      genres: t.genres,
+      releaseYear: t.year > 0 ? t.year : null,
+      rating: updated.rating,
+      estimatedMinutes: updated.durationMinutes,
+      status: 'watching',
+    );
+  }
+
   void _onEpisodeUpdated(Season season, Episode updated) {
+    final original = season.episodes.firstWhere(
+      (e) => e.number == updated.number,
+    );
+    final tmdbId = widget.title.tmdbId;
+    if (updated.watched != original.watched) {
+      if (tmdbId != null) {
+        UserLibraryService.setEpisodeWatched(
+          tmdbId,
+          season.number,
+          updated.number,
+          watched: updated.watched,
+        );
+      }
+    }
+    if (updated.rewatchCount != original.rewatchCount) {
+      if (tmdbId != null) {
+        UserLibraryService.setEpisodeRewatchCount(
+          tmdbId,
+          season.number,
+          updated.number,
+          updated.rewatchCount,
+        );
+      }
+    }
     setState(() {
       final base = _seasonsOverride ?? (_enriched ?? widget.title).seasons;
       _seasonsOverride = base
@@ -192,40 +239,40 @@ class _TitleDetailSeriesScreenState extends State<TitleDetailSeriesScreen> {
     });
   }
 
-  /// Marks a single episode watched — persists via the real API when it's
-  /// matched in the local library ([Episode.libraryId] set), otherwise it's
-  /// session-only same as the episode popup.
+  /// Marks a single episode watched — persists to this account.
   Future<void> _markEpisodeWatched(Season season, Episode episode) async {
-    if (episode.libraryId != null) {
+    final tmdbId = widget.title.tmdbId;
+    if (tmdbId != null) {
       try {
-        await LocalBackendService.setEpisodeWatchStatus(
-          episode.libraryId!,
-          'Completed',
+        await UserLibraryService.setEpisodeWatched(
+          tmdbId,
+          season.number,
+          episode.number,
+          watched: true,
         );
       } catch (_) {
         // Best-effort — still reflect the change locally below.
       }
     }
     if (!mounted) return;
-    _onEpisodeUpdated(
-      season,
-      episode.copyWith(watched: true, watchStatus: 'Completed'),
-    );
+    _onEpisodeUpdated(season, episode.copyWith(watched: true));
   }
 
-  /// Marks every episode in [season] watched in one go — persists each
-  /// library-matched episode via the real API in parallel, then applies the
-  /// result (including any TMDB-only episodes with no libraryId) locally.
+  /// Marks every episode in [season] watched in one go — persists each in
+  /// parallel, then applies the result locally.
   Future<void> _markSeasonWatched(Season season) async {
-    final libraryIds = season.episodes
-        .where((e) => e.libraryId != null && !e.watched)
-        .map((e) => e.libraryId!)
-        .toList();
-    if (libraryIds.isNotEmpty) {
+    final tmdbId = widget.title.tmdbId;
+    final toMark = season.episodes.where((e) => !e.watched).toList();
+    if (tmdbId != null && toMark.isNotEmpty) {
       try {
         await Future.wait(
-          libraryIds.map(
-            (id) => LocalBackendService.setEpisodeWatchStatus(id, 'Completed'),
+          toMark.map(
+            (e) => UserLibraryService.setEpisodeWatched(
+              tmdbId,
+              season.number,
+              e.number,
+              watched: true,
+            ),
           ),
         );
       } catch (_) {
@@ -243,12 +290,7 @@ class _TitleDetailSeriesScreenState extends State<TitleDetailSeriesScreen> {
                     number: s.number,
                     name: s.name,
                     episodes: s.episodes
-                        .map(
-                          (e) => e.copyWith(
-                            watched: true,
-                            watchStatus: 'Completed',
-                          ),
-                        )
+                        .map((e) => e.copyWith(watched: true))
                         .toList(),
                   ),
           )
@@ -271,14 +313,6 @@ class _TitleDetailSeriesScreenState extends State<TitleDetailSeriesScreen> {
   Widget build(BuildContext context) {
     final t = _enriched ?? widget.title;
     final seasons = _seasonsOverride ?? t.seasons;
-    final totalEpisodes = seasons.fold<int>(
-      0,
-      (sum, s) => sum + s.episodes.length,
-    );
-    final totalWatched = seasons.fold<int>(0, (sum, s) => sum + s.watchedCount);
-    final overallProgress = totalEpisodes > 0
-        ? totalWatched / totalEpisodes
-        : null;
     return Scaffold(
       backgroundColor: AppColors.bgBase,
       body: SafeArea(
@@ -294,7 +328,6 @@ class _TitleDetailSeriesScreenState extends State<TitleDetailSeriesScreen> {
               imageUrl: TmdbService.backdropUrl(t.backdropPath),
               isFavorite: _isFavorite,
               onFavoriteToggled: _toggleFavorite,
-              progress: overallProgress,
               onMorePressed: () => showTitleActionsSheet(
                 context,
                 t,
@@ -358,6 +391,7 @@ class _TitleDetailSeriesScreenState extends State<TitleDetailSeriesScreen> {
               if (updated != null) {
                 SessionStatsStore.logRating(updated.rating, null);
                 SessionStatsStore.logReaction(updated.reaction);
+                _logEpisodeActivity(updated);
                 _onEpisodeUpdated(next.season, updated);
               }
             },
@@ -386,6 +420,7 @@ class _TitleDetailSeriesScreenState extends State<TitleDetailSeriesScreen> {
                 if (updated != null) {
                   SessionStatsStore.logRating(updated.rating, null);
                   SessionStatsStore.logReaction(updated.reaction);
+                  _logEpisodeActivity(updated);
                   _onEpisodeUpdated(season, updated);
                 }
               },
