@@ -7,6 +7,37 @@ import '../theme/app_theme.dart';
 import '../utils/reactions.dart';
 import 'poster_gradients.dart';
 import 'star_rating.dart';
+import 'pitflix_network_image.dart';
+
+const _monthNames = [
+  'Jan',
+  'Feb',
+  'Mar',
+  'Apr',
+  'May',
+  'Jun',
+  'Jul',
+  'Aug',
+  'Sep',
+  'Oct',
+  'Nov',
+  'Dec',
+];
+
+/// "Aired Jul 23, 2019 (6 years ago)" from TMDB's "yyyy-MM-dd" — null if
+/// [raw] is null/unparsable (unaired or unknown episode).
+String? _airDateLabel(String? raw) {
+  final date = raw == null ? null : DateTime.tryParse(raw);
+  if (date == null) return null;
+  final formatted = '${_monthNames[date.month - 1]} ${date.day}, ${date.year}';
+  final years = (DateTime.now().difference(date).inDays / 365).floor();
+  final ago = years >= 1
+      ? ' ($years year${years == 1 ? '' : 's'} ago)'
+      : date.isAfter(DateTime.now())
+      ? ' (upcoming)'
+      : '';
+  return 'Aired $formatted$ago';
+}
 
 /// Bottom sheet opened by tapping an episode row — lets the user rate it,
 /// toggle watched, mark it rewatched (more than once), react, and pick a
@@ -93,6 +124,26 @@ class _EpisodeActionsSheetState extends State<_EpisodeActionsSheet> {
                 widget.episode.title,
                 style: AppTextStyles.bebas(fontSize: 20, letterSpacing: 0.08),
               ),
+              if (_airDateLabel(widget.episode.airDate) != null) ...[
+                const SizedBox(height: 4),
+                Row(
+                  children: [
+                    Icon(
+                      Icons.calendar_today,
+                      size: 12,
+                      color: AppColors.textMuted,
+                    ),
+                    const SizedBox(width: 5),
+                    Text(
+                      _airDateLabel(widget.episode.airDate)!,
+                      style: AppTextStyles.dmSans(
+                        fontSize: 12,
+                        color: AppColors.textMuted,
+                      ),
+                    ),
+                  ],
+                ),
+              ],
               const SizedBox(height: 22),
               Text('YOUR RATING', style: AppTextStyles.sectionLabel()),
               const SizedBox(height: 10),
@@ -194,7 +245,7 @@ class _EpisodeActionsSheetState extends State<_EpisodeActionsSheet> {
                                 ),
                                 alignment: Alignment.center,
                                 child: imageUrl != null
-                                    ? Image.network(
+                                    ? PitflixNetworkImage(
                                         imageUrl,
                                         fit: BoxFit.cover,
                                         width: 96,

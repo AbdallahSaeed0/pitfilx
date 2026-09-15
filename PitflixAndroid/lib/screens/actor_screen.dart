@@ -2,17 +2,24 @@ import 'package:flutter/material.dart';
 import '../data/mock_data.dart';
 import '../models/actor.dart';
 import '../models/cast_member.dart';
+import '../models/person_credit.dart';
+import '../models/person_profile.dart';
 import '../models/title_item.dart';
-import '../services/local_backend_service.dart';
 import '../services/tmdb_service.dart';
 import '../theme/app_theme.dart';
+import '../utils/title_actions_sheet.dart';
+import '../widgets/person_credit_grid.dart';
 import '../widgets/widgets.dart';
 import 'title_detail_movie_screen.dart';
 import 'title_detail_series_screen.dart';
+import '../widgets/pitflix_network_image.dart';
 
-/// Actor detail — either the app's mock [Actor] data, or a real cast member
-/// backed by the local Pitflix.API's `/api/people/{tmdbId}` (same data the
-/// desktop app's actor page shows: bio, birthday, filmography).
+/// Person detail — either the app's mock [Actor] data, or a real TMDB person backed by
+/// `/person/{id}` (bio, birthday, full filmography). No local backend involved.
+///
+/// Serves cast *and* crew: TMDB makes no distinction between an actor and a director at the person
+/// level, so tapping a director in a title's crew row lands here too. The only difference is which
+/// filmography leads — see [PersonProfile.leadsWithCrew].
 class ActorScreen extends StatefulWidget {
   final Actor? actor;
   final CastMember? castMember;
@@ -26,7 +33,7 @@ class ActorScreen extends StatefulWidget {
 }
 
 class _ActorScreenState extends State<ActorScreen> {
-  Map<String, dynamic>? _person;
+  PersonProfile? _profile;
   bool _loading = false;
   bool _failed = false;
 
@@ -38,10 +45,10 @@ class _ActorScreenState extends State<ActorScreen> {
     final personId = widget.castMember?.tmdbPersonId;
     if (personId != null) {
       _loading = true;
-      LocalBackendService.fetchPerson(personId).then((data) {
+      TmdbService.fetchPersonProfile(personId).then((data) {
         if (!mounted) return;
         setState(() {
-          _person = data;
+          _profile = data;
           _loading = false;
           _failed = data == null;
         });
@@ -58,6 +65,11 @@ class _ActorScreenState extends State<ActorScreen> {
       ),
     );
   }
+
+  void _openCredit(PersonCredit credit) => _openTitle(credit.toTitleItem());
+
+  void _showActions(TitleItem title) =>
+      showTitleActionsSheet(context, title, (_) {});
 
   @override
   Widget build(BuildContext context) {
@@ -86,55 +98,46 @@ class _ActorScreenState extends State<ActorScreen> {
         const SizedBox(height: AppSpacing.sectionGap),
         Text('FILMOGRAPHY', style: AppTextStyles.sectionLabel()),
         const SizedBox(height: 12),
-        _filmographyGrid(
-          filmography
-              .map(
-                (t) => (
-                  name: t.name,
-                  gradientSeed: t.gradientSeed,
-                  imageUrl: null,
-                  onTap: () => _openTitle(t),
-                ),
-              )
-              .toList(),
+        GridView.builder(
+          shrinkWrap: true,
+          physics: const NeverScrollableScrollPhysics(),
+          gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+            crossAxisCount: 3,
+            crossAxisSpacing: 10,
+            mainAxisSpacing: 10,
+            childAspectRatio: 2 / 3,
+          ),
+          itemCount: filmography.length,
+          itemBuilder: (context, i) {
+            final t = filmography[i];
+            return PosterCard(
+              title: t.name,
+              gradientSeed: t.gradientSeed,
+              onTap: () => _openTitle(t),
+              onLongPress: () => _showActions(t),
+            );
+          },
         ),
       ],
     );
   }
 
-  // ── real (backend-backed) path ──────────────────────────────────────────
+  // ── real (TMDB-backed) path ─────────────────────────────────────────────
 
   Widget _buildReal(BuildContext context) {
     final member = widget.castMember!;
-    final person = _person?['person'] as Map<String, dynamic>?;
-    final name = person?['name'] as String? ?? member.name;
-    final bio = person?['biography'] as String?;
-    final birthday = person?['birthday'] as String?;
-    final placeOfBirth = person?['placeOfBirth'] as String?;
-    final subtitleParts = [
-      if (birthday != null && birthday.isNotEmpty) birthday,
-      if (placeOfBirth != null && placeOfBirth.isNotEmpty) placeOfBirth,
-    ];
-    // Backend may return a full HTTPS URL or a raw TMDB path — only use
-    // the backend value when it's a real network URL, otherwise fall through
-    // to the TMDB path from credits.
-    final fromBackend = person?['profileImageUrl'] as String?;
-    final rawTmdbPath = person?['profilePath'] as String?;
-    final imageUrl =
-        (fromBackend != null && fromBackend.startsWith('http'))
-            ? TmdbService.profileUrl(fromBackend)
-            : (rawTmdbPath != null
-                  ? TmdbService.profileUrl(rawTmdbPath)
-                  : null) ??
-              TmdbService.profileUrl(member.profilePath);
-    final knownFor = (person?['knownFor'] as List? ?? [])
-        .cast<Map<String, dynamic>>();
+    final profile = _profile;
+    final name = profile?.name.isNotEmpty == true ? profile!.name : member.name;
 
     return _scaffold(
       name: name,
-      subtitle: subtitleParts.isEmpty ? member.character : subtitleParts.join(' · '),
+      // Falls back to the role they were tapped from until the profile lands, so the header is never
+      // just a bare name.
+      subtitle: profile?.subtitle ?? member.roleLabel,
       initials: member.initials,
-      imageUrl: imageUrl,
+      imageUrl:
+          TmdbService.profileUrl(profile?.profilePath) ??
+          TmdbService.profileUrl(member.profilePath),
       body: [
         if (_loading)
           const Center(
@@ -146,88 +149,56 @@ class _ActorScreenState extends State<ActorScreen> {
         else if (_failed)
           Text(
             "Couldn't load full bio — showing what's available.",
-            style: AppTextStyles.dmSans(
-              fontSize: 12,
-              color: AppColors.textMuted,
-            ),
+            style: AppTextStyles.dmSans(fontSize: 12, color: AppColors.textMuted),
           )
-        else if (bio != null && bio.isNotEmpty)
-          Text(
-            bio,
-            style: AppTextStyles.dmSans(
-              fontSize: 13,
-              height: 1.65,
-              color: Colors.white.withValues(alpha: 0.65),
+        else if (profile != null) ...[
+          if (profile.biography?.isNotEmpty == true)
+            Text(
+              profile.biography!,
+              style: AppTextStyles.dmSans(
+                fontSize: 13,
+                height: 1.65,
+                color: Colors.white.withValues(alpha: 0.65),
+              ),
             ),
-          ),
-        if (knownFor.isNotEmpty) ...[
-          const SizedBox(height: AppSpacing.sectionGap),
-          Text('FILMOGRAPHY', style: AppTextStyles.sectionLabel()),
-          const SizedBox(height: 12),
-          _filmographyGrid(
-            knownFor.map((k) {
-              final mediaTmdbId = (k['mediaTmdbId'] as num?)?.toInt() ?? 0;
-              final kind = TmdbService.kindFromMediaType(
-                k['mediaType'] as String? ?? 'movie',
-              );
-              final title = k['title'] as String? ?? 'Untitled';
-              final posterPath = k['posterPath'] as String?;
-              return (
-                name: title,
-                gradientSeed: mediaTmdbId % 6,
-                imageUrl: TmdbService.posterUrl(posterPath),
-                onTap: () => _openTitle(
-                  TitleItem(
-                    id: 'tmdb-$mediaTmdbId-${kind.name}',
-                    name: title,
-                    kind: kind,
-                    year: 0,
-                    network: kind == TitleKind.movie ? 'Theaters' : 'TV',
-                    rating: 0,
-                    genres: const [],
-                    overview: '',
-                    gradientSeed: mediaTmdbId % 6,
-                    posterPath: posterPath,
-                    tmdbId: mediaTmdbId,
-                    isSummaryOnly: true,
-                  ),
-                ),
-              );
-            }).toList(),
-          ),
+          // Someone known for directing leads with their crew work; an actor leads with acting.
+          ...profile.leadsWithCrew
+              ? [
+                  ..._creditSection('CREW', profile.crewCredits),
+                  ..._creditSection('FILMOGRAPHY', profile.actingCredits),
+                ]
+              : [
+                  ..._creditSection('FILMOGRAPHY', profile.actingCredits),
+                  ..._creditSection('CREW', profile.crewCredits),
+                ],
         ],
       ],
     );
   }
 
-  // ── shared filmography grid ──────────────────────────────────────────────
-
-  Widget _filmographyGrid(
-    List<
-      ({String name, int gradientSeed, String? imageUrl, VoidCallback onTap})
-    >
-    items,
-  ) {
-    return GridView.builder(
-      shrinkWrap: true,
-      physics: const NeverScrollableScrollPhysics(),
-      gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-        crossAxisCount: 3,
-        crossAxisSpacing: 10,
-        mainAxisSpacing: 10,
-        childAspectRatio: 2 / 3,
+  List<Widget> _creditSection(String label, List<PersonCredit> credits) {
+    if (credits.isEmpty) return const [];
+    return [
+      const SizedBox(height: AppSpacing.sectionGap),
+      Row(
+        crossAxisAlignment: CrossAxisAlignment.baseline,
+        textBaseline: TextBaseline.alphabetic,
+        children: [
+          Text(label, style: AppTextStyles.sectionLabel()),
+          const SizedBox(width: 8),
+          Text(
+            '${credits.length}',
+            style: AppTextStyles.dmSans(fontSize: 11, color: AppColors.textMuted),
+          ),
+        ],
       ),
-      itemCount: items.length,
-      itemBuilder: (context, i) {
-        final item = items[i];
-        return PosterCard(
-          title: item.name,
-          gradientSeed: item.gradientSeed,
-          imageUrl: item.imageUrl,
-          onTap: item.onTap,
-        );
-      },
-    );
+      const SizedBox(height: 12),
+      PersonCreditGrid(
+        credits: credits,
+        onTap: _openCredit,
+        onLongPress: (c) => _showActions(c.toTitleItem()),
+      ),
+    ];
   }
 
   // ── shared chrome ────────────────────────────────────────────────────────
@@ -271,7 +242,7 @@ class _ActorScreenState extends State<ActorScreen> {
                     ),
                     alignment: Alignment.center,
                     child: imageUrl != null
-                        ? Image.network(
+                        ? PitflixNetworkImage(
                             imageUrl,
                             fit: BoxFit.cover,
                             width: 56,

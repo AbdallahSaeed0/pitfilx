@@ -74,6 +74,17 @@ public static class MiscEndpoints
                 await repo.UpdateBackdropAsync(id, mt, local, ct).ConfigureAwait(false);
             }
 
+            if (!string.IsNullOrWhiteSpace(body.LogoUrl))
+            {
+                var local = await ImageServeHelpers
+                    .DownloadRemoteImageAsync(httpFactory.CreateClient(), body.LogoUrl.Trim(),
+                        $"logo_pick_{body.TmdbId}{ImageServeHelpers.ExtensionForUrl(body.LogoUrl)}", ct)
+                    .ConfigureAwait(false);
+                if (local is null)
+                    return Results.BadRequest(new { success = false, error = "Failed to download logo." });
+                await repo.SaveSettingAsync($"ClearLogoOverride:{mt}:{id}", local, ct).ConfigureAwait(false);
+            }
+
             return Results.Json(new { success = true });
         });
 
@@ -102,11 +113,27 @@ public static class MiscEndpoints
             }
             catch
             {
+                ImageUrls.InvalidateFileExistenceCache();
                 return Results.Json(new { success = false, deleted, message = "Could not clear cache." },
                     jsonSerializerOptions);
             }
 
+            // ToImageUrl caches "this file is on disk" results permanently; without this it would keep
+            // handing out URLs for the files we just deleted.
+            ImageUrls.InvalidateFileExistenceCache();
             return Results.Json(new { success = true, deleted, message = $"Deleted {deleted} cached image files." },
+                jsonSerializerOptions);
+        });
+
+        app.MapPost("/api/maintenance/clear-ratings-cache", async (MdbListService mdbList, IMemoryCache cache, CancellationToken ct) =>
+        {
+            var deleted = await mdbList.ClearAllCachesAsync(ct).ConfigureAwait(false);
+            // Ratings also sit in the in-process 12h memory cache in front of the DB tables — without
+            // this, already-warm entries would keep serving their old (possibly wrong) values until
+            // they naturally expire, defeating the point of clearing the cache.
+            if (cache is MemoryCache mc) mc.Compact(1.0);
+            return Results.Json(
+                new { success = true, deleted, message = $"Cleared {deleted} cached rating rows." },
                 jsonSerializerOptions);
         });
 
@@ -170,6 +197,25 @@ public static class MiscEndpoints
                 imageUrl      = p.ImageUrl,
                 role          = p.Role,
             }), jsonSerializerOptions);
+        });
+
+        app.MapGet("/api/fanart/{mediaType}/{tmdbId:int}", async (string mediaType, int tmdbId,
+            FanartClient fanart, CancellationToken ct) =>
+        {
+            var result = await fanart.GetArtworkAsync(tmdbId, mediaType, ct).ConfigureAwait(false);
+            if (result is null)
+                return Results.NotFound(new { error = "Fanart artwork unavailable (check the API key, or TVDB mapping for series)." });
+
+            static object[] Map(IReadOnlyList<FanartImage> items) =>
+                items.Select(i => new { url = i.Url, type = i.Type, language = i.Language }).Cast<object>().ToArray();
+
+            return Results.Json(new
+            {
+                clearLogos = Map(result.ClearLogos),
+                posters = Map(result.Posters),
+                backgrounds = Map(result.Backgrounds),
+                characterArt = Map(result.CharacterArt),
+            }, jsonSerializerOptions);
         });
 
         app.MapPost("/api/recommendations/from", async (RecommendationFromBody? body, HttpContext httpContext, IMemoryCache memoryCache, ITmdbClientFactory tmdbClientFactory, ILogger<Program> logger, CancellationToken ct) =>

@@ -59,9 +59,22 @@ public static class SkipEndpoints
                 segment = await detector.DetectAndStoreForSeasonAsync(episode.ShowId, episode.Season, ct)
                     .ConfigureAwait(false);
             }
+            else if (segment.IntroSource is null && segment.OutroSource is null &&
+                     DateTime.UtcNow - segment.ComputedAt > TimeSpan.FromHours(6))
+            {
+                // A season that came up completely empty on its first pass is worth retrying — new
+                // community-timestamp submissions land on TheIntroDB/IntroDB/SkipDB over time, and
+                // any season scanned before those three tiers existed in this codebase never got a
+                // chance to try them at all (confirmed live: Beef S01's row predates the
+                // multi-source cascade entirely, and both IntroDB and SkipDB do have its outro).
+                // A season where SOME source already found something just gets the lighter
+                // fingerprint-supplement path below, unchanged.
+                segment = await detector.DetectAndStoreForSeasonAsync(episode.ShowId, episode.Season, ct)
+                    .ConfigureAwait(false);
+            }
 
-            var hasConfirmedIntro = segment.IntroSource is "chapter" or "anilist";
-            var hasConfirmedOutro = segment.OutroSource is "chapter" or "anilist";
+            var hasConfirmedIntro = segment.IntroSource is "chapter" or "anilist" or "theintrodb" or "introdb" or "skipdb";
+            var hasConfirmedOutro = segment.OutroSource is "chapter" or "anilist" or "theintrodb" or "introdb" or "skipdb";
             if (!hasConfirmedIntro || !hasConfirmedOutro)
             {
                 var staleEnough = DateTime.UtcNow - segment.ComputedAt > TimeSpan.FromHours(6);
@@ -86,7 +99,11 @@ public static class SkipEndpoints
 
             double? outroStart = segment.OutroStartSeconds;
             double? outroEnd = segment.OutroEndSeconds;
-            if (segment.OutroSource is "fingerprint" or "blackframe" or "silence" &&
+            // "chapter" segments are cached at the season level from a single sampled episode —
+            // its absolute timestamps only apply to THAT episode. Re-derive from the
+            // distance-from-end instead so every episode gets a window sized to its own duration.
+            if (segment.OutroSource is "fingerprint" or "blackframe" or "silence" or "chapter"
+                or "theintrodb" or "introdb" or "skipdb" &&
                 segment.OutroSecondsBeforeEndStart != null && segment.OutroSecondsBeforeEndEnd != null)
             {
                 var episodeDuration = await repo.TryGetKnownDurationSecondsAsync(episode.FilePath, ct).ConfigureAwait(false)

@@ -7,6 +7,9 @@ namespace Pitflix.API.Endpoints;
 public static class TpbEndpoints
 {
     private static readonly TimeSpan CacheTtl = TimeSpan.FromMinutes(30);
+    // See WsmEndpoints.EmptyCacheTtl — same rationale: don't freeze a transient scrape failure as
+    // "no results" for a full 30 minutes.
+    private static readonly TimeSpan EmptyCacheTtl = TimeSpan.FromMinutes(3);
 
     public static void MapTpbEndpoints(this WebApplication app, JsonSerializerOptions jsonSerializerOptions)
     {
@@ -22,7 +25,7 @@ public static class TpbEndpoints
                 ? Array.Empty<TpbTorrent>()
                 : await tpb.ScrapeMovieAsync(t, year.Value, imdbId, ct).ConfigureAwait(false);
 
-            cache.Set(cacheKey, items, CacheTtl);
+            cache.Set(cacheKey, items, items.Count > 0 ? CacheTtl : EmptyCacheTtl);
             return Results.Json(new { items = items.Select(TpbTorrentJson).ToList() }, jsonSerializerOptions);
         });
 
@@ -38,7 +41,7 @@ public static class TpbEndpoints
                 ? Array.Empty<TpbTorrent>()
                 : await tpb.ScrapeEpisodeAsync(t, season, episode, ct).ConfigureAwait(false);
 
-            cache.Set(cacheKey, items, CacheTtl);
+            cache.Set(cacheKey, items, items.Count > 0 ? CacheTtl : EmptyCacheTtl);
             return Results.Json(new { items = items.Select(TpbTorrentJson).ToList() }, jsonSerializerOptions);
         });
 
@@ -54,7 +57,7 @@ public static class TpbEndpoints
                 ? Array.Empty<TpbTorrent>()
                 : await tpb.ScrapeSeasonAsync(t, season, ct).ConfigureAwait(false);
 
-            cache.Set(cacheKey, items, CacheTtl);
+            cache.Set(cacheKey, items, items.Count > 0 ? CacheTtl : EmptyCacheTtl);
             return Results.Json(new { items = items.Select(TpbTorrentJson).ToList() }, jsonSerializerOptions);
         });
     }

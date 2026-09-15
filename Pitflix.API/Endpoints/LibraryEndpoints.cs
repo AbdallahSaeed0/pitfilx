@@ -357,11 +357,13 @@ app.MapPost("/api/library/refresh-artwork", async (LibraryContext db, ITmdbClien
             {
                 if (!string.IsNullOrEmpty(posterPath))
                     m.PosterLocalPath = await tmdb
-                        .DownloadImageAsync(posterPath, $"poster_Movie_{m.TmdbId}.jpg", token)
+                        .DownloadImageAsync(posterPath, $"poster_Movie_{m.TmdbId}.jpg", token,
+                            forceRedownload: true)
                         .ConfigureAwait(false);
                 if (!string.IsNullOrEmpty(backdropPath))
                     m.BackdropLocalPath = await tmdb
-                        .DownloadImageAsync(backdropPath, $"backdrop_{m.TmdbId}.jpg", token, null, "w1280")
+                        .DownloadImageAsync(backdropPath, $"backdrop_{m.TmdbId}.jpg", token, null, "w1280",
+                            forceRedownload: true)
                         .ConfigureAwait(false);
             }
             catch
@@ -385,11 +387,13 @@ app.MapPost("/api/library/refresh-artwork", async (LibraryContext db, ITmdbClien
             {
                 if (!string.IsNullOrEmpty(posterPath))
                     s.PosterLocalPath = await tmdb
-                        .DownloadImageAsync(posterPath, $"poster_Series_{s.TmdbId}.jpg", token)
+                        .DownloadImageAsync(posterPath, $"poster_Series_{s.TmdbId}.jpg", token,
+                            forceRedownload: true)
                         .ConfigureAwait(false);
                 if (!string.IsNullOrEmpty(backdropPath))
                     s.BackdropLocalPath = await tmdb
-                        .DownloadImageAsync(backdropPath, $"backdrop_{s.TmdbId}.jpg", token, null, "w1280")
+                        .DownloadImageAsync(backdropPath, $"backdrop_{s.TmdbId}.jpg", token, null, "w1280",
+                            forceRedownload: true)
                         .ConfigureAwait(false);
             }
             catch
@@ -812,6 +816,7 @@ app.MapPost("/api/library/bulk-delete-from-device", async (BulkLibraryIdsBody bo
 // Decade browsing: returns movies or shows (or both) filtered by decade
 app.MapGet("/api/library/browse/decade", async (
     LibraryContext db,
+    LibraryRepository repo,
     int decade,
     ITmdbClientFactory tmdbClientFactory,
     string mediaType = "all",
@@ -844,7 +849,7 @@ app.MapGet("/api/library/browse/decade", async (
         rawCards.AddRange(shows.Select(MediaCardMappers.ToCardFromShow));
     }
 
-    await MediaCardPosterEnricher.EnrichMissingRemotePostersAsync(rawCards, tmdb, ct).ConfigureAwait(false);
+    await MediaCardPosterEnricher.EnrichMissingRemotePostersAsync(rawCards, tmdb, ct, repo).ConfigureAwait(false);
     var mappedCards = rawCards.OrderByDescending(c => c.VoteAverage).Select(ImageUrls.MapMediaCard).ToList();
     return Results.Json(new { decade = decadeStart, items = mappedCards, total = mappedCards.Count }, jsonSerializerOptions);
 });

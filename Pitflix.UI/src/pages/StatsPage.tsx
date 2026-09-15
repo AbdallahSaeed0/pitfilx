@@ -4,7 +4,7 @@ import { useNavigate } from "react-router-dom";
 import { getWatchStats, type WatchStats } from "../api/watchStats";
 import { HorizontalScrollRow } from "../components/ui/HorizontalScrollRow";
 import { MediaImage } from "../components/ui/MediaImage";
-import { Spinner } from "../components/ui/Spinner";
+import { Skeleton } from "../components/ui/Skeleton";
 import type { MediaCard } from "../types/media";
 import { toPosterSrc } from "../utils/posterSrc";
 import { cn } from "../utils/cn";
@@ -18,8 +18,22 @@ export function StatsPage() {
 
   if (isLoading || !data)
     return (
-      <div className="flex justify-center py-24">
-        <Spinner />
+      <div className="w-full space-y-6 pb-12" aria-busy="true" aria-label="Loading">
+        <Skeleton className="h-7 w-40 rounded-lg" />
+        <div className="grid grid-cols-2 gap-4 md:grid-cols-4">
+          {Array.from({ length: 4 }).map((_, i) => (
+            <Skeleton key={i} className="h-24 rounded-xl" />
+          ))}
+        </div>
+        <Skeleton className="h-56 rounded-xl" />
+        <div className="space-y-3">
+          <Skeleton className="h-4 w-32 rounded" />
+          <div className="flex gap-3 overflow-hidden">
+            {Array.from({ length: 8 }).map((_, i) => (
+              <Skeleton key={i} className="h-48 w-32 shrink-0 rounded-xl" />
+            ))}
+          </div>
+        </div>
       </div>
     );
 
@@ -32,7 +46,7 @@ export function StatsPage() {
   const seriesHrs = Math.round((data.seriesWatchTimeMinutes ?? 0) / 60);
 
   return (
-    <div className="mx-auto max-w-6xl space-y-10 pb-14">
+    <div className="w-full space-y-10 pb-14">
       <div>
         <button
           type="button"
@@ -58,7 +72,11 @@ export function StatsPage() {
           accent="from-rose-500/20 to-transparent"
           value={`${data.watchStreak}`}
           label="Day streak"
-          sub="Consecutive days with activity"
+          sub={
+            data.longestStreakEver && data.longestStreakEver > data.watchStreak
+              ? `Best ever: ${data.longestStreakEver} days`
+              : "Consecutive days with activity"
+          }
         />
         <StatCard
           accent="from-emerald-500/15 to-transparent"
@@ -123,6 +141,11 @@ export function StatsPage() {
       </div>
 
       <Last7DaysCard days={data.last7Days ?? []} />
+
+      <div className="grid gap-6 lg:grid-cols-2">
+        <BingeSessionsCard sessions={data.bingeSessions ?? []} />
+        <WatchingHabitsCard daypart={data.watchByDaypart} byDayOfWeek={data.watchByDayOfWeek ?? []} />
+      </div>
 
       <div className="flex gap-2 rounded-full bg-pitflix-card/40 p-1.5 w-fit">
         <TabButton active={tab === "movies"} onClick={() => setTab("movies")}>
@@ -415,6 +438,108 @@ function Last7DaysCard({ days }: { days: { date: string; count: number; titles: 
               </div>
             );
           })}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function BingeSessionsCard({
+  sessions,
+}: {
+  sessions: { showTitle: string; date: string; episodeCount: number; totalMinutes: number }[];
+}) {
+  return (
+    <div className="rounded-2xl border border-pitflix-card/50 bg-gradient-to-b from-pitflix-surface/60 to-pitflix-bg/40 p-6 shadow-lg shadow-black/20">
+      <h2 className="mb-1 text-lg font-semibold text-white">Binge sessions</h2>
+      <p className="mb-5 text-xs text-pitflix-muted">Days with 3+ episodes of the same show back to back</p>
+      {sessions.length === 0 ? (
+        <p className="text-sm text-pitflix-muted">
+          No binge sessions yet — watch 3 or more episodes of a show on the same day to see it here.
+        </p>
+      ) : (
+        <div className="space-y-3">
+          {sessions.map((s, i) => {
+            const dt = new Date(`${s.date}T00:00:00`);
+            const dateLabel = dt.toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" });
+            const hrs = s.totalMinutes >= 60 ? `${(s.totalMinutes / 60).toFixed(1)}h` : `${s.totalMinutes}m`;
+            return (
+              <div
+                key={`${s.showTitle}-${s.date}-${i}`}
+                className="flex items-center justify-between gap-3 rounded-xl border border-pitflix-card/40 bg-pitflix-card/30 px-4 py-3"
+              >
+                <div className="min-w-0">
+                  <p className="truncate text-sm font-semibold text-white">{s.showTitle}</p>
+                  <p className="text-xs text-pitflix-subtle">{dateLabel}</p>
+                </div>
+                <div className="shrink-0 text-right">
+                  <p className="text-sm font-bold text-pitflix-primary">{s.episodeCount} eps</p>
+                  <p className="text-xs text-pitflix-subtle">{hrs}</p>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function WatchingHabitsCard({
+  daypart,
+  byDayOfWeek,
+}: {
+  daypart?: { morning: number; afternoon: number; evening: number; night: number };
+  byDayOfWeek: { day: string; count: number }[];
+}) {
+  const dayparts = [
+    { label: "Morning", sub: "5am–12pm", value: daypart?.morning ?? 0 },
+    { label: "Afternoon", sub: "12pm–5pm", value: daypart?.afternoon ?? 0 },
+    { label: "Evening", sub: "5pm–9pm", value: daypart?.evening ?? 0 },
+    { label: "Night", sub: "9pm–5am", value: daypart?.night ?? 0 },
+  ];
+  const maxDaypart = Math.max(1, ...dayparts.map((d) => d.value));
+  const maxDay = Math.max(1, ...byDayOfWeek.map((d) => d.count));
+  const totalSessions = dayparts.reduce((sum, d) => sum + d.value, 0);
+
+  return (
+    <div className="rounded-2xl border border-pitflix-card/50 bg-gradient-to-b from-pitflix-surface/60 to-pitflix-bg/40 p-6 shadow-lg shadow-black/20">
+      <h2 className="mb-1 text-lg font-semibold text-white">Watching habits</h2>
+      <p className="mb-5 text-xs text-pitflix-muted">When you tend to watch, from session start times</p>
+      {totalSessions === 0 ? (
+        <p className="text-sm text-pitflix-muted">Not enough session history yet to see a pattern.</p>
+      ) : (
+        <div className="space-y-6">
+          <div className="grid grid-cols-4 gap-2">
+            {dayparts.map((d) => (
+              <div key={d.label} className="flex flex-col items-center gap-2">
+                <div className="flex h-20 w-full items-end justify-center rounded-lg bg-pitflix-bg">
+                  <div
+                    className="w-full rounded-lg bg-gradient-to-t from-pitflix-primary to-violet-400"
+                    style={{ height: `${Math.max(6, (100 * d.value) / maxDaypart)}%` }}
+                    title={`${d.value} sessions`}
+                  />
+                </div>
+                <p className="text-xs font-medium text-white">{d.label}</p>
+                <p className="text-[10px] text-pitflix-subtle">{d.sub}</p>
+              </div>
+            ))}
+          </div>
+
+          <div className="space-y-2 border-t border-pitflix-card/40 pt-4">
+            {byDayOfWeek.map((d) => (
+              <div key={d.day} className="flex items-center gap-3">
+                <span className="w-8 shrink-0 text-xs font-medium text-pitflix-muted">{d.day}</span>
+                <div className="h-2 flex-1 overflow-hidden rounded-full bg-pitflix-bg">
+                  <div
+                    className="h-full rounded-full bg-gradient-to-r from-pitflix-primary to-violet-400"
+                    style={{ width: `${Math.min(100, (100 * d.count) / maxDay)}%` }}
+                  />
+                </div>
+                <span className="w-6 shrink-0 text-right text-xs text-pitflix-subtle">{d.count}</span>
+              </div>
+            ))}
+          </div>
         </div>
       )}
     </div>

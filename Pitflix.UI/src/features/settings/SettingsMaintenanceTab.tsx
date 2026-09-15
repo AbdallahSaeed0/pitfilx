@@ -1,8 +1,9 @@
 import axios from "axios";
+import { useState } from "react";
 import { Link } from "react-router-dom";
 import { Wrench } from "lucide-react";
 import { cleanupLibrary, cleanupMissingFiles, refreshLibraryArtwork } from "../../api/library";
-import { clearImageCache } from "../../api/maintenance";
+import { clearImageCache, clearRatingsCache } from "../../api/maintenance";
 import { runTrailerIngestion } from "../../api/homeDiscover";
 import { queueRatingsLibraryBackfill, queueRatingsStaleSweep } from "../../api/ratings";
 import { startScan } from "../../api/scan";
@@ -11,6 +12,8 @@ import type { SettingsPageModel } from "./useSettingsPageModel";
 type Props = { model: SettingsPageModel };
 
 export function SettingsMaintenanceTab({ model }: Props) {
+  const [ratingsCacheClearBusy, setRatingsCacheClearBusy] = useState(false);
+  const [ratingsCacheClearMsg, setRatingsCacheClearMsg] = useState<string | null>(null);
   const {
     data,
     scanBusy,
@@ -322,8 +325,32 @@ export function SettingsMaintenanceTab({ model }: Props) {
                     {ratingsStaleBusy ? "Queuing…" : "♻️ Queue stale refresh"}
                   </button>
                 </div>
+                <button
+                  type="button"
+                  disabled={ratingsCacheClearBusy}
+                  className="mt-2 h-10 w-full rounded-xl border border-red-400/25 bg-pitflix-bg text-xs font-medium text-red-200/90 transition-all hover:border-red-400/45 hover:bg-red-500/12 disabled:opacity-50"
+                  title="Wipes cached MDBList/IMDb ratings (title and per-episode) so they're refetched from scratch — use this after ratings look wrong and you want a clean refresh instead of waiting out the cache."
+                  onClick={() => {
+                    setRatingsCacheClearMsg(null);
+                    setRatingsCacheClearBusy(true);
+                    void clearRatingsCache()
+                      .then((r) => {
+                        setRatingsCacheClearMsg(r.message);
+                        void qc.invalidateQueries({
+                          predicate: (q) => q.queryKey[0] === "ratings-display",
+                        });
+                      })
+                      .catch((err) => setRatingsCacheClearMsg(formatScanOrApiError(err)))
+                      .finally(() => setRatingsCacheClearBusy(false));
+                  }}
+                >
+                  {ratingsCacheClearBusy ? "Clearing…" : "🗑️ Clear ratings cache"}
+                </button>
                 {ratingsMaintMsg ? (
                   <p className="mt-2 text-[11px] leading-snug text-pitflix-subtle">{ratingsMaintMsg}</p>
+                ) : null}
+                {ratingsCacheClearMsg ? (
+                  <p className="mt-2 text-[11px] leading-snug text-pitflix-subtle">{ratingsCacheClearMsg}</p>
                 ) : null}
                 {ratingsQueueWatching && ratingsQueueStatus ? (
                   <div className="mt-3 space-y-2 rounded-md border border-violet-400/20 bg-black/25 px-2.5 py-2">

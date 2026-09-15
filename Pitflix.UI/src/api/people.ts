@@ -2,6 +2,19 @@ import api from "./client";
 
 export const getPerson = (tmdbId: number) => api.get(`/people/${tmdbId}`).then((r) => r.data);
 
+export type PersonImage = { profilePath: string; url: string };
+
+export const getPersonImages = (tmdbId: number) =>
+  api.get<{ images: PersonImage[] }>(`/people/${tmdbId}/images`).then((r) => r.data.images);
+
+export const setPersonProfileOverride = (tmdbId: number, profilePath: string) =>
+  api
+    .post<{ success: boolean; profileImageUrl?: string; error?: string }>(
+      `/people/${tmdbId}/profile-override`,
+      { profilePath },
+    )
+    .then((r) => r.data);
+
 export type CreditRatings = {
   key: string;
   tmdbRating: number | null;

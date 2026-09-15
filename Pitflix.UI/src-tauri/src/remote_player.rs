@@ -164,7 +164,10 @@ fn start_reader(pipe_path: String, stop: Arc<AtomicBool>, app: AppHandle) {
         let _ = writeln!(file, r#"{{"command":["observe_property",1,"time-pos"]}}"#);
         let _ = writeln!(file, r#"{{"command":["observe_property",2,"duration"]}}"#);
         let _ = writeln!(file, r#"{{"command":["observe_property",3,"pause"]}}"#);
-        let _ = writeln!(file, r#"{{"command":["observe_property",4,"eof-reached"]}}"#);
+        let _ = writeln!(
+            file,
+            r#"{{"command":["observe_property",4,"eof-reached"]}}"#
+        );
 
         let mut st = RemoteStatePayload {
             time_pos: None,
@@ -271,7 +274,9 @@ pub async fn remote_open(app: AppHandle, file_path: String, title: String) -> Re
         cmd.creation_flags(CREATE_NO_WINDOW);
     }
 
-    let child = cmd.spawn().map_err(|e| format!("Failed to spawn mpv: {e}"))?;
+    let child = cmd
+        .spawn()
+        .map_err(|e| format!("Failed to spawn mpv: {e}"))?;
     let stop = Arc::new(AtomicBool::new(false));
 
     {

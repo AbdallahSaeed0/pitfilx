@@ -1,5 +1,5 @@
 import { convertFileSrc } from "@tauri-apps/api/core";
-import { ChevronLeft, ChevronRight, X } from "lucide-react";
+import { ChevronLeft, ChevronRight, FolderOpen, Info, Trash2, X } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { preloadImageSrc } from "../../utils/deviceImageCache";
 import type { DeviceFsEntry } from "./deviceUtils";
@@ -15,13 +15,16 @@ type Props = {
   onClose: () => void;
   onChange: (entry: DeviceFsEntry) => void;
   onOpenVideo: (entry: DeviceFsEntry) => void;
+  onDelete: (entry: DeviceFsEntry) => void;
+  onShowInFolder: (entry: DeviceFsEntry) => void;
+  onShowDetails: (entry: DeviceFsEntry) => void;
 };
 
 function isVideoEntry(entry: DeviceFsEntry): boolean {
   return entry.media_kind === "video";
 }
 
-export function DeviceImageViewer({ entry, items, onClose, onChange, onOpenVideo }: Props) {
+export function DeviceImageViewer({ entry, items, onClose, onChange, onOpenVideo, onDelete, onShowInFolder, onShowDetails }: Props) {
   const src = convertFileSrc(entry.path);
   const index = useMemo(
     () => items.findIndex((item) => item.path === entry.path),
@@ -157,9 +160,10 @@ export function DeviceImageViewer({ entry, items, onClose, onChange, onOpenVideo
       data-no-window-drag
       onClick={onClose}
     >
-      {/* Top bar: just the filename/counter now — the close button moved down a bit (see below). */}
+      {/* Top bar: filename/counter on the left, action toolbar centered — both live in the
+          empty chrome strip above the image so nothing overlaps the picture itself. */}
       <div
-        className="flex shrink-0 items-center gap-4 px-5 py-4"
+        className="relative flex shrink-0 items-center gap-4 px-5 py-4"
         onClick={(e) => e.stopPropagation()}
       >
         <div className="min-w-0">
@@ -170,16 +174,45 @@ export function DeviceImageViewer({ entry, items, onClose, onChange, onOpenVideo
             </div>
           ) : null}
         </div>
-      </div>
 
-      <button
-        type="button"
-        aria-label="Close"
-        className="absolute right-5 top-16 z-20 flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-white/10 text-white transition hover:bg-white/20"
-        onClick={(e) => { e.stopPropagation(); onClose(); }}
-      >
-        <X className="h-4 w-4" />
-      </button>
+        <div className="absolute left-1/2 top-1/2 flex shrink-0 -translate-x-1/2 -translate-y-1/2 items-center gap-2">
+        <button
+          type="button"
+          aria-label="Details"
+          title="Details"
+          className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-white/10 text-white transition hover:bg-white/20"
+          onClick={() => onShowDetails(entry)}
+        >
+          <Info className="h-4 w-4" />
+        </button>
+        <button
+          type="button"
+          aria-label="Show in folder"
+          title="Show in folder"
+          className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-white/10 text-white transition hover:bg-white/20"
+          onClick={() => onShowInFolder(entry)}
+        >
+          <FolderOpen className="h-4 w-4" />
+        </button>
+        <button
+          type="button"
+          aria-label="Delete"
+          title="Delete"
+          className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-white/10 text-red-300 transition hover:bg-red-500/25 hover:text-red-200"
+          onClick={() => onDelete(entry)}
+        >
+          <Trash2 className="h-4 w-4" />
+        </button>
+        <button
+          type="button"
+          aria-label="Close"
+          className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-white/10 text-white transition hover:bg-white/20"
+          onClick={onClose}
+        >
+          <X className="h-4 w-4" />
+        </button>
+        </div>
+      </div>
 
       {/* Image area */}
       <div

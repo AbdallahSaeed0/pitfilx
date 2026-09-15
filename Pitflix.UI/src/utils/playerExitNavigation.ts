@@ -25,14 +25,30 @@ function runReturnToScroll(returnTo: PlayerReturnTo) {
     }
     const mainTop = returnTo.mainScrollTop;
     if (typeof mainTop === "number" && Number.isFinite(mainTop)) {
-      const main = document.querySelector("main");
-      if (main instanceof HTMLElement) {
-        main.scrollTop = mainTop;
+      // A page's own [data-scroll-restore-anchor] div usually scrolls itself, but depending on
+      // content height it can end up sized to fit everything instead (no real overflow), in which
+      // case the *layout's* <main> (also overflow-y-auto) is the one actually scrolling. Whichever
+      // one is captured as having overflow is symmetric with the capture side (see
+      // MyDevicePage.openVideoEntry) — pick the same way here so restore targets the same element.
+      const hasRealOverflow = (el: Element | null): el is HTMLElement =>
+        el instanceof HTMLElement && el.scrollHeight > el.clientHeight + 1;
+      const anchor = document.querySelector('[data-scroll-restore-anchor]');
+      const mainEl = document.querySelector("main");
+      const target = hasRealOverflow(anchor) ? anchor : hasRealOverflow(mainEl) ? mainEl : (anchor ?? mainEl);
+      if (target instanceof HTMLElement) {
+        target.scrollTop = mainTop;
       }
     }
   };
+  // Retried repeatedly (not just once or twice) over a couple of seconds: the destination page's
+  // content — e.g. My Device re-fetching a real folder's entries via device_read_dir — can still be
+  // loading when the early attempts fire. Setting scrollTop before the (virtualized) container has
+  // grown to its full height just gets silently clamped back to 0, and without a later retry that
+  // clamp never gets corrected once the content actually finishes loading and grows.
   requestAnimationFrame(() => setTimeout(runScroll, 0));
-  setTimeout(runScroll, 120);
+  for (const delay of [120, 300, 600, 1000, 1600, 2400]) {
+    setTimeout(runScroll, delay);
+  }
 }
 
 /** Navigate back from the player using explicit return target or browser history. */

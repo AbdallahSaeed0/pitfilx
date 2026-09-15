@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import '../models/title_item.dart';
 import '../services/tmdb_service.dart';
 import '../theme/app_theme.dart';
+import 'pitflix_network_image.dart';
 
 /// Netflix-style login backdrop: a tiled wall of real TMDB posters (trending
 /// movies + shows, the same pool Home already uses) behind a dark scrim, with
@@ -63,7 +64,7 @@ class _PosterWallBackgroundState extends State<PosterWallBackground> {
             itemCount: 32,
             itemBuilder: (context, i) => Opacity(
               opacity: 0.5,
-              child: Image.network(
+              child: PitflixNetworkImage(
                 urls[i % urls.length],
                 fit: BoxFit.cover,
                 errorBuilder: (context, error, stackTrace) =>

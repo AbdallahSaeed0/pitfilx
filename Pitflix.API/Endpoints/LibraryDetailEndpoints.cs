@@ -1,6 +1,7 @@
 using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
 using Pitflix.API.Services;
+using Pitflix.API.Services.Recommendations;
 using Pitflix.Core.Api;
 using Pitflix.Core.Database;
 using Pitflix.Core.Models;
@@ -14,6 +15,26 @@ public static class LibraryDetailEndpoints
     {
         PropertyNameCaseInsensitive = true,
     };
+
+    /// <summary>
+    /// Swaps in a person's manually-picked photo (set on their own actor page) for any cast/crew row
+    /// here that's the same person — otherwise a cast list is a snapshot taken at scan time and never
+    /// reflects a later photo pick, even after a reload.
+    /// </summary>
+    private static async Task ApplyPersonPhotoOverridesAsync(LibraryRepository repo,
+        IReadOnlyList<CastMember> cast, IReadOnlyList<TmdbCrewMember> crew, CancellationToken ct)
+    {
+        var ids = cast.Select(c => c.PersonTmdbId).Concat(crew.Select(c => c.Id));
+        var overrides = await repo.GetPersonProfileOverridesAsync(ids, ct).ConfigureAwait(false);
+        if (overrides.Count == 0)
+            return;
+        foreach (var c in cast)
+            if (overrides.TryGetValue(c.PersonTmdbId, out var path))
+                c.ProfileLocalPath = path;
+        foreach (var c in crew)
+            if (overrides.TryGetValue(c.Id, out var path))
+                c.ProfileLocalPath = path;
+    }
 
     public static void MapLibraryDetailEndpoints(this WebApplication app, JsonSerializerOptions jsonSerializerOptions)
     {
@@ -55,93 +76,96 @@ public static class LibraryDetailEndpoints
             }
         }
 
-        if (crew.Count == 0 && tmdb != null)
-        {
-            var details = await tmdb.GetDetailsAsync(movie.TmdbId, "Movie", ct).ConfigureAwait(false);
-            crew = details.Crew;
-        }
+        // These are all independent TMDB lookups that don't touch the DbContext, so fire them
+        // together instead of one `await` after another — on a cold (never-opened) row every one
+        // of these caches is empty and used to stack into several seconds of sequential latency.
+        var needCrew = crew.Count == 0 && tmdb != null;
+        var needPoster = tmdb != null && string.IsNullOrEmpty(movie.PosterLocalPath) &&
+            string.IsNullOrEmpty(movie.SelectedPosterPath);
+        var needKeywords = movie.TmdbId > 0 && tmdb != null && string.IsNullOrEmpty(movie.KeywordsJson);
+        var needCollection = movie.TmdbId > 0 && tmdb != null;
+        var needContentRating = movie.ContentRating == null && movie.TmdbId > 0 && tmdb != null;
+
+        async Task<TmdbDetails?> FetchMovieCrewAsync() =>
+            needCrew ? await tmdb!.GetDetailsAsync(movie.TmdbId, "Movie", ct).ConfigureAwait(false) : null;
+        var crewFetchTask = FetchMovieCrewAsync();
+        var posterFetchTask = needPoster
+            ? tmdb!.GetArtworkPathsAsync(movie.TmdbId, "Movie", ct)
+            : Task.FromResult<(string PosterPath, string BackdropPath)?>(null);
+        var keywordsFetchTask = needKeywords
+            ? tmdb!.TryGetKeywordsWithNamesAsync(movie.TmdbId, "Movie", ct)
+            : Task.FromResult<IReadOnlyList<(int Id, string Name)>>(Array.Empty<(int, string)>());
+        var collectionFetchTask = needCollection
+            ? tmdb!.TryGetMovieCollectionInfoAsync(movie.TmdbId, ct)
+            : Task.FromResult<(int CollectionId, string CollectionName)?>(null);
+        var contentRatingFetchTask = needContentRating
+            ? tmdb!.TryGetMovieCertificationAsync(movie.TmdbId, "US", ct)
+            : Task.FromResult<string?>(null);
+        var companiesFetchTask = movie.TmdbId > 0 && tmdb != null
+            ? tmdb.TryGetCompaniesAsync(movie.TmdbId, true, ct)
+            : Task.FromResult<IReadOnlyList<TmdbCompanyInfo>>(Array.Empty<TmdbCompanyInfo>());
+
+        await Task.WhenAll(crewFetchTask, posterFetchTask, keywordsFetchTask, collectionFetchTask,
+            contentRatingFetchTask, companiesFetchTask).ConfigureAwait(false);
+
+        if (needCrew)
+            crew = crewFetchTask.Result!.Crew;
+
+        // Everything from here on touches the shared request-scoped DbContext (via `db`/`repo`),
+        // which isn't safe to hit concurrently — keep this part sequential.
+        await ApplyPersonPhotoOverridesAsync(repo, cast, crew, ct).ConfigureAwait(false);
 
         var similarRows = await repo.FindLocalSimilarByGenresAsync(movie.Genres, 24,
                 excludeMovieDatabaseId: movie.Id, excludeMovieTmdbId: movie.TmdbId, cancellationToken: ct)
             .ConfigureAwait(false);
         var similar = similarRows.Select(r => ImageUrls.MapMediaCard(ToMediaCardFromSimilar(r))).ToList();
-        await MediaCardPosterEnricher.EnrichMissingRemotePostersAsync(similar, tmdb, ct).ConfigureAwait(false);
+        await MediaCardPosterEnricher.EnrichMissingRemotePostersAsync(similar, tmdb, ct, repo).ConfigureAwait(false);
         var movieOut = ImageUrls.MapMovie(movie);
-        if (string.IsNullOrEmpty(movieOut.PosterLocalPath) && string.IsNullOrEmpty(movieOut.SelectedPosterPath) &&
-            tmdb != null)
-        {
-            var art = await tmdb.GetArtworkPathsAsync(movie.TmdbId, "Movie", ct).ConfigureAwait(false);
-            if (art != null && !string.IsNullOrEmpty(art.Value.PosterPath))
-                movieOut.PosterRemoteUrl = $"https://image.tmdb.org/t/p/w500{art.Value.PosterPath}";
-        }
+        var art = posterFetchTask.Result;
+        if (needPoster && art != null && !string.IsNullOrEmpty(art.Value.PosterPath))
+            movieOut.PosterRemoteUrl = $"https://image.tmdb.org/t/p/w500{art.Value.PosterPath}";
 
         var keywords = new List<object>();
-        if (movie.TmdbId > 0 && tmdb != null)
+        if (needKeywords)
         {
-            if (string.IsNullOrEmpty(movie.KeywordsJson))
+            var kws = keywordsFetchTask.Result;
+            if (kws.Count > 0)
             {
-                var kws = await tmdb.TryGetKeywordsWithNamesAsync(movie.TmdbId, "Movie", ct).ConfigureAwait(false);
-                if (kws.Count > 0)
-                {
-                    var kwJson = JsonSerializer.Serialize(kws.Select(k => new { id = k.Id, name = k.Name }));
-                    await db.Database.ExecuteSqlRawAsync(
-                        $"UPDATE Movies SET KeywordsJson = {{0}} WHERE Id = {{1}}", kwJson, movie.Id)
-                        .ConfigureAwait(false);
-                    keywords = kws.Select(k => (object)new { id = k.Id, name = k.Name }).ToList();
-                }
+                var kwJson = JsonSerializer.Serialize(kws.Select(k => new { id = k.Id, name = k.Name }));
+                await db.Database.ExecuteSqlRawAsync(
+                    $"UPDATE Movies SET KeywordsJson = {{0}} WHERE Id = {{1}}", kwJson, movie.Id)
+                    .ConfigureAwait(false);
+                keywords = kws.Select(k => (object)new { id = k.Id, name = k.Name }).ToList();
             }
-            else
+        }
+        else if (!string.IsNullOrEmpty(movie.KeywordsJson))
+        {
+            try
             {
-                try
-                {
-                    var parsed = JsonSerializer.Deserialize<List<JsonElement>>(movie.KeywordsJson);
-                    if (parsed != null)
-                        keywords = parsed.Select(e => (object)new { id = e.GetProperty("id").GetInt32(), name = e.GetProperty("name").GetString() }).ToList();
-                }
-                catch { /* ignore malformed cache */ }
+                var parsed = JsonSerializer.Deserialize<List<JsonElement>>(movie.KeywordsJson);
+                if (parsed != null)
+                    keywords = parsed.Select(e => (object)new { id = e.GetProperty("id").GetInt32(), name = e.GetProperty("name").GetString() }).ToList();
             }
+            catch { /* ignore malformed cache */ }
         }
 
         var tmdbSimilar = new List<object>();
         if (movie.TmdbId > 0 && tmdb != null)
         {
-            var tmdbSimilarRaw = await tmdb.GetMovieSimilarAsync(movie.TmdbId, 1, ct).ConfigureAwait(false);
-            var localMovies = await db.Movies.AsNoTracking()
-                .Where(m => m.IsMatched)
-                .Select(m => new { m.Id, m.TmdbId, m.WatchStatus })
-                .ToListAsync(ct).ConfigureAwait(false);
-            var localMovieLookup = localMovies.ToDictionary(m => m.TmdbId);
-            foreach (var s in tmdbSimilarRaw.Take(20))
-            {
-                localMovieLookup.TryGetValue(s.Id, out var libMovie);
-                var inLibrary = libMovie != null;
-                tmdbSimilar.Add(new
-                {
-                    tmdbId = s.Id,
-                    title = s.Title,
-                    posterUrl = string.IsNullOrEmpty(s.PosterPath) ? null : $"https://image.tmdb.org/t/p/w342{s.PosterPath}",
-                    year = s.ReleaseDate?.Length >= 4 ? s.ReleaseDate[..4] : null,
-                    voteAverage = s.VoteAverage,
-                    mediaType = "Movie",
-                    isInLibrary = inLibrary,
-                    libraryId = libMovie?.Id,
-                    watchStatus = libMovie?.WatchStatus,
-                });
-            }
+            tmdbSimilar = await DetailRecommendationCacheService
+                .GetOrBuildAsync(db, tmdb, repo, movie.TmdbId, "Movie", movie.Title, ct)
+                .ConfigureAwait(false);
         }
 
         object? collection = null;
-        if (movie.TmdbId > 0 && tmdb != null)
-        {
-            var colInfo = await tmdb.TryGetMovieCollectionInfoAsync(movie.TmdbId, ct).ConfigureAwait(false);
-            if (colInfo.HasValue)
-                collection = new { id = colInfo.Value.CollectionId, name = colInfo.Value.CollectionName };
-        }
+        var colInfo = collectionFetchTask.Result;
+        if (needCollection && colInfo.HasValue)
+            collection = new { id = colInfo.Value.CollectionId, name = colInfo.Value.CollectionName };
 
         var contentRating = movie.ContentRating;
-        if (contentRating == null && movie.TmdbId > 0 && tmdb != null)
+        if (needContentRating)
         {
-            contentRating = await tmdb.TryGetMovieCertificationAsync(movie.TmdbId, "US", ct).ConfigureAwait(false);
+            contentRating = contentRatingFetchTask.Result;
             if (contentRating != null)
                 await db.Database.ExecuteSqlRawAsync(
                     "UPDATE Movies SET ContentRating = {0} WHERE Id = {1}", contentRating, movie.Id)
@@ -149,6 +173,20 @@ public static class LibraryDetailEndpoints
         }
 
         var tvdbPayload = await tvdbTask.ConfigureAwait(false);
+        var logoOverride = await repo.GetSettingAsync($"ClearLogoOverride:Movie:{id}", ct).ConfigureAwait(false);
+        var clearLogoUrl = !string.IsNullOrWhiteSpace(logoOverride)
+            ? ImageUrls.ToImageUrl(logoOverride)
+            : tvdbPayload.ClearLogoUrl;
+
+        var companies = companiesFetchTask.Result
+            .Select(c => new
+            {
+                id = c.Id,
+                name = c.Name,
+                logoUrl = string.IsNullOrEmpty(c.LogoPath) ? null : $"https://image.tmdb.org/t/p/w300{c.LogoPath}",
+                kind = c.Kind,
+            })
+            .ToList();
 
         return Results.Json(new
         {
@@ -160,8 +198,9 @@ public static class LibraryDetailEndpoints
             tmdbSimilar,
             keywords,
             collection,
+            companies,
             contentRating,
-            tvdbClearLogoUrl = tvdbPayload.ClearLogoUrl,
+            tvdbClearLogoUrl = clearLogoUrl,
             tvdbArtworks = tvdbPayload.Artworks,
         }, jsonSerializerOptions);
     }
@@ -192,28 +231,68 @@ public static class LibraryDetailEndpoints
             }
         }
 
-        if (crew.Count == 0 && tmdb != null)
-        {
-            var details = await tmdb.GetDetailsAsync(show.TmdbId, "Series", ct).ConfigureAwait(false);
-            crew = details.Crew;
-        }
+        // Shows scanned/cached before aggregate_credits-based crew was added never got a "Director"
+        // row written to CrewCacheJson — that cache is otherwise non-empty (Producers, Creator,
+        // etc.), so the `crew.Count == 0` check below alone would never catch it, permanently
+        // hiding Directors/Writers for every already-cached show. Treat "cached but no director" as
+        // stale too, and persist the refetched result so this only has to self-heal once per show.
+        var cachedCrewMissingDirector = crew.Count > 0 && !crew.Any(c => c.Job.Equals("Director", StringComparison.OrdinalIgnoreCase));
+
+        var needCrew = (crew.Count == 0 || cachedCrewMissingDirector) && tmdb != null;
+        var needPoster = tmdb != null && string.IsNullOrEmpty(show.PosterLocalPath) &&
+            string.IsNullOrEmpty(show.SelectedPosterPath);
+        var needKeywords = show.TmdbId > 0 && tmdb != null && string.IsNullOrEmpty(show.KeywordsJson);
+        var needContentRating = show.ContentRating == null && show.TmdbId > 0 && tmdb != null;
 
         var eps = await repo.GetEpisodesForShowAsync(show.Id, ct).ConfigureAwait(false);
         eps = eps.Where(e => !string.IsNullOrWhiteSpace(e.FilePath) && File.Exists(e.FilePath)).ToList();
+        var needArtworkSync = tmdb != null && eps.Any(e => string.IsNullOrWhiteSpace(e.StillLocalPath));
 
-        if (tmdb != null && eps.Any(e => string.IsNullOrWhiteSpace(e.StillLocalPath)))
+        // Independent TMDB lookups (crew/poster/keywords/content-rating) touch only the network,
+        // never the DbContext, so fire them together instead of one `await` after another — this
+        // was the main source of "first open of something new is slow". The episode-artwork sync
+        // does touch the DbContext (via `repo`), but only that one — it doesn't conflict with the
+        // network-only lookups above, only with other repo/db calls, so it can still ride along.
+        async Task<TmdbDetails?> FetchSeriesCrewAsync() =>
+            needCrew ? await tmdb!.GetDetailsAsync(show.TmdbId, "Series", ct).ConfigureAwait(false) : null;
+        var crewFetchTask = FetchSeriesCrewAsync();
+        var posterFetchTask = needPoster
+            ? tmdb!.GetArtworkPathsAsync(show.TmdbId, "Series", ct)
+            : Task.FromResult<(string PosterPath, string BackdropPath)?>(null);
+        var keywordsFetchTask = needKeywords
+            ? tmdb!.TryGetKeywordsWithNamesAsync(show.TmdbId, "Series", ct)
+            : Task.FromResult<IReadOnlyList<(int Id, string Name)>>(Array.Empty<(int, string)>());
+        var contentRatingFetchTask = needContentRating
+            ? tmdb!.TryGetTvCertificationAsync(show.TmdbId, "US", ct)
+            : Task.FromResult<string?>(null);
+        var artworkSyncTask = needArtworkSync
+            ? SafeSyncEpisodesArtworkAsync(repo, show.Id, show.TmdbId, tmdb!, ct)
+            : Task.CompletedTask;
+        var companiesFetchTask = show.TmdbId > 0 && tmdb != null
+            ? tmdb.TryGetCompaniesAsync(show.TmdbId, false, ct)
+            : Task.FromResult<IReadOnlyList<TmdbCompanyInfo>>(Array.Empty<TmdbCompanyInfo>());
+
+        await Task.WhenAll(crewFetchTask, posterFetchTask, keywordsFetchTask, contentRatingFetchTask,
+            artworkSyncTask, companiesFetchTask).ConfigureAwait(false);
+
+        if (needCrew)
         {
-            try
+            var details = crewFetchTask.Result!;
+            crew = details.Crew;
+            if (details.Crew.Count > 0)
             {
-                await repo.SyncEpisodesArtworkFromTmdbAsync(show.Id, show.TmdbId, tmdb, ct, maxImageDownloads: 60)
-                    .ConfigureAwait(false);
-                eps = await repo.GetEpisodesForShowAsync(show.Id, ct).ConfigureAwait(false);
-                eps = eps.Where(e => !string.IsNullOrWhiteSpace(e.FilePath) && File.Exists(e.FilePath)).ToList();
+                var refreshedJson = Newtonsoft.Json.JsonConvert.SerializeObject(details.Crew);
+                await db.Database.ExecuteSqlRawAsync("UPDATE Shows SET CrewCacheJson = {0} WHERE Id = {1}",
+                    refreshedJson, show.Id).ConfigureAwait(false);
             }
-            catch
-            {
-                /* ignore */
-            }
+        }
+
+        await ApplyPersonPhotoOverridesAsync(repo, cast, crew, ct).ConfigureAwait(false);
+
+        if (needArtworkSync)
+        {
+            eps = await repo.GetEpisodesForShowAsync(show.Id, ct).ConfigureAwait(false);
+            eps = eps.Where(e => !string.IsNullOrWhiteSpace(e.FilePath) && File.Exists(e.FilePath)).ToList();
         }
 
         var nextEp = LibraryRepository.GetNextEpisodeForShow(eps);
@@ -241,6 +320,7 @@ public static class LibraryDetailEndpoints
                     e.FilePath,
                     e.SubtitlePath,
                     e.WatchStatus,
+                    e.RewatchCount,
                     stillLocalPath = EpStill(e),
                 }).ToList(),
             }).ToList();
@@ -319,82 +399,56 @@ public static class LibraryDetailEndpoints
         seasonRows.Sort((a, b) => a.SeasonNumber.CompareTo(b.SeasonNumber));
         var seasonsSummary = seasonRows.Select(r => r.Row).ToList();
 
-        foreach (var ep in eps)
-            _ = ratings.WarmEpisodeImdbRatingAsync(show.TmdbId, ep.Season, ep.EpisodeNumber);
+        foreach (var seasonGroup in eps.GroupBy(e => e.Season))
+            _ = ratings.WarmShowEpisodeRatingsAsync(show.TmdbId, seasonGroup.Key,
+                seasonGroup.Select(e => e.EpisodeNumber).ToList());
 
         var similarRows = await repo.FindLocalSimilarByGenresAsync(show.Genres, 24,
                 excludeShowDatabaseId: show.Id, excludeShowTmdbId: show.TmdbId, cancellationToken: ct)
             .ConfigureAwait(false);
         var similar = similarRows.Select(r => ImageUrls.MapMediaCard(ToMediaCardFromSimilar(r))).ToList();
-        await MediaCardPosterEnricher.EnrichMissingRemotePostersAsync(similar, tmdb, ct).ConfigureAwait(false);
+        await MediaCardPosterEnricher.EnrichMissingRemotePostersAsync(similar, tmdb, ct, repo).ConfigureAwait(false);
         var showOut = ImageUrls.MapShow(show);
-        if (string.IsNullOrEmpty(showOut.PosterLocalPath) && string.IsNullOrEmpty(showOut.SelectedPosterPath) &&
-            tmdb != null)
-        {
-            var art = await tmdb.GetArtworkPathsAsync(show.TmdbId, "Series", ct).ConfigureAwait(false);
-            if (art != null && !string.IsNullOrEmpty(art.Value.PosterPath))
-                showOut.PosterRemoteUrl = $"https://image.tmdb.org/t/p/w500{art.Value.PosterPath}";
-        }
+        var showArt = posterFetchTask.Result;
+        if (needPoster && showArt != null && !string.IsNullOrEmpty(showArt.Value.PosterPath))
+            showOut.PosterRemoteUrl = $"https://image.tmdb.org/t/p/w500{showArt.Value.PosterPath}";
 
         var keywords = new List<object>();
-        if (show.TmdbId > 0 && tmdb != null)
+        if (needKeywords)
         {
-            if (string.IsNullOrEmpty(show.KeywordsJson))
+            var kws = keywordsFetchTask.Result;
+            if (kws.Count > 0)
             {
-                var kws = await tmdb.TryGetKeywordsWithNamesAsync(show.TmdbId, "Series", ct).ConfigureAwait(false);
-                if (kws.Count > 0)
-                {
-                    var kwJson = JsonSerializer.Serialize(kws.Select(k => new { id = k.Id, name = k.Name }));
-                    await db.Database.ExecuteSqlRawAsync(
-                        $"UPDATE Shows SET KeywordsJson = {{0}} WHERE Id = {{1}}", kwJson, show.Id)
-                        .ConfigureAwait(false);
-                    keywords = kws.Select(k => (object)new { id = k.Id, name = k.Name }).ToList();
-                }
+                var kwJson = JsonSerializer.Serialize(kws.Select(k => new { id = k.Id, name = k.Name }));
+                await db.Database.ExecuteSqlRawAsync(
+                    $"UPDATE Shows SET KeywordsJson = {{0}} WHERE Id = {{1}}", kwJson, show.Id)
+                    .ConfigureAwait(false);
+                keywords = kws.Select(k => (object)new { id = k.Id, name = k.Name }).ToList();
             }
-            else
+        }
+        else if (!string.IsNullOrEmpty(show.KeywordsJson))
+        {
+            try
             {
-                try
-                {
-                    var parsed = JsonSerializer.Deserialize<List<JsonElement>>(show.KeywordsJson);
-                    if (parsed != null)
-                        keywords = parsed.Select(e => (object)new { id = e.GetProperty("id").GetInt32(), name = e.GetProperty("name").GetString() }).ToList();
-                }
-                catch { /* ignore malformed cache */ }
+                var parsed = JsonSerializer.Deserialize<List<JsonElement>>(show.KeywordsJson);
+                if (parsed != null)
+                    keywords = parsed.Select(e => (object)new { id = e.GetProperty("id").GetInt32(), name = e.GetProperty("name").GetString() }).ToList();
             }
+            catch { /* ignore malformed cache */ }
         }
 
         var tmdbSimilar = new List<object>();
         if (show.TmdbId > 0 && tmdb != null)
         {
-            var tmdbSimilarRaw = await tmdb.GetTvSimilarAsync(show.TmdbId, 1, ct).ConfigureAwait(false);
-            var localShows = await db.Shows.AsNoTracking()
-                .Where(s => s.IsMatched)
-                .Select(s => new { s.Id, s.TmdbId, s.WatchStatus })
-                .ToListAsync(ct).ConfigureAwait(false);
-            var localShowLookup = localShows.ToDictionary(s => s.TmdbId);
-            foreach (var s in tmdbSimilarRaw.Take(20))
-            {
-                localShowLookup.TryGetValue(s.Id, out var libShow);
-                var inLibrary = libShow != null;
-                tmdbSimilar.Add(new
-                {
-                    tmdbId = s.Id,
-                    title = s.Title,
-                    posterUrl = string.IsNullOrEmpty(s.PosterPath) ? null : $"https://image.tmdb.org/t/p/w342{s.PosterPath}",
-                    year = s.ReleaseDate?.Length >= 4 ? s.ReleaseDate[..4] : null,
-                    voteAverage = s.VoteAverage,
-                    mediaType = "Series",
-                    isInLibrary = inLibrary,
-                    libraryId = libShow?.Id,
-                    watchStatus = libShow?.WatchStatus,
-                });
-            }
+            tmdbSimilar = await DetailRecommendationCacheService
+                .GetOrBuildAsync(db, tmdb, repo, show.TmdbId, "Series", show.Title, ct)
+                .ConfigureAwait(false);
         }
 
         var contentRating = show.ContentRating;
-        if (contentRating == null && show.TmdbId > 0 && tmdb != null)
+        if (needContentRating)
         {
-            contentRating = await tmdb.TryGetTvCertificationAsync(show.TmdbId, "US", ct).ConfigureAwait(false);
+            contentRating = contentRatingFetchTask.Result;
             if (contentRating != null)
                 await db.Database.ExecuteSqlRawAsync(
                     "UPDATE Shows SET ContentRating = {0} WHERE Id = {1}", contentRating, show.Id)
@@ -402,6 +456,20 @@ public static class LibraryDetailEndpoints
         }
 
         var tvdbPayload = await tvdbTask.ConfigureAwait(false);
+        var logoOverride = await repo.GetSettingAsync($"ClearLogoOverride:Series:{id}", ct).ConfigureAwait(false);
+        var clearLogoUrl = !string.IsNullOrWhiteSpace(logoOverride)
+            ? ImageUrls.ToImageUrl(logoOverride)
+            : tvdbPayload.ClearLogoUrl;
+
+        var companies = companiesFetchTask.Result
+            .Select(c => new
+            {
+                id = c.Id,
+                name = c.Name,
+                logoUrl = string.IsNullOrEmpty(c.LogoPath) ? null : $"https://image.tmdb.org/t/p/w300{c.LogoPath}",
+                kind = c.Kind,
+            })
+            .ToList();
 
         return Results.Json(new
         {
@@ -415,10 +483,25 @@ public static class LibraryDetailEndpoints
             similar,
             tmdbSimilar,
             keywords,
+            companies,
             contentRating,
-            tvdbClearLogoUrl = tvdbPayload.ClearLogoUrl,
+            tvdbClearLogoUrl = clearLogoUrl,
             tvdbArtworks = tvdbPayload.Artworks,
         }, jsonSerializerOptions);
+    }
+
+    private static async Task SafeSyncEpisodesArtworkAsync(LibraryRepository repo, int showId, int showTmdbId,
+        TmdbClient tmdb, CancellationToken ct)
+    {
+        try
+        {
+            await repo.SyncEpisodesArtworkFromTmdbAsync(showId, showTmdbId, tmdb, ct, maxImageDownloads: 60)
+                .ConfigureAwait(false);
+        }
+        catch
+        {
+            /* ignore — episode list still renders without stills */
+        }
     }
 
     private static async Task<(string? ClearLogoUrl, object[]? Artworks)> BuildTvdbDetailPayloadAsync(

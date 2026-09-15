@@ -1,17 +1,56 @@
-import { useMutation, useQuery } from "@tanstack/react-query";
-import { Search, Sparkles, ChevronDown } from "lucide-react";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { PosterGridSkeleton } from "../components/ui/Skeleton";
+import { Search, Sparkles, ChevronDown, RefreshCw } from "lucide-react";
 import { useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { fetchRecommendations, type RecommendationFilter, type RecommendationItem } from "../api/recommendations";
+import {
+  fetchLibraryRecommendations,
+  fetchRecommendations,
+  refreshLibraryRecommendations,
+  type LibraryRecommendationItem,
+  type RecommendationFilter,
+  type RecommendationItem,
+} from "../api/recommendations";
 import { cn } from "../utils/cn";
 import { searchUnmatched } from "../api/unmatched";
 import { MediaImage } from "../components/ui/MediaImage";
 import { Spinner } from "../components/ui/Spinner";
+import { BackButton } from "../components/ui/BackButton";
 import { useDebounce } from "../hooks/useDebounce";
 import { formatCount, formatRating } from "../utils/format";
 import { getMovies } from "../api/movies";
 import { getAllSeries } from "../api/series";
 import type { MediaCard } from "../types/media";
+import { LibraryContextMenuLayer } from "../features/library/LibraryContextMenuLayer";
+import { useMediaContextMenu, type MediaContextTarget } from "../features/library/useMediaContextMenu";
+
+function mediaContextTarget(opts: {
+  tmdbId: number;
+  mediaType: "movie" | "tv";
+  title: string;
+  posterUrl: string | null | undefined;
+  inLibrary: boolean;
+  libraryId?: number | null;
+  watchStatus?: string | null;
+}): MediaContextTarget {
+  const appMediaType: "Movie" | "Series" = opts.mediaType === "tv" ? "Series" : "Movie";
+  if (opts.inLibrary && opts.libraryId != null) {
+    return {
+      kind: appMediaType === "Movie" ? "movie" : "series",
+      libraryId: opts.libraryId,
+      tmdbId: opts.tmdbId,
+      title: opts.title,
+      watchStatus: opts.watchStatus ?? undefined,
+    };
+  }
+  return {
+    kind: "streaming",
+    tmdbId: opts.tmdbId,
+    mediaType: appMediaType,
+    title: opts.title,
+    posterUrl: opts.posterUrl,
+  };
+}
 
 function getMatchReasons(item: RecommendationItem): { label: string; color: string }[] {
   const reasons: { label: string; color: string }[] = [];
@@ -20,6 +59,79 @@ function getMatchReasons(item: RecommendationItem): { label: string; color: stri
   if (item.voteAverage >= 7.0 && item.voteCount >= 1000 && reasons.length === 0)
     reasons.push({ label: "👍 Well Reviewed", color: "bg-green-500/20 text-green-300" });
   return reasons;
+}
+
+function ForYouCard({
+  item,
+  navigate,
+  onContextMenu,
+}: {
+  item: LibraryRecommendationItem;
+  navigate: ReturnType<typeof useNavigate>;
+  onContextMenu: (e: React.MouseEvent) => void;
+}) {
+  const isMovie = item.mediaType === "movie";
+  const because = item.contributingSeeds[0]?.title;
+
+  return (
+    <div
+      onContextMenu={onContextMenu}
+      className="group flex flex-col overflow-hidden rounded-2xl border border-pitflix-card/60 bg-pitflix-surface/60 transition-all hover:border-pitflix-primary/50 hover:shadow-lg hover:shadow-black/30"
+    >
+      <div
+        className="relative cursor-pointer"
+        onClick={() => {
+          if (item.isInLibrary && item.libraryId != null) {
+            navigate(isMovie ? `/movie/${item.libraryId}` : `/series/${item.libraryId}`);
+          } else {
+            navigate("/stream-details", {
+              state: {
+                tmdbId: item.tmdbId,
+                mediaType: isMovie ? "Movie" : "Series",
+                title: item.title,
+                posterUrl: item.posterUrl,
+                year: item.year != null ? String(item.year) : null,
+              },
+            });
+          }
+        }}
+      >
+        <MediaImage
+          src={item.posterUrl ?? undefined}
+          alt=""
+          className="aspect-[2/3] w-full object-cover transition-opacity group-hover:opacity-85"
+          fallbackText={item.title.slice(0, 2)}
+        />
+        <div className="absolute left-2 top-2 flex flex-col gap-1">
+          <span className="rounded-md bg-black/80 px-1.5 py-0.5 text-[10px] font-bold text-amber-300 ring-1 ring-amber-500/40">
+            ★ {formatRating(item.voteAverage)}
+          </span>
+          {item.isInLibrary && (
+            <span className="rounded-md bg-emerald-600/90 px-1.5 py-0.5 text-[10px] font-bold text-white">
+              In library
+            </span>
+          )}
+        </div>
+        <div className="absolute inset-0 flex items-center justify-center bg-black/0 opacity-0 transition-all group-hover:bg-black/20 group-hover:opacity-100">
+          <span className="flex h-10 w-10 items-center justify-center rounded-full bg-pitflix-primary shadow-lg">
+            <span className="ml-0.5 text-white">▶</span>
+          </span>
+        </div>
+      </div>
+
+      <div className="flex flex-1 flex-col p-3">
+        <p className="line-clamp-2 text-sm font-semibold leading-snug text-white group-hover:text-pitflix-light">
+          {item.title}
+        </p>
+        <p className="mt-1 text-[11px] text-pitflix-muted">
+          {item.year ?? "—"} · {isMovie ? "Movie" : "Series"}
+        </p>
+        {because && (
+          <p className="mt-1.5 line-clamp-1 text-[10px] text-pitflix-subtle">Because you watched {because}</p>
+        )}
+      </div>
+    </div>
+  );
 }
 
 type SearchHit = {
@@ -33,6 +145,20 @@ type SearchHit = {
 
 export function RecommendationsPage() {
   const navigate = useNavigate();
+  const queryClient = useQueryClient();
+
+  const libraryRecsQ = useQuery({
+    queryKey: ["library-recommendations"],
+    queryFn: fetchLibraryRecommendations,
+    staleTime: 5 * 60_000,
+  });
+  const refreshMutation = useMutation({
+    mutationFn: refreshLibraryRecommendations,
+    onSuccess: (data) => {
+      queryClient.setQueryData(["library-recommendations"], data);
+    },
+  });
+
   const [q, setQ] = useState("");
   const debounced = useDebounce(q, 380);
   const [selected, setSelected] = useState<SearchHit | null>(null);
@@ -101,8 +227,11 @@ export function RecommendationsPage() {
 
   const hits = useMemo(() => searchQ.data ?? [], [searchQ.data]);
 
+  const { menu, closeMenu, handleContextMenu, runAction } = useMediaContextMenu();
+
   return (
-    <div className="mx-auto max-w-5xl space-y-8 pb-10">
+    <div className="w-full space-y-8 pb-10">
+      <BackButton className="mb-0" />
       {/* Header */}
       <div className="flex flex-wrap items-start justify-between gap-4">
         <div>
@@ -283,6 +412,17 @@ export function RecommendationsPage() {
               return (
                 <div
                   key={`${item.mediaType}-${item.tmdbId}`}
+                  onContextMenu={handleContextMenu(
+                    mediaContextTarget({
+                      tmdbId: item.tmdbId,
+                      mediaType: item.mediaType === "tv" ? "tv" : "movie",
+                      title: item.title,
+                      posterUrl: item.posterUrl,
+                      inLibrary: inLib,
+                      libraryId: libEntry?.id,
+                      watchStatus: undefined,
+                    }),
+                  )}
                   className="group flex flex-col overflow-hidden rounded-2xl border border-pitflix-card/60 bg-pitflix-surface/60 transition-all hover:border-pitflix-primary/50 hover:shadow-lg hover:shadow-black/30"
                 >
                   <div
@@ -359,6 +499,67 @@ export function RecommendationsPage() {
           </p>
         </section>
       )}
+
+      {/* For You — auto-generated from your most recently completed titles */}
+      <section>
+        <div className="mb-5 flex flex-wrap items-center justify-between gap-2">
+          <div>
+            <h2 className="text-lg font-bold text-white">For You</h2>
+            <p className="mt-0.5 text-xs text-pitflix-muted">
+              Based on what you've finished watching recently. Refreshes automatically every few hours.
+              {libraryRecsQ.data?.computedAtUtc && (
+                <> Updated {new Date(libraryRecsQ.data.computedAtUtc).toLocaleString()}.</>
+              )}
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={() => refreshMutation.mutate()}
+            disabled={refreshMutation.isPending}
+            className="flex items-center gap-1.5 rounded-xl border border-white/15 px-3 py-2 text-sm text-pitflix-muted transition hover:border-pitflix-primary/40 hover:text-white disabled:opacity-50"
+          >
+            <RefreshCw className={cn("h-4 w-4", refreshMutation.isPending && "animate-spin")} />
+            {refreshMutation.isPending ? "Refreshing…" : "Refresh recommendations"}
+          </button>
+        </div>
+
+        {refreshMutation.data?.error && (
+          <p className="mb-3 text-xs text-amber-200/90">{refreshMutation.data.error}</p>
+        )}
+
+        {libraryRecsQ.isLoading ? (
+          <PosterGridSkeleton />
+        ) : libraryRecsQ.isError ? (
+          <p className="text-sm text-rose-200/90">Could not load your recommendations right now.</p>
+        ) : (libraryRecsQ.data?.items.length ?? 0) === 0 ? (
+          <p className="text-sm text-pitflix-subtle">
+            Finish watching a few titles in your library, then hit "Refresh recommendations" to build this feed.
+          </p>
+        ) : (
+          <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5">
+            {libraryRecsQ.data!.items.map((item) => (
+              <ForYouCard
+                key={`${item.mediaType}-${item.tmdbId}`}
+                item={item}
+                navigate={navigate}
+                onContextMenu={handleContextMenu(
+                  mediaContextTarget({
+                    tmdbId: item.tmdbId,
+                    mediaType: item.mediaType === "tv" ? "tv" : "movie",
+                    title: item.title,
+                    posterUrl: item.posterUrl,
+                    inLibrary: item.isInLibrary,
+                    libraryId: item.libraryId,
+                    watchStatus: item.watchStatus,
+                  }),
+                )}
+              />
+            ))}
+          </div>
+        )}
+      </section>
+
+      <LibraryContextMenuLayer menu={menu} onClose={closeMenu} onAction={(a) => void runAction(a)} />
     </div>
   );
 }

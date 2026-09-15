@@ -40,4 +40,10 @@ export type PlaybackLaunchState = {
   seriesName?: string;
   /** Full ordered list of live IPTV channels from the provider — enables in-player channel playlist and prev/next navigation. */
   liveChannels?: LiveChannelEntry[];
+  /** Active local torrent-engine hash; removed from the streaming cache after player exit. */
+  torrentInfoHash?: string;
+  /** Explicit playlist for a device video opened from a virtual grouping that isn't a real
+   * filesystem folder (e.g. a saved "collection") — takes priority over scanning the file's real
+   * parent directory for playlist siblings. */
+  deviceCollectionEntries?: { name: string; path: string }[];
 };

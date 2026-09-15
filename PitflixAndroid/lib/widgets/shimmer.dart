@@ -139,6 +139,39 @@ class PosterGridSkeleton extends StatelessWidget {
   }
 }
 
+/// Cast-row + overview-paragraph placeholder, matching TitleAboutSection's
+/// layout — shown on Title Detail while TMDB's full detail lookup
+/// (overview/cast/genres) is still in flight, so the About tab reads as
+/// "loading" instead of just looking blank/broken.
+class TitleAboutSkeleton extends StatelessWidget {
+  const TitleAboutSkeleton({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    return Shimmer(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              for (var i = 0; i < 5; i++) ...[
+                const ShimmerBox(width: 56, height: 56, radius: 28),
+                if (i != 4) const SizedBox(width: 10),
+              ],
+            ],
+          ),
+          const SizedBox(height: 20),
+          const ShimmerBox(width: double.infinity, height: 13, radius: 4),
+          const SizedBox(height: 8),
+          const ShimmerBox(width: double.infinity, height: 13, radius: 4),
+          const SizedBox(height: 8),
+          const ShimmerBox(width: 180, height: 13, radius: 4),
+        ],
+      ),
+    );
+  }
+}
+
 /// Stack of full-width, card-sized placeholder rows, matching Lists' rows.
 class ListRowsSkeleton extends StatelessWidget {
   final int count;

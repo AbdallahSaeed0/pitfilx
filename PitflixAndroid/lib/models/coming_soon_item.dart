@@ -1,5 +1,5 @@
-/// An upcoming movie or TV season from the local backend's
-/// `GET /api/home/coming-soon` — automatic discovery (upcoming TMDB movie
+/// An upcoming movie or TV season, straight from TMDB (see
+/// TmdbService.fetchComingSoon) — automatic discovery (upcoming movie
 /// releases, brand-new series, and season 2+ premieres within ~30 days), not
 /// something the user has to manually curate.
 class ComingSoonItem {

@@ -8,10 +8,10 @@ namespace Pitflix.API;
 public static class MediaCatalogHelpers
 {
     public static async Task<object> MakePageAsync(IReadOnlyList<MediaCardDto> rawItems, int total, int page, int pageSize,
-        TmdbClient? tmdb, CancellationToken ct)
+        TmdbClient? tmdb, CancellationToken ct, LibraryRepository? repo = null)
     {
         var mapped = rawItems.Select(ImageUrls.MapMediaCard).ToList();
-        await MediaCardPosterEnricher.EnrichMissingRemotePostersAsync(mapped, tmdb, ct).ConfigureAwait(false);
+        await MediaCardPosterEnricher.EnrichMissingRemotePostersAsync(mapped, tmdb, ct, repo).ConfigureAwait(false);
         return new
         {
             items = mapped,
@@ -129,7 +129,8 @@ public static class MediaCatalogHelpers
                     BackdropLocalPath = m.BackdropLocalPath,
                     SelectedBackdropPath = m.SelectedBackdropPath,
                     MediaFilePath = m.FilePath,
-                    TmdbMediaType = "Movie"
+                    TmdbMediaType = "Movie",
+                    PosterRemoteUrl = m.PosterRemoteUrl
                 }).ToListAsync(ct).ConfigureAwait(false);
                 var ratingMap = await repo.GetImdbRatingMapAsync("Movie", ct).ConfigureAwait(false);
                 var sortedAll = sortNorm == "imdbdesc"
@@ -160,7 +161,8 @@ public static class MediaCatalogHelpers
                     BackdropLocalPath = m.BackdropLocalPath,
                     SelectedBackdropPath = m.SelectedBackdropPath,
                     MediaFilePath = m.FilePath,
-                    TmdbMediaType = "Movie"
+                    TmdbMediaType = "Movie",
+                    PosterRemoteUrl = m.PosterRemoteUrl
                 })
                 .ToListAsync(ct)
                 .ConfigureAwait(false);
@@ -201,7 +203,8 @@ public static class MediaCatalogHelpers
                         : (s.Overview.Length > 200 ? s.Overview.Substring(0, 200) : s.Overview),
                     BackdropLocalPath = s.BackdropLocalPath,
                     SelectedBackdropPath = s.SelectedBackdropPath,
-                    TmdbMediaType = "Series"
+                    TmdbMediaType = "Series",
+                    PosterRemoteUrl = s.PosterRemoteUrl
                 }).ToListAsync(ct).ConfigureAwait(false);
                 var ratingMap = await repo.GetImdbRatingMapAsync("Series", ct).ConfigureAwait(false);
                 var sortedAll = sortNormS == "imdbdesc"
@@ -231,7 +234,8 @@ public static class MediaCatalogHelpers
                         : (s.Overview.Length > 200 ? s.Overview.Substring(0, 200) : s.Overview),
                     BackdropLocalPath = s.BackdropLocalPath,
                     SelectedBackdropPath = s.SelectedBackdropPath,
-                    TmdbMediaType = "Series"
+                    TmdbMediaType = "Series",
+                    PosterRemoteUrl = s.PosterRemoteUrl
                 })
                 .ToListAsync(ct)
                 .ConfigureAwait(false);

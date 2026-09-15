@@ -39,6 +39,15 @@ type AppPrefsState = {
    */
   playerMode: "detached" | "remote";
   setPlayerMode: (value: "detached" | "remote") => void;
+  /**
+   * Network-level (sub-resource) ad blocking for the embedded Browse tab
+   * webview. Independent of the always-on cosmetic ad hiding — an escape
+   * hatch in case this breaks a specific site. Applied to the Rust-side
+   * `NetworkState` each time the Browse tab mounts (see `BrowsePage.tsx`),
+   * since that state is per-process and doesn't persist itself.
+   */
+  browseAdBlockEnabled: boolean;
+  setBrowseAdBlockEnabled: (value: boolean) => void;
 };
 
 export const useAppPrefsStore = create<AppPrefsState>()(
@@ -58,6 +67,8 @@ export const useAppPrefsStore = create<AppPrefsState>()(
       setDefaultSpoilerProtection: (defaultSpoilerProtection) => set({ defaultSpoilerProtection }),
       playerMode: "detached",
       setPlayerMode: (playerMode) => set({ playerMode }),
+      browseAdBlockEnabled: true,
+      setBrowseAdBlockEnabled: (browseAdBlockEnabled) => set({ browseAdBlockEnabled }),
     }),
     { name: "pitflix-app-prefs" },
   ),

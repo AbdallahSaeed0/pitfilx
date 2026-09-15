@@ -28,7 +28,13 @@ export function PlayerSpeedControl({
   const isFooter = variant === "footer";
 
   return (
-    <details className="group relative">
+    // open:z-[70]: the popup below is position:absolute and grows upward out of this control's
+    // own box (bottom-full) — without an explicit stacking-context bump while open, a sibling
+    // control later in the footer's flex row could still occlude parts of it (position:absolute
+    // escapes normal flow but not stacking order, and this row has several other position:relative
+    // <details> triggers side by side). Promoting the whole trigger+popup above its row siblings
+    // only while open avoids relying on DOM order alone to keep it fully clickable.
+    <details className="group relative open:z-[70]">
       <summary
         className={cn(
           "flex cursor-pointer list-none items-center justify-center marker:content-none [&::-webkit-details-marker]:hidden",

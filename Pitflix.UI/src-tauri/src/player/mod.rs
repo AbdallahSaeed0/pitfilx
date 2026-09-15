@@ -4,26 +4,28 @@ pub mod commands;
 pub mod events;
 pub mod playback_orchestrator;
 
-pub mod tauri_commands;
 pub mod subtitle_generator;
+pub mod tauri_commands;
 
 #[cfg(windows)]
 pub mod windows_host;
 
 #[cfg(windows)]
+pub mod input_bridge;
+#[cfg(windows)]
 pub mod libmpv;
 #[cfg(windows)]
 pub mod libmpv_session;
 #[cfg(windows)]
-pub mod input_bridge;
-#[cfg(windows)]
 pub mod player_export;
-#[cfg(windows)]
-pub mod thumbs;
 #[cfg(windows)]
 pub mod playlist_window;
 #[cfg(windows)]
 pub mod quality_enhancement;
+#[cfg(windows)]
+pub mod taskbar_thumb_buttons;
+#[cfg(windows)]
+pub mod thumbs;
 
 use std::sync::Mutex;
 
@@ -35,211 +37,253 @@ use self::events::Player2NativeState;
 pub struct PlayerHostState(pub Mutex<Option<PlayerHost>>);
 
 pub struct PlayerHost {
-  #[allow(dead_code)]
-  app: AppHandle,
-  #[cfg(windows)]
-  windows: windows_host::WindowsPlayerHost,
+    #[allow(dead_code)]
+    app: AppHandle,
+    #[cfg(windows)]
+    windows: windows_host::WindowsPlayerHost,
 }
 
 impl PlayerHost {
-  pub fn new(app: AppHandle) -> Self {
-    Self {
-      app: app.clone(),
-      #[cfg(windows)]
-      windows: windows_host::WindowsPlayerHost::new(app),
+    pub fn new(app: AppHandle) -> Self {
+        Self {
+            app: app.clone(),
+            #[cfg(windows)]
+            windows: windows_host::WindowsPlayerHost::new(app),
+        }
     }
-  }
 
-  pub fn open(&self, payload: PlayerOpen) -> Result<(), String> {
-    #[cfg(windows)]
-    {
-      return self.windows.open(payload);
+    pub fn open(&self, payload: PlayerOpen) -> Result<(), String> {
+        #[cfg(windows)]
+        {
+            return self.windows.open(payload);
+        }
+        #[cfg(not(windows))]
+        {
+            let _ = payload;
+            Err("Player Path B not implemented on this platform yet.".to_string())
+        }
     }
-    #[cfg(not(windows))]
-    {
-      let _ = payload;
-      Err("Player Path B not implemented on this platform yet.".to_string())
-    }
-  }
 
-  pub fn close(&self) {
-    #[cfg(windows)]
-    {
-      self.windows.close();
+    pub fn close(&self) {
+        #[cfg(windows)]
+        {
+            self.windows.close();
+        }
     }
-  }
 
-  pub fn send(&self, cmd: commands::PlayerCommand) -> Result<(), String> {
-    #[cfg(windows)]
-    {
-      return self.windows.send(cmd);
+    /// File path of the currently open external ("Pitflix Player" / detached mpv) session, if any.
+    pub fn current_path(&self) -> Option<String> {
+        #[cfg(windows)]
+        {
+            self.windows.current_path()
+        }
+        #[cfg(not(windows))]
+        {
+            None
+        }
     }
-    #[cfg(not(windows))]
-    {
-      let _ = cmd;
-      Err("Player Path B not implemented on this platform yet.".to_string())
-    }
-  }
 
-  pub fn pause_with_confirmation(&self) -> Result<(), String> {
-    #[cfg(windows)]
-    {
-      return self.windows.pause_with_confirmation();
+    pub fn send(&self, cmd: commands::PlayerCommand) -> Result<(), String> {
+        #[cfg(windows)]
+        {
+            return self.windows.send(cmd);
+        }
+        #[cfg(not(windows))]
+        {
+            let _ = cmd;
+            Err("Player Path B not implemented on this platform yet.".to_string())
+        }
     }
-    #[cfg(not(windows))]
-    {
-      Err("Player Path B not implemented on this platform yet.".to_string())
-    }
-  }
 
-  /// Resume via correlated mpv JSON IPC (`request_id`); blocks until verified or returns `Err` (inline retry in UI).
-  pub fn resume_with_confirmation(&self) -> Result<(), String> {
-    #[cfg(windows)]
-    {
-      return self.windows.resume_with_confirmation();
+    pub fn pause_with_confirmation(&self) -> Result<(), String> {
+        #[cfg(windows)]
+        {
+            return self.windows.pause_with_confirmation();
+        }
+        #[cfg(not(windows))]
+        {
+            Err("Player Path B not implemented on this platform yet.".to_string())
+        }
     }
-    #[cfg(not(windows))]
-    {
-      Err("Player Path B not implemented on this platform yet.".to_string())
-    }
-  }
 
-  pub fn set_video_bounds(&self, x: i32, y: i32, width: i32, height: i32) -> Result<(), String> {
-    #[cfg(windows)]
-    {
-      return self.windows.set_video_bounds(x, y, width, height);
+    /// Resume via correlated mpv JSON IPC (`request_id`); blocks until verified or returns `Err` (inline retry in UI).
+    pub fn resume_with_confirmation(&self) -> Result<(), String> {
+        #[cfg(windows)]
+        {
+            return self.windows.resume_with_confirmation();
+        }
+        #[cfg(not(windows))]
+        {
+            Err("Player Path B not implemented on this platform yet.".to_string())
+        }
     }
-    #[cfg(not(windows))]
-    {
-      let _ = (x, y, width, height);
-      Ok(())
-    }
-  }
 
-  pub fn get_native_state(&self) -> Player2NativeState {
-    #[cfg(windows)]
-    {
-      return self.windows.get_native_state();
+    pub fn set_video_bounds(
+        &self,
+        x: i32,
+        y: i32,
+        width: i32,
+        height: i32,
+        skip_overlay_refresh: bool,
+    ) -> Result<(), String> {
+        #[cfg(windows)]
+        {
+            return self
+                .windows
+                .set_video_bounds(x, y, width, height, skip_overlay_refresh);
+        }
+        #[cfg(not(windows))]
+        {
+            let _ = (x, y, width, height, skip_overlay_refresh);
+            Ok(())
+        }
     }
-    #[cfg(not(windows))]
-    {
-      Player2NativeState {
-        session_active: false,
-        ipc_dead: false,
-        backend: "none".to_string(),
-        session_id: None,
-        video_hwnd: None,
-        ipc_mirror: None,
-        libmpv_pause_property: None,
-        libmpv_property_error: Some("Path B player is Windows-only".to_string()),
-        pause_verification: None,
-        render_frame_count: 0,
-        last_render_error: None,
-        window_thread_id: None,
-      }
-    }
-  }
 
-  pub fn list_external_subtitle_files(&self) -> Result<Vec<String>, String> {
-    #[cfg(windows)]
-    {
-      return self.windows.list_external_subtitle_files();
+    pub fn refresh_dpi_cache(&self) -> Result<(), String> {
+        #[cfg(windows)]
+        {
+            return self.windows.refresh_dpi_cache();
+        }
+        #[cfg(not(windows))]
+        {
+            Ok(())
+        }
     }
-    #[cfg(not(windows))]
-    {
-      Ok(Vec::new())
-    }
-  }
 
-  pub fn test_ipc_osd(&self) -> Result<(), String> {
-    #[cfg(windows)]
-    {
-      return self.windows.test_ipc_osd();
+    pub fn set_video_visible(&self, visible: bool) -> Result<(), String> {
+        #[cfg(windows)]
+        {
+            return self.windows.set_video_visible(visible);
+        }
+        #[cfg(not(windows))]
+        {
+            let _ = visible;
+            Ok(())
+        }
     }
-    #[cfg(not(windows))]
-    {
-      Err("Player Path B not implemented on this platform yet.".to_string())
-    }
-  }
 
-  pub fn test_toggle_pause(&self) -> Result<(), String> {
-    #[cfg(windows)]
-    {
-      return self.windows.test_toggle_pause();
+    pub fn get_native_state(&self) -> Player2NativeState {
+        #[cfg(windows)]
+        {
+            return self.windows.get_native_state();
+        }
+        #[cfg(not(windows))]
+        {
+            Player2NativeState {
+                session_active: false,
+                ipc_dead: false,
+                backend: "none".to_string(),
+                session_id: None,
+                video_hwnd: None,
+                ipc_mirror: None,
+                libmpv_pause_property: None,
+                libmpv_property_error: Some("Path B player is Windows-only".to_string()),
+                pause_verification: None,
+                render_frame_count: 0,
+                last_render_error: None,
+                window_thread_id: None,
+            }
+        }
     }
-    #[cfg(not(windows))]
-    {
-      Err("Player Path B not implemented on this platform yet.".to_string())
-    }
-  }
 
-  pub fn recover_external_session(&self) -> Result<(), String> {
-    #[cfg(windows)]
-    {
-      return self.windows.recover_external_session();
+    pub fn list_external_subtitle_files(&self) -> Result<Vec<String>, String> {
+        #[cfg(windows)]
+        {
+            return self.windows.list_external_subtitle_files();
+        }
+        #[cfg(not(windows))]
+        {
+            Ok(Vec::new())
+        }
     }
-    #[cfg(not(windows))]
-    {
-      Err("Player Path B not implemented on this platform yet.".to_string())
-    }
-  }
 
-  pub fn recover_external_session_no_config(&self) -> Result<(), String> {
-    #[cfg(windows)]
-    {
-      return self.windows.recover_external_session_no_config();
+    pub fn test_ipc_osd(&self) -> Result<(), String> {
+        #[cfg(windows)]
+        {
+            return self.windows.test_ipc_osd();
+        }
+        #[cfg(not(windows))]
+        {
+            Err("Player Path B not implemented on this platform yet.".to_string())
+        }
     }
-    #[cfg(not(windows))]
-    {
-      Err("Player Path B not implemented on this platform yet.".to_string())
-    }
-  }
 
-  pub fn get_last_mpv_exit_report(&self) -> Option<windows_host::MpvExitReport> {
-    #[cfg(windows)]
-    {
-      return self.windows.get_last_mpv_exit_report();
+    pub fn test_toggle_pause(&self) -> Result<(), String> {
+        #[cfg(windows)]
+        {
+            return self.windows.test_toggle_pause();
+        }
+        #[cfg(not(windows))]
+        {
+            Err("Player Path B not implemented on this platform yet.".to_string())
+        }
     }
-    #[cfg(not(windows))]
-    {
-      None
-    }
-  }
 
-  pub fn open_detached_no_wid(&self, payload: PlayerOpen) -> Result<(), String> {
-    #[cfg(windows)]
-    {
-      return self.windows.open_detached_no_wid(payload);
+    pub fn recover_external_session(&self) -> Result<(), String> {
+        #[cfg(windows)]
+        {
+            return self.windows.recover_external_session();
+        }
+        #[cfg(not(windows))]
+        {
+            Err("Player Path B not implemented on this platform yet.".to_string())
+        }
     }
-    #[cfg(not(windows))]
-    {
-      let _ = payload;
-      Err("Player Path B not implemented on this platform yet.".to_string())
-    }
-  }
 
-  pub fn open_detached(&self, payload: PlayerOpen) -> Result<(), String> {
-    #[cfg(windows)]
-    {
-      return self.windows.open_detached(payload);
+    pub fn recover_external_session_no_config(&self) -> Result<(), String> {
+        #[cfg(windows)]
+        {
+            return self.windows.recover_external_session_no_config();
+        }
+        #[cfg(not(windows))]
+        {
+            Err("Player Path B not implemented on this platform yet.".to_string())
+        }
     }
-    #[cfg(not(windows))]
-    {
-      let _ = payload;
-      Err("Player Path B not implemented on this platform yet.".to_string())
-    }
-  }
 
+    pub fn get_last_mpv_exit_report(&self) -> Option<windows_host::MpvExitReport> {
+        #[cfg(windows)]
+        {
+            return self.windows.get_last_mpv_exit_report();
+        }
+        #[cfg(not(windows))]
+        {
+            None
+        }
+    }
 
-  pub fn set_embedded_safe_mode(&self, enabled: bool) {
-    #[cfg(windows)]
-    {
-      self.windows.set_embedded_safe_mode(enabled);
+    pub fn open_detached_no_wid(&self, payload: PlayerOpen) -> Result<(), String> {
+        #[cfg(windows)]
+        {
+            return self.windows.open_detached_no_wid(payload);
+        }
+        #[cfg(not(windows))]
+        {
+            let _ = payload;
+            Err("Player Path B not implemented on this platform yet.".to_string())
+        }
     }
-    #[cfg(not(windows))]
-    {
-      let _ = enabled;
+
+    pub fn open_detached(&self, payload: PlayerOpen) -> Result<(), String> {
+        #[cfg(windows)]
+        {
+            return self.windows.open_detached(payload);
+        }
+        #[cfg(not(windows))]
+        {
+            let _ = payload;
+            Err("Player Path B not implemented on this platform yet.".to_string())
+        }
     }
-  }
+
+    pub fn set_embedded_safe_mode(&self, enabled: bool) {
+        #[cfg(windows)]
+        {
+            self.windows.set_embedded_safe_mode(enabled);
+        }
+        #[cfg(not(windows))]
+        {
+            let _ = enabled;
+        }
+    }
 }
-

@@ -10,17 +10,25 @@ import {
   Volume2,
   Wrench,
 } from "lucide-react";
+import { useState } from "react";
 import { cn } from "../../../utils/cn";
 import { getControlSizeClasses, resolveControlScale, TIME_LABEL_SIZE_CLASSES } from "../../player/playerLayoutSizes";
 import { getSeekBarVisualStyle } from "../../player/playerSeekBarLayout";
 import { groupControlsByZone } from "../../player/playerLayoutZones";
-import type { PlayerLayoutControlId, PlayerLayoutEditorSelectionId, PlayerLayoutPrefs } from "../../player/playerLayoutTypes";
+import type {
+  PlayerLayoutControlId,
+  PlayerLayoutEditorSelectionId,
+  PlayerLayoutPrefs,
+  PlayerLayoutZone,
+} from "../../player/playerLayoutTypes";
 import { PLAYER_LAYOUT_CONTROL_LABELS, PLAYER_LAYOUT_SELECTION_LABELS } from "../../player/playerLayoutTypes";
 
 type Props = {
   prefs: PlayerLayoutPrefs;
   selectedId: PlayerLayoutEditorSelectionId | null;
   onSelect: (id: PlayerLayoutEditorSelectionId | null) => void;
+  /** `targetIndex` is measured against the zone's controls with the dragged one excluded. */
+  onReorderDrop: (id: PlayerLayoutControlId, zone: PlayerLayoutZone, targetIndex: number) => void;
 };
 
 function Selectable({
@@ -220,19 +228,93 @@ function MockControl({
   }
 }
 
-export function PlayerLayoutEditorPreview({ prefs, selectedId, onSelect }: Props) {
+export function PlayerLayoutEditorPreview({ prefs, selectedId, onSelect, onReorderDrop }: Props) {
   const grouped = groupControlsByZone(prefs);
   const seek = prefs.seekBar;
   const seekStyle = getSeekBarVisualStyle(seek);
   const timeLabelClass = TIME_LABEL_SIZE_CLASSES[seek.timeLabelSize] ?? TIME_LABEL_SIZE_CLASSES.default;
 
-  const renderZone = (zone: "left" | "center" | "right", justify: string) => (
-    <div className={cn("flex min-h-[60px] flex-wrap content-center items-center gap-3 sm:gap-3.5", justify)}>
-      {grouped[zone].map((id) => (
-        <MockControl key={id} id={id} prefs={prefs} selectedId={selectedId} onSelect={onSelect} />
-      ))}
-    </div>
-  );
+  const [draggedId, setDraggedId] = useState<PlayerLayoutControlId | null>(null);
+  const [dropTarget, setDropTarget] = useState<{ zone: PlayerLayoutZone; index: number } | null>(null);
+
+  const endDrag = () => {
+    setDraggedId(null);
+    setDropTarget(null);
+  };
+
+  const renderZone = (zone: PlayerLayoutZone, justify: string) => {
+    const ids = grouped[zone];
+    return (
+      <div
+        className={cn(
+          "flex min-h-[60px] flex-wrap content-center items-center gap-3 rounded-lg transition-colors sm:gap-3.5",
+          justify,
+          draggedId && dropTarget?.zone === zone ? "bg-emerald-400/[0.05]" : null,
+        )}
+        onDragOver={(e) => {
+          if (!draggedId) return;
+          e.preventDefault();
+          // Hovering the zone's own empty space (not over a specific chip below) —
+          // land at the end of this zone.
+          if (e.target === e.currentTarget) {
+            setDropTarget({ zone, index: ids.filter((cid) => cid !== draggedId).length });
+          }
+        }}
+        onDrop={(e) => {
+          if (!draggedId) return;
+          e.preventDefault();
+          const fallback = ids.filter((cid) => cid !== draggedId).length;
+          onReorderDrop(draggedId, zone, dropTarget?.zone === zone ? dropTarget.index : fallback);
+          endDrag();
+        }}
+      >
+        {ids.map((id) => {
+          const siblings = ids.filter((cid) => cid !== draggedId);
+          const posExcludingDragged = siblings.indexOf(id);
+          const isDropBefore =
+            draggedId != null &&
+            draggedId !== id &&
+            dropTarget?.zone === zone &&
+            dropTarget.index === posExcludingDragged;
+          return (
+            <div
+              key={id}
+              draggable
+              onDragStart={(e) => {
+                setDraggedId(id);
+                e.dataTransfer.effectAllowed = "move";
+                e.dataTransfer.setData("text/plain", id);
+              }}
+              onDragEnd={endDrag}
+              onDragOver={(e) => {
+                if (!draggedId || draggedId === id) return;
+                e.preventDefault();
+                e.stopPropagation();
+                const rect = e.currentTarget.getBoundingClientRect();
+                const before = e.clientX < rect.left + rect.width / 2;
+                setDropTarget({ zone, index: before ? posExcludingDragged : posExcludingDragged + 1 });
+              }}
+              onDrop={(e) => {
+                if (!draggedId) return;
+                e.preventDefault();
+                e.stopPropagation();
+                onReorderDrop(draggedId, zone, dropTarget?.zone === zone ? dropTarget.index : posExcludingDragged);
+                endDrag();
+              }}
+              className={cn(
+                "relative cursor-grab active:cursor-grabbing",
+                draggedId === id && "opacity-40",
+                isDropBefore &&
+                  "before:absolute before:-left-2 before:top-1 before:bottom-1 before:w-0.5 before:rounded-full before:bg-emerald-400 before:content-['']",
+              )}
+            >
+              <MockControl id={id} prefs={prefs} selectedId={selectedId} onSelect={onSelect} />
+            </div>
+          );
+        })}
+      </div>
+    );
+  };
 
   return (
     <div

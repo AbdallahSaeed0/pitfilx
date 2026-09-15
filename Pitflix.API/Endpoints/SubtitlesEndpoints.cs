@@ -126,7 +126,7 @@ public static class SubtitlesEndpoints
         });
 
         app.MapGet("/api/subtitles/subsource/search", async (
-            string? title, string? imdbId, string? mediaType, int? season,
+            string? title, string? imdbId, string? mediaType, int? season, int? episode,
             LibraryRepository repo, CancellationToken ct) =>
         {
             var ssKey = await repo.GetSettingAsync("SubSourceApiKey", ct).ConfigureAwait(false);
@@ -142,9 +142,35 @@ public static class SubtitlesEndpoints
             static bool IsEnglish(string l) =>
                 l.StartsWith("en", StringComparison.OrdinalIgnoreCase) || l.Contains("english", StringComparison.OrdinalIgnoreCase);
 
+            // SubSource only searches at the season level (no per-episode query param), so episode packs
+            // and single-episode releases come back mixed together. When the caller knows which episode
+            // it's after, rank releases that actually cover that episode above ones that don't — this is
+            // what fixes "SubSource sometimes gives me the wrong file" for episode downloads.
+            int EpisodeRankTier(string releaseName)
+            {
+                if (episode is not > 0 || season is not > 0) return 0;
+                var s = season.Value;
+                var e = episode.Value;
+
+                if (System.Text.RegularExpressions.Regex.IsMatch(
+                        releaseName, $@"(?i)S0*{s}E0*{e}(?!\d)"))
+                    return 0; // exact single-episode match
+
+                foreach (System.Text.RegularExpressions.Match m in System.Text.RegularExpressions.Regex.Matches(
+                             releaseName, @"(?i)E0*(\d{1,3})\s*[~\-]\s*E?0*(\d{1,3})"))
+                {
+                    if (int.TryParse(m.Groups[1].Value, out var lo) && int.TryParse(m.Groups[2].Value, out var hi) &&
+                        e >= Math.Min(lo, hi) && e <= Math.Max(lo, hi))
+                        return 1; // range pack that covers this episode
+                }
+
+                return 2; // unrelated episode/pack
+            }
+
             var items = outcome.Items
                 .Where(s => IsArabic(s.Language) || IsEnglish(s.Language))
-                .OrderByDescending(s => IsArabic(s.Language)) // stable sort: Arabic first, English after, original order preserved within each
+                .OrderBy(s => EpisodeRankTier(s.ReleaseName))
+                .ThenByDescending(s => IsArabic(s.Language)) // stable sort: Arabic first, English after, within each tier
                 .Select(s => new
                 {
                     releaseName = s.ReleaseName, language = s.Language,

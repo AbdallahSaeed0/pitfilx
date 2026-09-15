@@ -493,7 +493,7 @@ export function StreamSeasonPage() {
       />
       {menu ? (
         <MediaContextMenu
-          label={menu.target.title}
+          target={menu.target}
           x={menu.x}
           y={menu.y}
           showRescan={false}

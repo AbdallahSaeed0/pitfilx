@@ -12,6 +12,8 @@ export type MediaCard = {
   selectedBackdropPath?: string | null;
   isArabic: boolean;
   watchStatus?: string;
+  /** How many times this title has been watched again since its first completion (movies only). */
+  rewatchCount?: number;
   overview?: string | null;
   genresCsv?: string | null;
   dateAdded?: string;

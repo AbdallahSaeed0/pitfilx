@@ -10,6 +10,7 @@ import type {
   MpvTrack,
   Player2NativeState,
   PlayerSubtitlePrefs,
+  PlaylistEpisodeMeta,
 } from "./playerTypes";
 import type { PlayerLayoutPrefs } from "./playerLayoutTypes";
 
@@ -82,6 +83,9 @@ export type PlayerCompanionViewProps = PlayerCompanionMediaProps &
 /** Launch state + labels for embedded chrome. */
 export interface PlayerEmbeddedMediaProps {
   state: PlaybackLaunchState;
+  /** Movie's backdrop path (landscape, ~1280px) for the pause info screen — the episode
+   * counterpart comes from playlistEpisodeMetaByPath's stills instead. Null for series/unresolved. */
+  moviePauseBackdropPath: string | null;
 }
 
 /** DOM refs wired by PlayerPage effects (bounds, focus, seek). */
@@ -158,6 +162,11 @@ export interface PlayerEmbeddedPlaylistProps {
   setFolderPlaylistOpen: Dispatch<SetStateAction<boolean>>;
   setFolderPlaylistPinned: Dispatch<SetStateAction<boolean>>;
   navigateToSiblingFile: (entry: DeviceFsEntry) => void | Promise<void>;
+  exitAndClose: () => void | Promise<void>;
+  /** Library episode metadata for rows that match a season episode, keyed by
+   * `normalizeMediaPathKey(filePath)` — lets the folder playlist render
+   * episode cards (title/IMDb/runtime/synopsis) instead of raw filenames. */
+  playlistEpisodeMetaByPath: Map<string, PlaylistEpisodeMeta>;
 }
 
 /** Seek bar, play/pause, and transport error UI. */
@@ -200,6 +209,9 @@ export interface PlayerEmbeddedSeekHoverProps {
     } | null>
   >;
   scheduleHoverThumb: (filePath: string, seconds: number) => void;
+  /** Exact (non-bucketed) frame fetch — used on an actual seek-bar click so the shown preview
+   * matches exactly where the video lands, instead of the ~2.5s-rounded hover-sweep preview. */
+  scheduleExactHoverThumb: (filePath: string, seconds: number) => void;
 }
 
 /** Subtitle tracks, appearance, and Arabic generation. */
@@ -249,6 +261,10 @@ export interface PlayerEmbeddedSettingsProps {
   alwaysOnTop: boolean;
   toggleAlwaysOnTop: () => void;
   layoutPrefs: PlayerLayoutPrefs;
+  /** Picture-in-Picture (mini player) — shrinks this window into a small always-on-top corner
+   * overlay with chrome hidden, rather than a separate floating window/session. */
+  isPip: boolean;
+  togglePip: () => void;
 }
 
 /** Dev-only IPC diagnostics panel. */

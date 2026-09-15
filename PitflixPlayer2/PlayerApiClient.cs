@@ -294,6 +294,77 @@ internal static class PlayerApiClient
         catch { return null; }
     }
 
+    // ── Playlist enrichment (episode metadata for the Playlist popup) ────────
+    //
+    // The flat sibling-file list built by MainWindow.BuildFolderPlaylistAsync
+    // knows nothing about the library — just paths.  For series episodes we
+    // resolve the current file to a show/season, then pull the season's full
+    // episode metadata (title, overview, IMDb rating, runtime) so the
+    // Playlist popup can render real episode rows instead of raw filenames.
+
+    public sealed record ResolvedPlaybackInfo(
+        string MediaType, int? LibraryShowId, int? LibraryEpisodeId, int? Season, int? EpisodeNumber);
+
+    public static async Task<ResolvedPlaybackInfo?> ResolveByPathAsync(string filePath, CancellationToken ct = default)
+    {
+        try
+        {
+            var url  = $"{ApiRoot}/playback/resolve-by-path?filePath={Uri.EscapeDataString(filePath)}";
+            var resp = await Http.GetAsync(url, ct).ConfigureAwait(false);
+            if (!resp.IsSuccessStatusCode) return null;
+            var json = await resp.Content.ReadAsStringAsync(ct).ConfigureAwait(false);
+            using var doc = JsonDocument.Parse(json);
+            var root = doc.RootElement;
+            var mediaType = TryGetString(root, "mediaType") ?? "";
+            return new ResolvedPlaybackInfo(
+                mediaType,
+                TryGetInt(root, "libraryShowId"),
+                TryGetInt(root, "libraryEpisodeId"),
+                TryGetInt(root, "season"),
+                TryGetInt(root, "episodeNumber"));
+        }
+        catch { return null; }
+    }
+
+    public sealed record PlaylistEpisodeInfo(
+        int? Id, int EpisodeNumber, string? Title, string? Overview, string? FilePath,
+        double? ImdbVoteAverage, int? RuntimeMinutes, string? StillUrl, string? StillLocalPath);
+
+    public static async Task<List<PlaylistEpisodeInfo>> GetSeasonEpisodesAsync(
+        int libraryShowId, int season, CancellationToken ct = default)
+    {
+        var result = new List<PlaylistEpisodeInfo>();
+        try
+        {
+            var resp = await Http.GetAsync($"{ApiRoot}/series/{libraryShowId}/season/{season}", ct).ConfigureAwait(false);
+            if (!resp.IsSuccessStatusCode) return result;
+            var json = await resp.Content.ReadAsStringAsync(ct).ConfigureAwait(false);
+            using var doc = JsonDocument.Parse(json);
+            if (!doc.RootElement.TryGetProperty("episodes", out var episodesEl) || episodesEl.ValueKind != JsonValueKind.Array)
+                return result;
+
+            foreach (var ep in episodesEl.EnumerateArray())
+            {
+                var filePath = TryGetString(ep, "filePath");
+                if (string.IsNullOrWhiteSpace(filePath)) continue; // not in library — nothing to click-play
+                var epNum = TryGetInt(ep, "episodeNumber");
+                if (epNum is not int epNumber) continue;
+                result.Add(new PlaylistEpisodeInfo(
+                    TryGetInt(ep, "id"),
+                    epNumber,
+                    TryGetString(ep, "title"),
+                    TryGetString(ep, "overview"),
+                    filePath,
+                    TryGetDouble(ep, "imdbVoteAverage"),
+                    TryGetInt(ep, "runtimeMinutes"),
+                    TryGetString(ep, "stillUrl"),
+                    TryGetString(ep, "stillLocalPath")));
+            }
+        }
+        catch { /* best-effort — caller falls back to filename rows */ }
+        return result;
+    }
+
     private static string? TryGetString(JsonElement el, string prop)
     {
         if (!el.TryGetProperty(prop, out var p)) return null;

@@ -9,6 +9,7 @@ import {
   type PlayerLayoutControlId,
   type PlayerLayoutPrefs,
   type PlayerLayoutZone,
+  type PlayerPipCorner,
   type PlayerSeekBarPrefs,
 } from "./playerLayoutTypes";
 import { parseSeekBarColor, parseSeekBarThickness } from "./playerSeekBarLayout";
@@ -21,6 +22,12 @@ function parseZone(v: unknown, fallback: PlayerLayoutZone): PlayerLayoutZone {
 
 function parseControlSize(v: unknown): PlayerControlSize {
   return v === "compact" || v === "large" ? v : "default";
+}
+
+function parsePipCorner(v: unknown): PlayerPipCorner {
+  return v === "top-left" || v === "top-right" || v === "bottom-left" || v === "bottom-right"
+    ? v
+    : DEFAULT_PLAYER_LAYOUT_PREFS.pipCorner;
 }
 
 function parseControlSizes(raw: Record<string, unknown> | undefined): Partial<Record<PlayerLayoutControlId, PlayerControlSize>> {
@@ -122,6 +129,7 @@ export function parsePlayerLayoutPrefs(raw: string | null): PlayerLayoutPrefs {
             ? (parsed.controlSizes as Record<string, unknown>)
             : undefined,
         ),
+        pipCorner: parsePipCorner(parsed.pipCorner),
       };
     }
 
@@ -150,6 +158,7 @@ export function parsePlayerLayoutPrefs(raw: string | null): PlayerLayoutPrefs {
       visible: parseVisible(rawVisible),
       order: parseOrder(parsed.order),
       seekBar: parseSeekBar(parsed.seekBar),
+      pipCorner: parsePipCorner(parsed.pipCorner),
     };
   } catch {
     return DEFAULT_PLAYER_LAYOUT_PREFS;

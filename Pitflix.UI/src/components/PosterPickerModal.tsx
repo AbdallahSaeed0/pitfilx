@@ -2,18 +2,21 @@ import { useEffect, useMemo, useState } from "react";
 import { AnimatePresence, motion } from "framer-motion";
 import { API_ORIGIN } from "../api/client";
 import { getTvdbArtworks, TVDB_ARTWORK, type TvdbArtwork } from "../api/tvdb";
+import { getFanartArtwork, type FanartResponse } from "../api/fanart";
 
 type TmdbImageRow = {
   filePath: string;
   voteAverage?: number;
 };
 
+type PickerTab = "poster" | "backdrop" | "logo";
+
 type PickerRow = {
   key: string;
   previewUrl: string;
   score?: number;
-  source: "tmdb" | "tvdb";
-  kind: "poster" | "backdrop" | "banner";
+  source: "tmdb" | "tvdb" | "fanart";
+  kind: "poster" | "backdrop" | "banner" | "logo";
 };
 
 type PosterPickerModalProps = {
@@ -26,9 +29,21 @@ type PosterPickerModalProps = {
 };
 
 const TVDB_PICKER_PREFIX = "tvdb:";
+const FANART_PICKER_PREFIX = "fanart:";
 
-function tvdbRowsForTab(artworks: TvdbArtwork[] | null, tab: "poster" | "backdrop"): PickerRow[] {
+function tvdbRowsForTab(artworks: TvdbArtwork[] | null, tab: PickerTab): PickerRow[] {
   if (!artworks?.length) return [];
+  if (tab === "logo") {
+    return artworks
+      .filter((a) => a.type === 11 || a.type === 23 || a.type === 25) // TVDB clearlogo type ids
+      .map((a) => ({
+        key: `${TVDB_PICKER_PREFIX}${a.url}`,
+        previewUrl: a.thumbnail || a.url,
+        score: a.score,
+        source: "tvdb" as const,
+        kind: "logo" as const,
+      }));
+  }
   const types: number[] =
     tab === "poster"
       ? [TVDB_ARTWORK.POSTER]
@@ -44,6 +59,18 @@ function tvdbRowsForTab(artworks: TvdbArtwork[] | null, tab: "poster" | "backdro
     }));
 }
 
+function fanartRowsForTab(fanart: FanartResponse | null, tab: PickerTab): PickerRow[] {
+  if (!fanart) return [];
+  const items =
+    tab === "poster" ? fanart.posters : tab === "backdrop" ? fanart.backgrounds : fanart.clearLogos;
+  return items.map((a) => ({
+    key: `${FANART_PICKER_PREFIX}${a.url}`,
+    previewUrl: a.url,
+    source: "fanart" as const,
+    kind: tab === "poster" ? "poster" : tab === "backdrop" ? "backdrop" : "logo",
+  }));
+}
+
 export function PosterPickerModal({
   libraryId,
   tmdbId,
@@ -54,55 +81,76 @@ export function PosterPickerModal({
 }: PosterPickerModalProps) {
   const [tmdbImages, setTmdbImages] = useState<TmdbImageRow[]>([]);
   const [tvdbArtworks, setTvdbArtworks] = useState<TvdbArtwork[] | null>(null);
+  const [fanart, setFanart] = useState<FanartResponse | null>(null);
   const [selected, setSelected] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
-  const [activeTab, setActiveTab] = useState<"poster" | "backdrop">(initialTab);
+  const [activeTab, setActiveTab] = useState<PickerTab>(initialTab);
 
   useEffect(() => {
     setLoading(true);
     setSelected(null);
-    const path = activeTab === "poster" ? "posters" : "backdrops";
     const q = encodeURIComponent(mediaType);
     const tvdbMediaType = mediaType === "Movie" ? "movie" : "series";
 
+    const tmdbFetch =
+      activeTab === "logo"
+        ? Promise.resolve([] as TmdbImageRow[])
+        : fetch(`${API_ORIGIN}/api/images/${tmdbId}/${activeTab === "poster" ? "posters" : "backdrops"}?mediaType=${q}`)
+            .then((r) => r.json() as Promise<TmdbImageRow[]>)
+            .then((data) => (Array.isArray(data) ? data : []))
+            .catch(() => [] as TmdbImageRow[]);
+
     void Promise.all([
-      fetch(`${API_ORIGIN}/api/images/${tmdbId}/${path}?mediaType=${q}`)
-        .then((r) => r.json() as Promise<TmdbImageRow[]>)
-        .then((data) => (Array.isArray(data) ? data : []))
-        .catch(() => [] as TmdbImageRow[]),
+      tmdbFetch,
       getTvdbArtworks(tmdbId, tvdbMediaType).catch(() => null),
+      getFanartArtwork(tmdbId, tvdbMediaType),
     ])
-      .then(([tmdb, tvdb]) => {
+      .then(([tmdb, tvdb, fa]) => {
         setTmdbImages(tmdb);
         setTvdbArtworks(tvdb);
+        setFanart(fa);
       })
       .finally(() => setLoading(false));
   }, [tmdbId, activeTab, mediaType]);
 
   const rows = useMemo<PickerRow[]>(() => {
-    const tmdbRows: PickerRow[] = tmdbImages.map((img) => ({
-      key: img.filePath,
-      previewUrl: `https://image.tmdb.org/t/p/${activeTab === "poster" ? "w342" : "w500"}${img.filePath}`,
-      score: img.voteAverage,
-      source: "tmdb",
-      kind: activeTab,
-    }));
-    return [...tmdbRows, ...tvdbRowsForTab(tvdbArtworks, activeTab)];
-  }, [tmdbImages, tvdbArtworks, activeTab]);
+    const tmdbRows: PickerRow[] =
+      activeTab === "logo"
+        ? []
+        : tmdbImages.map((img) => ({
+            key: img.filePath,
+            previewUrl: `https://image.tmdb.org/t/p/${activeTab === "poster" ? "w342" : "w500"}${img.filePath}`,
+            score: img.voteAverage,
+            source: "tmdb",
+            kind: activeTab,
+          }));
+    return [...tmdbRows, ...tvdbRowsForTab(tvdbArtworks, activeTab), ...fanartRowsForTab(fanart, activeTab)];
+  }, [tmdbImages, tvdbArtworks, fanart, activeTab]);
 
   const handleApply = async () => {
     if (!selected) return;
     setSaving(true);
     try {
       const isTvdb = selected.startsWith(TVDB_PICKER_PREFIX);
-      const body = isTvdb
-        ? activeTab === "poster"
-          ? { tmdbId, mediaType, posterUrl: selected.slice(TVDB_PICKER_PREFIX.length) }
-          : { tmdbId, mediaType, backdropUrl: selected.slice(TVDB_PICKER_PREFIX.length) }
-        : activeTab === "poster"
-          ? { tmdbId, mediaType, posterPath: selected }
-          : { tmdbId, mediaType, backdropPath: selected };
+      const isFanart = selected.startsWith(FANART_PICKER_PREFIX);
+      const remoteUrl = isTvdb
+        ? selected.slice(TVDB_PICKER_PREFIX.length)
+        : isFanart
+          ? selected.slice(FANART_PICKER_PREFIX.length)
+          : null;
+
+      const body =
+        activeTab === "logo"
+          ? { tmdbId, mediaType, logoUrl: remoteUrl }
+          : remoteUrl
+            ? activeTab === "poster"
+              ? { tmdbId, mediaType, posterUrl: remoteUrl }
+              : { tmdbId, mediaType, backdropUrl: remoteUrl }
+            : activeTab === "poster"
+              ? { tmdbId, mediaType, posterPath: selected }
+              : { tmdbId, mediaType, backdropPath: selected };
+
       const res = await fetch(`${API_ORIGIN}/api/images/${libraryId}/select`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -127,11 +175,11 @@ export function PosterPickerModal({
         >
           <div className="flex items-center justify-between border-b border-pitflix-card p-4">
             <h2 className="text-lg font-bold text-white">
-              Choose {activeTab === "poster" ? "Poster" : "Backdrop"}
+              Choose {activeTab === "poster" ? "Poster" : activeTab === "backdrop" ? "Backdrop" : "Logo"}
             </h2>
             <div className="flex items-center gap-3">
               <div className="flex gap-1 rounded-lg bg-pitflix-card p-1">
-                {(["poster", "backdrop"] as const).map((t) => (
+                {(["poster", "backdrop", "logo"] as const).map((t) => (
                   <button
                     key={t}
                     type="button"
@@ -163,16 +211,20 @@ export function PosterPickerModal({
 
           <div className="flex-1 overflow-y-auto p-4">
             {loading ? (
-              <div className="grid grid-cols-4 gap-3">
+              <div className={`grid gap-3 ${activeTab === "poster" ? "grid-cols-4" : "grid-cols-3"}`}>
                 {Array.from({ length: 12 }).map((_, i) => (
                   <div
                     key={i}
                     className={`animate-pulse rounded-lg bg-pitflix-card ${
-                      activeTab === "poster" ? "aspect-[2/3]" : "aspect-video"
+                      activeTab === "poster" ? "aspect-[2/3]" : activeTab === "logo" ? "aspect-video" : "aspect-video"
                     }`}
                   />
                 ))}
               </div>
+            ) : rows.length === 0 ? (
+              <p className="py-12 text-center text-sm text-pitflix-muted">
+                No {activeTab === "logo" ? "logos" : activeTab} found from any connected source.
+              </p>
             ) : (
               <div
                 className={`grid gap-3 ${activeTab === "poster" ? "grid-cols-5" : "grid-cols-3"}`}
@@ -183,6 +235,8 @@ export function PosterPickerModal({
                     type="button"
                     onClick={() => setSelected(row.key)}
                     className={`relative overflow-hidden rounded-lg border-2 transition-all ${
+                      row.kind === "logo" ? "bg-white/5" : ""
+                    } ${
                       selected === row.key
                         ? "scale-[1.02] border-pitflix-primary"
                         : "border-transparent hover:border-pitflix-primary/50"
@@ -191,12 +245,14 @@ export function PosterPickerModal({
                     <img
                       src={row.previewUrl}
                       alt=""
-                      className={`w-full object-cover ${
+                      className={`w-full ${
                         row.kind === "poster"
-                          ? "aspect-[2/3]"
+                          ? "aspect-[2/3] object-cover"
                           : row.kind === "banner"
-                            ? "aspect-[758/140]"
-                            : "aspect-video"
+                            ? "aspect-[758/140] object-cover"
+                            : row.kind === "logo"
+                              ? "aspect-video object-contain p-3"
+                              : "aspect-video object-cover"
                       }`}
                     />
                     {selected === row.key ? (
@@ -204,7 +260,11 @@ export function PosterPickerModal({
                         <span className="text-xs text-white">✓</span>
                       </div>
                     ) : null}
-                    {row.source === "tvdb" ? (
+                    {row.source === "fanart" ? (
+                      <div className="absolute left-2 top-2 rounded bg-black/70 px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wide text-white/80">
+                        Fanart
+                      </div>
+                    ) : row.source === "tvdb" ? (
                       <div className="absolute left-2 top-2 rounded bg-black/70 px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wide text-white/80">
                         TVDB
                       </div>

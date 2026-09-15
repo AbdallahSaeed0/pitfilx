@@ -1,8 +1,11 @@
+import 'dart:typed_data';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import '../models/social_activity_item.dart';
 import '../models/social_comment.dart';
 import '../models/social_friend_request.dart';
 import '../models/social_profile.dart';
+import '../models/title_item.dart';
+import '../utils/list_marks.dart';
 import 'auth_service.dart';
 
 /// Real network calls against the social schema (profiles/friend_requests/
@@ -34,6 +37,8 @@ abstract class SocialService {
   static Future<void> updateProfile({
     String? username,
     String? displayName,
+    String? avatarUrl,
+    String? coverUrl,
   }) async {
     try {
       await _client
@@ -41,12 +46,44 @@ abstract class SocialService {
           .update({
             if (username != null) 'username': username,
             if (displayName != null) 'display_name': displayName,
+            if (avatarUrl != null) 'avatar_url': avatarUrl,
+            if (coverUrl != null) 'cover_url': coverUrl,
           })
           .eq('id', _myId);
     } on PostgrestException catch (e) {
       if (e.code == '23505') throw const UsernameTakenException();
       rethrow;
     }
+  }
+
+  /// Uploads picked image bytes to the `profile-images` bucket (see
+  /// 007_pitflix_profile_images_storage.sql) at a fixed per-account path —
+  /// `{user_id}/avatar.jpg` or `{user_id}/cover.jpg`, `upsert: true` so a
+  /// re-pick overwrites rather than accumulating orphaned files — then
+  /// updates `profiles.avatar_url`/`cover_url` to the resulting public URL.
+  /// A cache-busting query param is appended since the object key (and so
+  /// the URL) doesn't change between uploads, which would otherwise leave
+  /// stale cached copies showing after a re-pick. Returns the final URL.
+  static Future<String> uploadProfileImage({
+    required Uint8List bytes,
+    required bool isCover,
+    String contentType = 'image/jpeg',
+  }) async {
+    final path = '$_myId/${isCover ? 'cover' : 'avatar'}.jpg';
+    await _client.storage
+        .from('profile-images')
+        .uploadBinary(
+          path,
+          bytes,
+          fileOptions: FileOptions(contentType: contentType, upsert: true),
+        );
+    final publicUrl = _client.storage.from('profile-images').getPublicUrl(path);
+    final url = '$publicUrl?v=${DateTime.now().millisecondsSinceEpoch}';
+    await updateProfile(
+      avatarUrl: isCover ? null : url,
+      coverUrl: isCover ? url : null,
+    );
+    return url;
   }
 
   static Future<List<SocialProfile>> searchProfiles(String query) async {
@@ -91,9 +128,7 @@ abstract class SocialService {
         .order('created_at');
     if (rows.isEmpty) return [];
     final otherIds = rows.map((r) => r[otherField] as String).toSet().toList();
-    final profiles = {
-      for (final p in await _profilesByIds(otherIds)) p.id: p,
-    };
+    final profiles = {for (final p in await _profilesByIds(otherIds)) p.id: p};
     return rows
         .map(
           (r) => SocialFriendRequest(
@@ -150,21 +185,170 @@ abstract class SocialService {
     final filtered = profileId != null
         ? builder.eq('user_id', profileId)
         : builder;
-    final rows = await filtered.order('created_at', ascending: false).limit(limit);
+    final rows = await filtered
+        .order('created_at', ascending: false)
+        .limit(limit);
     if (rows.isEmpty) return [];
     final authorIds = rows.map((r) => r['user_id'] as String).toSet().toList();
-    final profiles = {
-      for (final p in await _profilesByIds(authorIds)) p.id: p,
-    };
+    final profiles = {for (final p in await _profilesByIds(authorIds)) p.id: p};
     return rows
         .map(
           (r) => SocialActivityItem.fromJson(
             r,
-            profiles[r['user_id']] ??
-                SocialProfile(id: r['user_id'] as String),
+            profiles[r['user_id']] ?? SocialProfile(id: r['user_id'] as String),
           ),
         )
         .toList();
+  }
+
+  /// Every friend's (+ your own) watched/rated activity for one specific
+  /// title — powers Title Detail's "Friends" section. RLS already scopes
+  /// `activity_events` to self + friends (see class doc), so this is just
+  /// that same table filtered down to one title instead of the whole feed.
+  /// One entry per author: if a friend both watched and later rated the
+  /// same title, only the most recent of those two rows is kept (dedup by
+  /// author id, first-seen-wins since rows arrive newest-first) — otherwise
+  /// they'd show up twice for one title.
+  static Future<List<SocialActivityItem>> fetchActivityForTitle(
+    int tmdbId,
+    String mediaType, {
+    int limit = 30,
+  }) async {
+    final rows = await _client
+        .from('activity_events')
+        .select()
+        .eq('tmdb_id', tmdbId)
+        .eq('media_type', mediaType)
+        .inFilter('action', ['watched', 'rated'])
+        .order('created_at', ascending: false)
+        .limit(limit);
+    if (rows.isEmpty) return [];
+    final authorIds = rows.map((r) => r['user_id'] as String).toSet().toList();
+    final profiles = {for (final p in await _profilesByIds(authorIds)) p.id: p};
+    final seenAuthors = <String>{};
+    final items = <SocialActivityItem>[];
+    for (final r in rows) {
+      final authorId = r['user_id'] as String;
+      if (!seenAuthors.add(authorId)) continue;
+      items.add(
+        SocialActivityItem.fromJson(
+          r,
+          profiles[authorId] ?? SocialProfile(id: authorId),
+        ),
+      );
+    }
+    return items;
+  }
+
+  /// Real "what have they watched" data for a friend's profile — their
+  /// `watch_records` (movies/series), `watch_log`/`episode_watch_status`
+  /// (TV time/episode totals), and `user_lists`/`user_list_items`
+  /// (playlists), readable thanks to the friends-visibility policies in
+  /// `011_pitflix_friend_library_visibility.sql` and
+  /// `013_pitflix_friend_watch_time_visibility.sql`. Same three headline
+  /// numbers (TV time, episodes, movies) a user's own Profile shows via
+  /// [UserLibraryService.fetchProfileSummary] — this is the friends-visible
+  /// equivalent of that call.
+  ///
+  /// `recentMovies`/`recentSeries` are scoped to `status = 'completed'`,
+  /// matching [UserLibraryService.fetchRecentlyCompleted]'s own semantics
+  /// (which is what a user's own Profile "Movies"/"Series" rows show) — so a
+  /// friend's rows show the same subset of titles their own Profile would.
+  /// `totalSeriesWatched` stays broader (any status) since that tile is
+  /// meant to read as "tracked", not "finished".
+  static Future<
+    ({
+      List<TitleItem> recentMovies,
+      List<TitleItem> recentSeries,
+      int totalMoviesWatched,
+      int totalSeriesWatched,
+      int totalWatchTimeMinutes,
+      int totalEpisodesWatched,
+      List<({String id, String name, String? icon, String type, int itemCount})>
+      playlists,
+    })
+  >
+  fetchFriendLibrarySummary(String profileId) async {
+    final results = await Future.wait([
+      _client
+          .from('watch_records')
+          .select()
+          .eq('user_id', profileId)
+          .order('updated_at', ascending: false),
+      _client.from('watch_log').select('minutes').eq('user_id', profileId),
+      _client
+          .from('episode_watch_status')
+          .select('id')
+          .eq('user_id', profileId),
+    ]);
+    final records = results[0];
+    final logRows = results[1];
+    final watchedEpisodes = results[2];
+    final totalMinutes = logRows.fold<int>(
+      0,
+      (sum, r) => sum + ((r['minutes'] as num?)?.toInt() ?? 0),
+    );
+
+    final movieRows = records.where((r) => r['media_type'] == 'movie');
+    final seriesRows = records.where((r) => r['media_type'] == 'series');
+    final completedMovieRows = movieRows.where(
+      (r) => r['status'] == 'completed',
+    );
+    final completedSeriesRows = seriesRows.where(
+      (r) => r['status'] == 'completed',
+    );
+
+    TitleItem toTitle(Map<String, dynamic> r) {
+      final tmdbId = (r['tmdb_id'] as num).toInt();
+      final isSeries = r['media_type'] == 'series';
+      return TitleItem(
+        id: 'friend-watch-$tmdbId-${isSeries ? 'series' : 'movie'}',
+        name: r['title'] as String? ?? 'Untitled',
+        kind: isSeries ? TitleKind.show : TitleKind.movie,
+        year: (r['release_year'] as num?)?.toInt() ?? 0,
+        network: isSeries ? 'TV' : 'Theaters',
+        rating: 0,
+        genres: (r['genres'] as List? ?? const []).cast<String>(),
+        overview: '',
+        gradientSeed: tmdbId % 6,
+        posterPath: r['poster_path'] as String?,
+        tmdbId: tmdbId,
+        isSummaryOnly: true,
+      );
+    }
+
+    final lists = await _client
+        .from('user_lists')
+        .select()
+        .eq('user_id', profileId)
+        .order('created_at');
+    final playlists = await Future.wait(
+      lists.map((l) async {
+        final id = l['id'] as String;
+        final (icon, name) = ListMarks.decode(l['name'] as String? ?? '');
+        final count = await _client
+            .from('user_list_items')
+            .count()
+            .eq('list_id', id);
+        return (
+          id: id,
+          name: name.isEmpty ? 'Untitled' : name,
+          icon: icon,
+          type: l['type'] as String? ?? 'custom',
+          itemCount: count,
+        );
+      }),
+    );
+
+    return (
+      recentMovies: completedMovieRows.take(10).map(toTitle).toList(),
+      recentSeries: completedSeriesRows.take(10).map(toTitle).toList(),
+      totalMoviesWatched: completedMovieRows.length,
+      totalSeriesWatched: seriesRows.length,
+      totalWatchTimeMinutes: totalMinutes,
+      totalEpisodesWatched: watchedEpisodes.length,
+      playlists: playlists,
+    );
   }
 
   /// Fire-and-forget — a failure here shouldn't block the watch/rate/
@@ -201,15 +385,12 @@ abstract class SocialService {
         .order('created_at');
     if (rows.isEmpty) return [];
     final authorIds = rows.map((r) => r['user_id'] as String).toSet().toList();
-    final profiles = {
-      for (final p in await _profilesByIds(authorIds)) p.id: p,
-    };
+    final profiles = {for (final p in await _profilesByIds(authorIds)) p.id: p};
     return rows
         .map(
           (r) => SocialComment.fromJson(
             r,
-            profiles[r['user_id']] ??
-                SocialProfile(id: r['user_id'] as String),
+            profiles[r['user_id']] ?? SocialProfile(id: r['user_id'] as String),
           ),
         )
         .toList();

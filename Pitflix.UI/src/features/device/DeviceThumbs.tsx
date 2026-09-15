@@ -1,11 +1,13 @@
 import { convertFileSrc } from "@tauri-apps/api/core";
-import { Film } from "lucide-react";
+import { Film, Loader2 } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
   captureVideoFrame,
+  captureVideoFrameNative,
   getThumbnail,
   isCanvasCaptureSupported,
   loadThumbnailFromDisk,
+  loadThumbnailsFromDiskBatch,
   onThumbnailReady,
   setThumbnail,
   thumbnailSeekTime,
@@ -14,6 +16,7 @@ import {
   captureImageThumb,
   getImageThumb,
   loadImageFromDisk,
+  loadImagesFromDiskBatch,
   onImageReady,
   setImageThumb,
 } from "../../utils/deviceImageCache";
@@ -23,7 +26,15 @@ import { getDeviceMediaSettings, subscribeDeviceMediaSettings } from "./deviceMe
 // when the browser is not busy — i.e. user slowed/stopped scrolling), then
 // tries to acquire one of the N slots.  If all slots are taken it reschedules
 // itself for the next idle window — no central queue, no card blocks another.
-const MAX_VIDEO_LOADS = 5;
+// Capturing a video thumbnail means seeking to a random position in the file and decoding from
+// there — that's random disk I/O, not sequential. On an SSD that parallelizes fine, but on a
+// spinning HDD (a common case here: My Device folders are often bulk media on a secondary/external
+// drive) every concurrent capture forces the drive head to keep jumping between different files'
+// physical locations, and that seek time dominates. Past a small number, MORE concurrency doesn't
+// mean more throughput on an HDD — it means more thrashing, so each individual capture actually
+// gets slower and total throughput can go DOWN. This was raised to 10 assuming concurrency was
+// free once scroll-time gating existed; on an HDD it isn't, so it's kept low instead.
+const MAX_VIDEO_LOADS = 2;
 let activeVideoLoads = 0;
 
 function tryAcquireVideoSlot(): boolean {
@@ -41,20 +52,62 @@ function releaseVideoSlot() {
 let isScrolling = false;
 let scrollTimer: ReturnType<typeof setTimeout> | null = null;
 
+// Captures still mid-decode when scrolling (re)starts are aborted outright rather than left to
+// finish — the decode itself is real OS/GPU/disk work that competes with scroll compositing for
+// as long as it runs, so gating only *new* captures (the isScrolling checks below) wasn't enough:
+// captures already in flight when a fling began kept running the whole time regardless. Every
+// video capture registers its controller here on start and unregisters on settle.
+const activeVideoCaptures = new Set<AbortController>();
+
+function abortActiveVideoCaptures(): void {
+  for (const c of activeVideoCaptures) c.abort();
+  activeVideoCaptures.clear();
+}
+
 // ── Background thumbnail preloader ────────────────────────────────────────────
-const BG_MAX = 3;
+// See MAX_VIDEO_LOADS above — same random-seek-on-a-spinning-disk reasoning applies here. This pool
+// and the foreground one run independently, so worst case both are active at once; kept low enough
+// that even 2 (here) + 2 (foreground) stays disk-friendly instead of thrashing an HDD.
+const BG_MAX = 2;
 let bgActive = 0;
 const bgQueue: Array<() => void> = [];
 let bgCancelKey = 0;
 
 // ── Background image thumbnail preloader ─────────────────────────────────────
+// Images are a full sequential read of a much smaller file (no in-file seeking needed the way video
+// capture needs), so they're less exposed to HDD seek-thrashing than MAX_VIDEO_LOADS/BG_MAX — but
+// still real disk I/O competing with any concurrent video capture, so kept modest rather than high.
 const IMG_BG_MAX = 3;
 let imgBgActive = 0;
 const imgBgQueue: Array<() => void> = [];
 let imgBgCancelKey = 0;
 const warmedImagePaths = new Set<string>();
 
+// Splitting "scroll" and "thumbnail loading" into two genuinely independent processes: aborting
+// in-flight captures (above) stops wasted work, but anything that was already resolved (a warm
+// disk hit, a background capture that finished a moment earlier) still wanted to apply its result
+// via a React state update — and a state update/re-render mid-scroll is exactly the kind of main-
+// thread work that shows up as scroll jank, independent of whether any decode is happening. So no
+// thumbnail-driven state update is allowed to fire while isScrolling is true, full stop; instead it
+// registers here and every registered callback fires together, once, right when scrolling settles.
+const scrollSettleCallbacks: Array<() => void> = [];
+
+/** Runs `cb` now if not scrolling, otherwise defers it to fire once scrolling settles. */
+export function runAfterScrollSettles(cb: () => void): void {
+  if (isScrolling) scrollSettleCallbacks.push(cb);
+  else cb();
+}
+
+/** Whether the grid is actively scrolling right now (see notifyScroll). Used to skip starting
+ * expensive work — e.g. mounting a real `<video>` element for hover preview — while content is
+ * sliding under a stationary cursor, which otherwise fires a mouseenter/mouseleave burst across
+ * every tile that passes underneath and is a major source of scroll jank. */
+export function isDeviceScrolling(): boolean {
+  return isScrolling;
+}
+
 export function notifyScroll(): void {
+  if (!isScrolling) abortActiveVideoCaptures();
   isScrolling = true;
   if (scrollTimer !== null) clearTimeout(scrollTimer);
   scrollTimer = setTimeout(() => {
@@ -69,6 +122,9 @@ export function notifyScroll(): void {
       imgBgActive++;
       imgBgQueue.shift()!();
     }
+    // Flush every thumbnail-ready update that was held back during the scroll, all at once.
+    const settled = scrollSettleCallbacks.splice(0);
+    for (const cb of settled) cb();
   }, 200);
 }
 
@@ -92,38 +148,96 @@ function releaseBgSlot() {
 // nothing here blocks the UI.
 const BG_PRELOAD_LIMIT = Number.POSITIVE_INFINITY;
 
+/** Stops queuing further background video-frame captures — e.g. when leaving the Device page to
+ * open the player, so the still-in-flight canvas decode/encode work (synchronous, main-thread)
+ * doesn't keep competing with the player's own rendering and input handling. Anything already
+ * mid-capture finishes; nothing new starts. Thumbnails scrolled into view still self-heal via
+ * DeviceVideoThumb's own on-demand capture, so nothing is lost — just no longer pre-warmed. */
+export function cancelBackgroundThumbnails(): void {
+  scheduleBackgroundThumbnails([]);
+  // Cancelling drops queued jobs, but scheduleBackgroundThumbnails already marked every path it
+  // queued as "warmed" up front (its don't-queue-this-twice guard). Leaving cancelled-but-never-
+  // captured paths marked would make the NEXT visit skip them all as already-handled, which
+  // permanently disables background preloading for that folder — the only thing still filling in
+  // thumbnails would be each card's slow on-demand capture as it scrolls into view. So release the
+  // mark on anything that didn't actually produce a thumbnail; re-queuing it later is cheap (a
+  // targeted disk lookup short-circuits before any real capture if it was already saved).
+  releaseUncapturedThumbMarks();
+}
+
+function releaseUncapturedThumbMarks(): void {
+  for (const path of [...warmedThumbPaths]) {
+    if (getThumbnail(path) === undefined) warmedThumbPaths.delete(path);
+  }
+}
+
+// How many paths' disk lookups share one IndexedDB transaction. Opening a huge folder (e.g. 900
+// videos) used to fire 900 separate `loadThumbnailFromDisk` calls — each its own transaction — all
+// at once; the fixed per-transaction overhead multiplied 900x, plus every resulting cache fill and
+// listener notification landing in the same tick, was heavy enough to make the whole app stutter
+// even though every individual lookup was an instant, already-cached hit. Chunking keeps the same
+// per-key cost but pays transaction overhead ~paths/CHUNK times instead of once per path, and
+// spreading chunks across idle callbacks (below) keeps any given tick's work small.
+const DISK_LOOKUP_CHUNK = 120;
+
 export function scheduleBackgroundThumbnails(paths: string[]): void {
   const myKey = ++bgCancelKey;
   bgQueue.length = 0;
 
   const capped = paths.slice(0, BG_PRELOAD_LIMIT);
+  const pending: string[] = [];
   for (const path of capped) {
     if (getThumbnail(path) !== undefined || warmedThumbPaths.has(path)) continue;
     warmedThumbPaths.add(path);
+    pending.push(path);
+  }
 
-    // Fast targeted disk lookup first (single-key get, near-instant) —
-    // only spawn an actual video capture if it's truly never been saved.
-    void loadThumbnailFromDisk(path).then((found) => {
-      if (bgCancelKey !== myKey || found !== undefined) return;
+  const queueCapture = (path: string) => {
+    const src = convertFileSrc(path);
+    // Native (ffmpeg) capture runs as a separate OS process — unlike the canvas fallback below, it
+    // never touches the main thread, so it doesn't need the scroll-pause dance or the BG_MAX slot
+    // limiter (both exist specifically to protect the main thread from canvas decode work). It's
+    // gated only by its own NATIVE_CAPTURE_CONCURRENCY queue inside captureVideoFrameNative.
+    // Wrapping it in the old slot system on top of that was double-throttling it for no benefit.
+    void captureVideoFrameNative(path).then((dataUrl) => {
+      if (bgCancelKey !== myKey) return;
+      if (dataUrl) { setThumbnail(path, dataUrl); return; }
 
-      const src = convertFileSrc(path);
+      // Native failed outright (e.g. ffmpeg not found) — fall back to canvas capture, which DOES
+      // need the scroll-aware slot system since it runs on/adjacent to the main thread.
       const runJob = () => {
         if (bgCancelKey !== myKey) { releaseBgSlot(); return; }
-        // Pause during scroll — put job back at front of queue and release slot.
-        // notifyScroll's timeout will restart it once scrolling stops.
         if (isScrolling) {
           bgActive = Math.max(0, bgActive - 1);
           bgQueue.unshift(runJob);
           return;
         }
-        void captureVideoFrame(src).then((dataUrl) => {
+        const controller = new AbortController();
+        activeVideoCaptures.add(controller);
+        void captureVideoFrame(src, controller.signal).then((fallbackUrl) => {
+          activeVideoCaptures.delete(controller);
           releaseBgSlot();
-          if (dataUrl) setThumbnail(path, dataUrl);
+          if (fallbackUrl) setThumbnail(path, fallbackUrl);
         });
       };
       acquireBgSlot(runJob);
     });
-  }
+  };
+
+  const processChunk = (start: number) => {
+    if (bgCancelKey !== myKey || start >= pending.length) return;
+    const chunk = pending.slice(start, start + DISK_LOOKUP_CHUNK);
+    // Fast targeted disk lookup first (one shared transaction, near-instant) — only spawn an
+    // actual video capture for paths truly never saved before.
+    void loadThumbnailsFromDiskBatch(chunk).then((found) => {
+      if (bgCancelKey !== myKey) return;
+      for (const path of chunk) {
+        if (!found.has(path)) queueCapture(path);
+      }
+      scheduleIdle(() => processChunk(start + DISK_LOOKUP_CHUNK));
+    });
+  };
+  processChunk(0);
 }
 
 function acquireImgBgSlot(cb: () => void) {
@@ -142,33 +256,56 @@ export function resetImageWarmState(): void {
   warmedImagePaths.clear();
 }
 
+/** Image counterpart to cancelBackgroundThumbnails — see its comment. */
+export function cancelBackgroundImages(): void {
+  scheduleBackgroundImages([]);
+  // Same warm-mark release as the video path — see cancelBackgroundThumbnails.
+  for (const path of [...warmedImagePaths]) {
+    if (getImageThumb(path) === undefined) warmedImagePaths.delete(path);
+  }
+}
+
 export function scheduleBackgroundImages(paths: string[]): void {
   const myKey = ++imgBgCancelKey;
   imgBgQueue.length = 0;
 
+  const pending: string[] = [];
   for (const path of paths) {
     if (getImageThumb(path) !== undefined || warmedImagePaths.has(path)) continue;
     warmedImagePaths.add(path);
-
-    void loadImageFromDisk(path).then((found) => {
-      if (imgBgCancelKey !== myKey || found !== undefined) return;
-
-      const src = convertFileSrc(path);
-      const runJob = () => {
-        if (imgBgCancelKey !== myKey) { releaseImgBgSlot(); return; }
-        if (isScrolling) {
-          imgBgActive = Math.max(0, imgBgActive - 1);
-          imgBgQueue.unshift(runJob);
-          return;
-        }
-        void captureImageThumb(src).then((dataUrl) => {
-          releaseImgBgSlot();
-          if (dataUrl) setImageThumb(path, dataUrl);
-        });
-      };
-      acquireImgBgSlot(runJob);
-    });
+    pending.push(path);
   }
+
+  const queueCapture = (path: string) => {
+    const src = convertFileSrc(path);
+    const runJob = () => {
+      if (imgBgCancelKey !== myKey) { releaseImgBgSlot(); return; }
+      if (isScrolling) {
+        imgBgActive = Math.max(0, imgBgActive - 1);
+        imgBgQueue.unshift(runJob);
+        return;
+      }
+      void captureImageThumb(src).then((dataUrl) => {
+        releaseImgBgSlot();
+        if (dataUrl) setImageThumb(path, dataUrl);
+      });
+    };
+    acquireImgBgSlot(runJob);
+  };
+
+  // Same chunked/idle-spread batching as scheduleBackgroundThumbnails — see DISK_LOOKUP_CHUNK.
+  const processChunk = (start: number) => {
+    if (imgBgCancelKey !== myKey || start >= pending.length) return;
+    const chunk = pending.slice(start, start + DISK_LOOKUP_CHUNK);
+    void loadImagesFromDiskBatch(chunk).then((found) => {
+      if (imgBgCancelKey !== myKey) return;
+      for (const path of chunk) {
+        if (!found.has(path)) queueCapture(path);
+      }
+      scheduleIdle(() => processChunk(start + DISK_LOOKUP_CHUNK));
+    });
+  };
+  processChunk(0);
 }
 
 /** Defer a non-urgent callback to browser idle time; falls back to a short timeout. */
@@ -214,17 +351,24 @@ export function DeviceVideoThumb({ path }: { path: string }) {
   useEffect(() => {
     warmedThumbPaths.add(path);
     if (thumbSrc !== null || useVideoFallback || failed) return;
-    if (isCanvasCaptureSupported() === false) { setUseVideoFallback(true); return; }
+    // Note: unlike before, canvas support being known-unsupported does NOT skip straight to the
+    // <video> fallback here — native (ffmpeg) capture doesn't touch canvas at all, so it's still
+    // worth trying first. The canvas-specific fallback further below checks this itself.
 
     let alive = true;
     let cancelIdle: (() => void) | null = null;
 
     // ── Subscribe for instant update from background preloader ───────────────
-    // Deferred through rAF so thumbnail updates land between frames, not
-    // mid-scroll-handler — this prevents React re-renders from causing jank.
+    // A capture finishing (this card's own, or the background preloader's) is a React state
+    // update — that's real main-thread work regardless of how cheap it looks, so it's never
+    // allowed to land while the user is mid-scroll. runAfterScrollSettles holds it until the
+    // scroll fully stops, then every held-back thumbnail update flushes together in one go.
     const unsubscribe = onThumbnailReady(path, () => {
       const t = getThumbnail(path);
-      if (t && alive) requestAnimationFrame(() => { if (alive) setThumbSrc(t); });
+      if (!t || !alive) return;
+      runAfterScrollSettles(() => {
+        requestAnimationFrame(() => { if (alive) setThumbSrc(t); });
+      });
     });
 
     // ── Self-scheduling capture — truly independent per card ─────────────────
@@ -241,30 +385,58 @@ export function DeviceVideoThumb({ path }: { path: string }) {
       const cached = getThumbnail(path);
       if (cached) { setThumbSrc(cached); return; }
 
-      // Don't start a new decode+canvas-readback while the user is actively
-      // scrolling — that work runs on the main thread and drops frames.
-      // Retry as soon as scrolling settles (notifyScroll's 200ms timeout).
-      if (isScrolling) { cancelIdle = scheduleIdle(attempt); return; }
+      // Native (ffmpeg) capture first — runs as a separate OS process, so unlike the canvas
+      // fallback below it doesn't need to wait for scrolling to settle or share the canvas-era
+      // MAX_VIDEO_LOADS slot limiter (both exist specifically to protect the main thread from
+      // canvas decode work, which native capture never touches). It's gated only by its own
+      // NATIVE_CAPTURE_CONCURRENCY queue inside captureVideoFrameNative.
+      void captureVideoFrameNative(path).then((nativeUrl) => {
+        if (!alive) return;
+        if (nativeUrl) { setThumbnail(path, nativeUrl); return; }
 
-      if (tryAcquireVideoSlot()) {
-        void captureVideoFrame(src).then((dataUrl) => {
-          releaseVideoSlot();
-          if (dataUrl) setThumbnail(path, dataUrl);
-          else if (alive) setUseVideoFallback(true);
-        });
-      } else {
-        // All slots busy right now — retry at the next idle moment
-        cancelIdle = scheduleIdle(attempt);
-      }
+        // Native failed outright (e.g. ffmpeg missing) — fall back to canvas capture, which DOES
+        // need the scroll-aware slot system since it runs on/adjacent to the main thread.
+        if (isScrolling) { cancelIdle = scheduleIdle(attempt); return; }
+        if (tryAcquireVideoSlot()) {
+          const controller = new AbortController();
+          activeVideoCaptures.add(controller);
+          void captureVideoFrame(src, controller.signal).then((dataUrl) => {
+            const wasAborted = controller.signal.aborted;
+            activeVideoCaptures.delete(controller);
+            releaseVideoSlot();
+            if (dataUrl) setThumbnail(path, dataUrl);
+            else if (wasAborted) {
+              // Cut short because scrolling resumed, not a real decode failure — retry once idle
+              // again instead of falling back to a <video> element for what's still a valid file.
+              if (alive) cancelIdle = scheduleIdle(attempt);
+            } else if (alive) setUseVideoFallback(true);
+          });
+        } else {
+          // All slots busy right now — retry at the next idle moment
+          cancelIdle = scheduleIdle(attempt);
+        }
+      });
     };
 
-    // Fast targeted disk lookup first (single-key get, near-instant even
-    // with thousands of unrelated saved thumbnails) — only fall through to
-    // a fresh video capture if this exact path was never saved before.
-    void loadThumbnailFromDisk(path).then((found) => {
+    // Fast targeted disk lookup first (single-key get, near-instant even with thousands of
+    // unrelated saved thumbnails) — only fall through to a fresh video capture if this exact path
+    // was never saved before. The *kickoff* itself — not just applying its result — waits for
+    // scrolling to settle: every tile in a folder mounts immediately (see LazyFolderThumb), so a
+    // fast/continuous scroll through a big folder means a lot of tiles mounting close together, and
+    // each one firing its own IndexedDB transaction the instant it mounts is real main-thread work
+    // landing mid-scroll regardless of how fast any single lookup is (lookups are also coalesced
+    // into shared batched transactions — see pendingLookups in videoThumbnailCache.ts — but that
+    // still doesn't help if it's happening *during* the scroll). runAfterScrollSettles holds every
+    // newly-mounted tile's lookup until scrolling actually stops, then they all fire together —
+    // scrolling itself never competes with thumbnail loading, at the cost of thumbnails only
+    // starting to appear once you pause.
+    runAfterScrollSettles(() => {
       if (!alive) return;
-      if (found) { setThumbSrc(found); return; }
-      cancelIdle = scheduleIdle(attempt);
+      void loadThumbnailFromDisk(path).then((found) => {
+        if (!alive) return;
+        if (found) { runAfterScrollSettles(() => { if (alive) setThumbSrc(found); }); return; }
+        cancelIdle = scheduleIdle(attempt);
+      });
     });
 
     return () => {
@@ -276,7 +448,7 @@ export function DeviceVideoThumb({ path }: { path: string }) {
   }, [src, path]); // eslint-disable-line react-hooks/exhaustive-deps
 
   if (thumbSrc) {
-    return <img src={thumbSrc} alt="" className="h-full w-full object-cover" />;
+    return <img src={thumbSrc} alt="" draggable={false} className="h-full w-full object-cover" />;
   }
 
   if (failed) {
@@ -293,6 +465,7 @@ export function DeviceVideoThumb({ path }: { path: string }) {
       <video
         src={src}
         className="h-full w-full object-cover"
+        draggable={false}
         muted
         playsInline
         preload="metadata"
@@ -313,6 +486,11 @@ export function DeviceVideoThumb({ path }: { path: string }) {
       <div className="absolute inset-0 flex items-center justify-center">
         <Film className="h-7 w-7 text-violet-500/30" strokeWidth={1.25} aria-hidden />
       </div>
+      {/* Small per-tile spinner — makes "this one is actively waiting on its thumbnail" explicit,
+          rather than relying on the shimmer sweep alone to read as "loading". */}
+      <div className="absolute bottom-1.5 right-1.5 flex h-5 w-5 items-center justify-center rounded-full bg-black/50">
+        <Loader2 className="h-3 w-3 animate-spin text-violet-300/80" aria-hidden />
+      </div>
     </div>
   );
 }
@@ -331,7 +509,10 @@ export function DeviceImageThumb({ path }: { path: string }) {
 
     const unsubscribe = onImageReady(path, () => {
       const t = getImageThumb(path);
-      if (t && alive) requestAnimationFrame(() => { if (alive) setThumbSrc(t); });
+      if (!t || !alive) return;
+      runAfterScrollSettles(() => {
+        requestAnimationFrame(() => { if (alive) setThumbSrc(t); });
+      });
     });
 
     const attempt = () => {
@@ -347,10 +528,17 @@ export function DeviceImageThumb({ path }: { path: string }) {
       });
     };
 
-    void loadImageFromDisk(path).then((found) => {
+    // Same reasoning as DeviceVideoThumb: don't even start the disk lookup while scrolling — a
+    // fast/continuous scroll mounts a steady stream of newly-visible tiles, and firing each one's
+    // own IndexedDB transaction the instant it mounts competes with scroll compositing regardless
+    // of how fast any single lookup is. Defer the whole kickoff to scroll-settle instead.
+    runAfterScrollSettles(() => {
       if (!alive) return;
-      if (found) { setThumbSrc(found); return; }
-      cancelIdle = scheduleIdle(attempt);
+      void loadImageFromDisk(path).then((found) => {
+        if (!alive) return;
+        if (found) { runAfterScrollSettles(() => { if (alive) setThumbSrc(found); }); return; }
+        cancelIdle = scheduleIdle(attempt);
+      });
     });
 
     return () => {
@@ -361,7 +549,7 @@ export function DeviceImageThumb({ path }: { path: string }) {
   }, [src, path]); // eslint-disable-line react-hooks/exhaustive-deps
 
   if (thumbSrc) {
-    return <img src={thumbSrc} alt="" className="h-full w-full object-cover" />;
+    return <img src={thumbSrc} alt="" draggable={false} className="h-full w-full object-cover" />;
   }
 
   if (failed) {
@@ -374,6 +562,11 @@ export function DeviceImageThumb({ path }: { path: string }) {
     <div className="device-thumb-shimmer">
       <div className="absolute inset-0 flex items-center justify-center">
         <Film className="h-7 w-7 text-violet-500/30" strokeWidth={1.25} aria-hidden />
+      </div>
+      {/* Small per-tile spinner — makes "this one is actively waiting on its thumbnail" explicit,
+          rather than relying on the shimmer sweep alone to read as "loading". */}
+      <div className="absolute bottom-1.5 right-1.5 flex h-5 w-5 items-center justify-center rounded-full bg-black/50">
+        <Loader2 className="h-3 w-3 animate-spin text-violet-300/80" aria-hidden />
       </div>
     </div>
   );
@@ -403,9 +596,21 @@ function captureThumbnailFromVideo(video: HTMLVideoElement, path: string): void 
     const ctx = canvas.getContext("2d");
     if (!ctx) return;
     ctx.drawImage(video, 0, 0, cw, ch);
-    const dataUrl = canvas.toDataURL("image/jpeg", 0.85);
-    // setThumbnail notifies any mounted DeviceVideoThumb subscribers immediately
-    if (dataUrl.length > 200) setThumbnail(path, dataUrl);
+    // toBlob avoids the synchronous main-thread JPEG encode toDataURL does (see
+    // captureVideoFrame in videoThumbnailCache.ts for why that matters here).
+    canvas.toBlob(
+      (blob) => {
+        if (!blob || blob.size <= 200) return;
+        const reader = new FileReader();
+        reader.onload = () => {
+          // setThumbnail notifies any mounted DeviceVideoThumb subscribers immediately
+          if (typeof reader.result === "string") setThumbnail(path, reader.result);
+        };
+        reader.readAsDataURL(blob);
+      },
+      "image/jpeg",
+      0.85,
+    );
   } catch {
     // SecurityError = CORS not configured; hover preview is unaffected
   }
@@ -473,9 +678,14 @@ let activePreviewVideo: HTMLVideoElement | null = null;
 export function DeviceVideoHoverPreview({
   path,
   children,
+  hoverContainerRef,
 }: {
   path: string;
   children: React.ReactNode;
+  /** When set, hover is detected on this element instead of the component's own wrapper — e.g. a
+   * playlist row wants hovering anywhere on the row to trigger the preview, not just the small
+   * thumbnail box the video itself renders into. */
+  hoverContainerRef?: React.RefObject<HTMLElement | null>;
 }) {
   const src = convertFileSrc(path);
   const videoRef = useRef<HTMLVideoElement>(null);
@@ -488,6 +698,11 @@ export function DeviceVideoHoverPreview({
   const hoverTimerRef   = useRef<ReturnType<typeof setTimeout> | null>(null);
   const unmountTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const holdIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  // Suppresses mounting the preview <video> while the mouse button is held — mounting a new
+  // element under the cursor mid-press (e.g. right as the user is starting a press-and-hold drag
+  // gesture on a video thumbnail) mutates the DOM at the exact spot the browser is tracking for
+  // native drag-initiation, which silently aborts it (shows a permanent "not allowed" cursor).
+  const mouseDownRef = useRef(false);
 
   const stopHoldTimer = useCallback(() => {
     if (holdIntervalRef.current) { clearInterval(holdIntervalRef.current); holdIntervalRef.current = null; }
@@ -507,9 +722,18 @@ export function DeviceVideoHoverPreview({
   }, [path, stopHoldTimer]);
 
   const onMouseEnter = useCallback(() => {
+    // Scrolling re-hit-tests continuously, so content sliding under a stationary cursor fires a
+    // real mouseenter/mouseleave per tile it passes — without this guard, a single scroll gesture
+    // can mount and tear down a dozen real <video> elements (each a genuine decode-pipeline touch)
+    // in a few hundred ms, which is exactly the kind of main-thread work that shows up as scroll
+    // jank/erratic speed. Skip starting a mount while that's happening; the tile the cursor settles
+    // on (or the next deliberate mouse movement) will trigger its own mouseenter normally once
+    // scrolling stops.
+    if (isDeviceScrolling()) return;
     if (unmountTimerRef.current) { clearTimeout(unmountTimerRef.current); unmountTimerRef.current = null; }
     if (hoverTimerRef.current) clearTimeout(hoverTimerRef.current);
     hoverTimerRef.current = setTimeout(() => {
+      if (mouseDownRef.current || isDeviceScrolling()) return; // mid-press, or scrolling started during the debounce window
       setMounted(true);
       // If the <video> is still around from a very recent hover (grace
       // period), onLoadedMetadata won't fire again since src didn't change —
@@ -564,6 +788,37 @@ export function DeviceVideoHoverPreview({
     });
   }, [startHoldTimer]);
 
+  const onMouseDown = useCallback(() => {
+    mouseDownRef.current = true;
+    // Cancel an already-pending mount too, in case the timer was started by hovering just before
+    // the press — not only future ones.
+    if (hoverTimerRef.current) { clearTimeout(hoverTimerRef.current); hoverTimerRef.current = null; }
+  }, []);
+
+  // Mouseup can land outside this element entirely (e.g. the drag ended over a different card or
+  // off the grid) — listen on window so the suppression reliably clears regardless of where the
+  // button was released.
+  useEffect(() => {
+    const onWindowMouseUp = () => { mouseDownRef.current = false; };
+    window.addEventListener("mouseup", onWindowMouseUp);
+    return () => window.removeEventListener("mouseup", onWindowMouseUp);
+  }, []);
+
+  // External hover container (e.g. a whole playlist row): attach native listeners there instead of
+  // relying on the wrapper div's own onMouseEnter/onMouseLeave, which only cover the thumbnail box.
+  useEffect(() => {
+    const target = hoverContainerRef?.current;
+    if (!target) return;
+    target.addEventListener("mouseenter", onMouseEnter);
+    target.addEventListener("mouseleave", onMouseLeave);
+    target.addEventListener("mousedown", onMouseDown);
+    return () => {
+      target.removeEventListener("mouseenter", onMouseEnter);
+      target.removeEventListener("mouseleave", onMouseLeave);
+      target.removeEventListener("mousedown", onMouseDown);
+    };
+  }, [hoverContainerRef, onMouseEnter, onMouseLeave, onMouseDown]);
+
   useEffect(() => {
     return () => {
       if (hoverTimerRef.current) clearTimeout(hoverTimerRef.current);
@@ -579,8 +834,7 @@ export function DeviceVideoHoverPreview({
   return (
     <div
       style={{ position: "relative", width: "100%", height: "100%" }}
-      onMouseEnter={onMouseEnter}
-      onMouseLeave={onMouseLeave}
+      {...(hoverContainerRef ? {} : { onMouseEnter, onMouseLeave, onMouseDown })}
     >
       <div style={{
         position: "absolute", inset: 0,
@@ -596,11 +850,19 @@ export function DeviceVideoHoverPreview({
           ref={videoRef}
           src={src}
           crossOrigin="anonymous"
+          draggable={false}
           style={{
             position: "absolute", inset: 0, width: "100%", height: "100%",
             objectFit: "cover",
             opacity: showVideo ? 1 : 0,
             transition: showVideo ? "opacity 0.08s" : "opacity 0.15s",
+            // Browsers give <video> its own native "drag out" behavior by default, which sits
+            // directly on top of the thumbnail while hovered/dragged and hijacks the gesture
+            // before it can reach the grid item's own draggable button (My Device drag-to-move).
+            // draggable={false} alone isn't reliably honored on media elements in every engine,
+            // so also block pointer events here — the hover container above it already forwards
+            // enter/leave for the preview logic, and this element is purely decorative overlay.
+            pointerEvents: "none",
           }}
           muted
           playsInline
@@ -614,7 +876,19 @@ export function DeviceVideoHoverPreview({
   );
 }
 
-/** Renders the thumbnail immediately — the virtualizer already limits DOM size. */
+/** Renders the thumbnail immediately, for every tile currently in the DOM — deliberately NOT
+ * gated behind visibility (that was tried: wrapping this in LazyMountOnVisible, so a virtualization
+ * miss on a huge folder didn't also mean hundreds of thumbnails all starting at once). It fixed the
+ * open-a-big-folder heaviness, but as a side effect meant nothing off-screen ever mounted a
+ * component at all — so the folder's own background preloader (scheduleBackgroundThumbnails/Images
+ * in MyDevicePage.tsx, which proactively works through every video/image in the folder regardless
+ * of scroll position) had nothing listening for its results until you actually scrolled a tile into
+ * view. The whole folder WAS still preloading in the background, just invisibly. Since then, the
+ * actual expensive work (the disk lookup and the video-frame capture) has been moved behind its own
+ * scroll-settle gating directly in DeviceVideoThumb/DeviceImageThumb below — so mounting doesn't
+ * mean loading starts immediately, mounting just means "this tile is willing to show a result once
+ * one exists." That's what makes it safe to mount immediately again: the folder now visibly fills
+ * in as the background preloader works through it, without that work competing with scrolling. */
 export function LazyFolderThumb({ mode, path }: { mode: "video" | "image"; path: string }) {
   useEffect(() => { warmedThumbPaths.add(path); }, [path]);
 
@@ -626,4 +900,39 @@ export function LazyFolderThumb({ mode, path }: { mode: "video" | "image"; path:
       }
     </div>
   );
+}
+
+/** For grids that AREN'T virtualized (e.g. a My Videos folder, which just renders every video's
+ * tile in one pass instead of windowing like the main My Device grid does) — defers mounting
+ * `children` until the wrapper is about to scroll into view, so opening a folder with hundreds of
+ * videos doesn't mount hundreds of hover-preview listeners and thumbnail components in one React
+ * commit. Once shown, stays mounted permanently (no re-hiding on scroll-away) — the point is
+ * cutting the up-front cost of opening the folder, not adding teardown/rebuild churn later. Caller
+ * is responsible for giving the wrapper real dimensions (e.g. via an aspect-ratio box) so the grid
+ * doesn't reflow as tiles mount in. */
+export function LazyMountOnVisible({
+  children,
+  rootMargin = "800px 0px",
+}: {
+  children: React.ReactNode;
+  rootMargin?: string;
+}) {
+  const ref = useRef<HTMLDivElement>(null);
+  const [visible, setVisible] = useState(false);
+
+  useEffect(() => {
+    if (visible) return;
+    const el = ref.current;
+    if (!el) return;
+    const io = new IntersectionObserver(
+      (entries) => {
+        if (entries[0]?.isIntersecting) { setVisible(true); io.disconnect(); }
+      },
+      { rootMargin },
+    );
+    io.observe(el);
+    return () => io.disconnect();
+  }, [visible, rootMargin]);
+
+  return <div ref={ref} className="h-full w-full">{visible ? children : null}</div>;
 }

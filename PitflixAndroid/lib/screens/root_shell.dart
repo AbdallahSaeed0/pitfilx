@@ -1,11 +1,14 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
 import '../services/friends_store.dart';
+import '../services/rate_prompt_store.dart';
+import '../services/synced_api_keys_service.dart';
 import '../services/user_library_service.dart';
 import '../theme/app_theme.dart';
 import '../widgets/widgets.dart';
 import 'discover_screen.dart';
 import 'home_screen.dart';
+import 'my_device_home_screen.dart';
 import 'profile_screen.dart';
 import 'stats_screen.dart';
 
@@ -33,6 +36,13 @@ class _RootShellState extends State<RootShell> {
     ProfileScreen(
       onOpenStats: () => RootShell.tabNotifier.value = MainTab.stats,
     ),
+    // Index matches MainTab.myDevice — mounted unconditionally like every
+    // other tab (so switching is instant, no rebuild), but it's only ever
+    // reachable when MyDeviceSettings.enabled is true, since that's what
+    // controls whether PitflixBottomNav shows its icon at all. The screen
+    // itself also checks the flag directly and shows a "turn it on in
+    // Settings" prompt instead of scanning anything while it's off.
+    const MyDeviceHomeScreen(),
   ];
 
   Timer? _autoSyncTimer;
@@ -44,6 +54,8 @@ class _RootShellState extends State<RootShell> {
     // Defensive — covers entry paths that skip Login/SignUp's own refresh
     // (e.g. hot restart while already signed in).
     if (!FriendsStore.loaded.value) FriendsStore.refresh();
+    RatePromptStore.refresh();
+    SyncedApiKeysService.refresh();
 
     // Periodic re-fetch of this account's Supabase library — picks up
     // whatever the desktop app has pushed via its own "Link Mobile Account"
@@ -51,10 +63,15 @@ class _RootShellState extends State<RootShell> {
     // without this app ever needing to reach the desktop over the local
     // network itself. A plain version bump, not a network call — screens
     // that listen to UserLibraryService.libraryVersion do the actual fetch.
-    _autoSyncTimer = Timer.periodic(
-      const Duration(minutes: 5),
-      (_) => UserLibraryService.libraryVersion.value++,
-    );
+    // Also re-checks rate prompts each cycle, so a movie/episode marked
+    // watched on desktop shows up as "wanna rate it?" here soon after — and
+    // re-syncs API keys, so a key rotated on desktop reaches the phone
+    // within one cycle instead of needing the app relaunched.
+    _autoSyncTimer = Timer.periodic(const Duration(minutes: 5), (_) {
+      UserLibraryService.libraryVersion.value++;
+      RatePromptStore.refresh();
+      SyncedApiKeysService.refresh();
+    });
   }
 
   @override

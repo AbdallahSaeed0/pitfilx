@@ -7,6 +7,17 @@ export type TraktStatus = {
   username: string | null;
   /** Whether a Trakt app Client ID/Secret has been saved (by anyone using this Pitflix install). */
   appConfigured: boolean;
+  /** ISO timestamp of the last successful Trakt import (manual or automatic), or null if never synced. */
+  lastSyncedAt: string | null;
+};
+
+export type TraktImportResult = {
+  success: boolean;
+  error?: string;
+  matched?: number;
+  unmatched?: number;
+  playbackApplied?: number;
+  playbackSkipped?: number;
 };
 
 export const getTraktAuthUrl = () =>
@@ -22,3 +33,6 @@ export const patchTraktSettings = (body: {
   clientId?: string;
   clientSecret?: string;
 }) => api.patch<{ success: boolean }>("/trakt/settings", body).then((r) => r.data);
+
+export const syncTraktNow = () =>
+  api.post<TraktImportResult>("/trakt/import-history").then((r) => r.data);

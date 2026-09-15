@@ -4,6 +4,7 @@ import { Clapperboard, SkipForward, Tv } from "lucide-react";
 import { getTvTimeUnmatched, matchTvTimeShow, type TvTimeReviewItem } from "../api/tvtimeReview";
 import { searchUnmatched } from "../api/unmatched";
 import { Spinner } from "../components/ui/Spinner";
+import { BackButton } from "../components/ui/BackButton";
 import { cn } from "../utils/cn";
 
 type SearchResult = {
@@ -31,6 +32,7 @@ export function TvTimeReviewPage() {
 
   return (
     <div className="mx-auto max-w-3xl px-4 py-8">
+      <BackButton />
       <h1 className="text-xl font-semibold text-white">TV Time — unresolved titles</h1>
       <p className="mt-1 text-sm text-pitflix-subtle">
         Temporary tool. Search and confirm the right TMDB title for each one below, or skip it

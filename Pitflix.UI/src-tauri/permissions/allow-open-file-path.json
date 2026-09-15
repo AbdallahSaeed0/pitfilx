@@ -1,0 +1,15 @@
+{
+  "default": null,
+  "permission": [
+    {
+      "identifier": "allow-open-file-path",
+      "description": "Pull a cold-start Explorer \"Open with Pitflix\" file path",
+      "commands": {
+        "allow": [
+          "take_pending_open_file_path"
+        ],
+        "deny": []
+      }
+    }
+  ]
+}

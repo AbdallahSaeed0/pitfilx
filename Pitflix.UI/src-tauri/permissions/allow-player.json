@@ -22,6 +22,8 @@
           "player2_get_last_mpv_exit_report",
           "player2_open_detached_no_wid",
           "player2_open_detached",
+          "taskbar_set_playing",
+          "taskbar_set_progress",
           "player2_libmpv_open",
           "player2_libmpv_send",
           "player2_libmpv_set_bounds",
@@ -30,6 +32,7 @@
           "thumb_at_quick",
           "thumb_at",
           "thumb_poster",
+          "clear_thumb_posters",
           "player2_export_screenshot",
           "player2_export_clip",
           "playlist_window_open",
@@ -56,7 +59,10 @@
           "get-subtitle-tracks",
           "extract-subtitle",
           "translate-srt-to-arabic",
-          "generate-arabic-subtitle"
+          "generate-arabic-subtitle",
+          "torrent_stream_start",
+          "torrent_stream_status",
+          "torrent_stream_stop"
         ],
         "deny": []
       }

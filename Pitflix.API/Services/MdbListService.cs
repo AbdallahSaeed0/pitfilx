@@ -100,58 +100,40 @@ public sealed class MdbListService
         int episode, CancellationToken ct) =>
         ReadEpisodeCacheAsync(showImdbId, season, episode, ct);
 
-    /// <summary>Fetches the IMDb rating for a specific episode via the MDBList episode endpoint.</summary>
-    public async Task<double?> GetEpisodeRatingAsync(string showImdbId, int season, int episode, CancellationToken ct)
+    /// <summary>Persists one episode's IMDb rating (from <see cref="OmdbRatingClient"/>, the only
+    /// source that actually varies by episode) into the per-episode cache table so subsequent
+    /// cache-only lookups resolve instantly. <paramref name="rating"/> may be null — a cached "no
+    /// rating" row still avoids re-querying OMDb for an episode it doesn't have.</summary>
+    public Task CacheEpisodeRatingAsync(string showImdbId, int season, int episode, double? rating,
+        CancellationToken ct) =>
+        WriteEpisodeCacheAsync(showImdbId, season, episode, rating, ct);
+
+    /// <summary>Wipes both persisted ratings cache tables (title-level and per-episode). Returns the
+    /// total row count removed. Used by the Settings → Maintenance "Clear ratings cache" action, e.g.
+    /// to force a refetch after a fix to how episodes are matched/validated.</summary>
+    public async Task<int> ClearAllCachesAsync(CancellationToken ct)
     {
-        if (string.IsNullOrWhiteSpace(showImdbId)) return null;
-
-        var (cacheHit, cachedValue) = await ReadEpisodeCacheAsync(showImdbId, season, episode, ct).ConfigureAwait(false);
-        if (cacheHit) return cachedValue;
-
-        var key = await GetApiKeyAsync(ct).ConfigureAwait(false);
-        if (string.IsNullOrWhiteSpace(key)) return null;
-
-        await _rateSemaphore.WaitAsync(ct).ConfigureAwait(false);
         try
         {
-            var elapsed = (DateTime.UtcNow - _lastRequestAt).TotalMilliseconds;
-            if (elapsed < 1000)
-                await Task.Delay((int)(1000 - elapsed), ct).ConfigureAwait(false);
-            _lastRequestAt = DateTime.UtcNow;
+            using var db = LibraryContext.Create();
+            var conn = db.Database.GetDbConnection();
+            await conn.OpenAsync(ct).ConfigureAwait(false);
 
-            var url = $"https://mdblist.com/api/?apikey={Uri.EscapeDataString(key)}&i={Uri.EscapeDataString(showImdbId)}&s={season}&e={episode}";
-            using var resp = await _http.GetAsync(url, ct).ConfigureAwait(false);
-            var body = await resp.Content.ReadAsStringAsync(ct).ConfigureAwait(false);
-            if (!resp.IsSuccessStatusCode) return null;
-
-            double? rating = null;
-            using var doc = JsonDocument.Parse(body);
-            var root = doc.RootElement;
-            if (root.TryGetProperty("ratings", out var ratings))
+            async Task<int> DeleteAllAsync(string table)
             {
-                foreach (var item in ratings.EnumerateArray())
-                {
-                    if (!item.TryGetProperty("source", out var src) || src.GetString() != "imdb") continue;
-                    if (!item.TryGetProperty("value", out var val)) continue;
-                    if (val.ValueKind == JsonValueKind.Number) { rating = (double)val.GetSingle(); break; }
-                    if (val.ValueKind == JsonValueKind.String &&
-                        double.TryParse(val.GetString(), System.Globalization.NumberStyles.Any,
-                            System.Globalization.CultureInfo.InvariantCulture, out var parsed))
-                    { rating = parsed; break; }
-                }
+                using var cmd = conn.CreateCommand();
+                cmd.CommandText = $"DELETE FROM {table};";
+                return await cmd.ExecuteNonQueryAsync(ct).ConfigureAwait(false);
             }
 
-            await WriteEpisodeCacheAsync(showImdbId, season, episode, rating, ct).ConfigureAwait(false);
-            return rating;
+            var deleted = await DeleteAllAsync("MdbListRatingsCache").ConfigureAwait(false);
+            deleted += await DeleteAllAsync("MdbListEpisodeRatingsCache").ConfigureAwait(false);
+            return deleted;
         }
         catch (Exception ex)
         {
-            _logger.LogDebug("MDBList episode rating failed S{S}E{E}: {Msg}", season, episode, ex.Message);
-            return null;
-        }
-        finally
-        {
-            _rateSemaphore.Release();
+            _logger.LogWarning("MDBList: failed to clear ratings cache: {Msg}", ex.Message);
+            return 0;
         }
     }
 

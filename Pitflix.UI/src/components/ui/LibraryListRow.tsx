@@ -1,9 +1,12 @@
+import { useQueryClient } from "@tanstack/react-query";
 import { Heart } from "lucide-react";
 import { useNavigate } from "react-router-dom";
+import { getMovie } from "../../api/movies";
+import { getShow } from "../../api/series";
 import type { MediaCard } from "../../types/media";
 import { cn } from "../../utils/cn";
 import { formatYear } from "../../utils/format";
-import { toPosterSrc } from "../../utils/posterSrc";
+import { POSTER_WIDTHS, toPosterSrc } from "../../utils/posterSrc";
 import { MediaImage } from "./MediaImage";
 
 type Props = {
@@ -26,15 +29,26 @@ export function LibraryListRow({
   onContextMenu,
 }: Props) {
   const navigate = useNavigate();
+  const qc = useQueryClient();
   const primary = item.selectedPosterPath || item.posterLocalPath;
   const remote = item.posterRemoteUrl;
-  const src = toPosterSrc((primary ?? remote) ?? undefined);
+  const src = toPosterSrc((primary ?? remote) ?? undefined, POSTER_WIDTHS.thumb);
 
   const detailPath = mediaType === "Movie" ? `/movie/${item.id}` : `/series/${item.id}`;
 
   const handleClick = () => {
     if (selectionMode && onToggleSelect) onToggleSelect();
     else navigate(detailPath);
+  };
+
+  /** Warm the detail query on hover, the same way PosterCard does for the grid view. */
+  const prefetchDetail = () => {
+    if (item.id <= 0) return;
+    if (mediaType === "Movie") {
+      void qc.prefetchQuery({ queryKey: ["movie", item.id], queryFn: () => getMovie(item.id), staleTime: 30 * 60_000 });
+    } else {
+      void qc.prefetchQuery({ queryKey: ["show", item.id], queryFn: () => getShow(item.id), staleTime: 30 * 60_000 });
+    }
   };
 
   const watchBadge =
@@ -49,6 +63,7 @@ export function LibraryListRow({
       role="button"
       tabIndex={0}
       onClick={handleClick}
+      onMouseEnter={prefetchDetail}
       onContextMenu={onContextMenu}
       onKeyDown={(e) => {
         if (e.key !== "Enter" && e.key !== " ") return;

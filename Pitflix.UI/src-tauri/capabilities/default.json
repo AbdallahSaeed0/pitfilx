@@ -22,6 +22,13 @@
     "core:window:allow-start-dragging",
     "core:window:allow-close",
     "core:window:allow-set-always-on-top",
+    "core:window:allow-set-position",
+    "core:window:allow-outer-position",
+    "core:window:allow-current-monitor",
+    "core:window:allow-set-min-size",
+    "core:window:allow-set-max-size",
+    "core:window:allow-set-resizable",
+    "core:window:allow-start-resize-dragging",
     "opener:default",
     {
       "identifier": "opener:allow-open-path",
@@ -62,6 +69,8 @@
     "allow-remote-player",
     "allow-my-device",
     "allow-browse",
+    "allow-open-file-path",
+    "allow-folder-action",
     "core:window:allow-set-progress-bar",
     "global-shortcut:default",
     "notification:default"

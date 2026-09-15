@@ -42,3 +42,9 @@ android {
 flutter {
     source = "../.."
 }
+
+dependencies {
+    // MediaSessionCompat + NotificationCompat.MediaStyle for My Device's background-playback
+    // foreground service (PlaybackForegroundService.kt) — lock-screen/notification media controls.
+    implementation("androidx.media:media:1.7.0")
+}

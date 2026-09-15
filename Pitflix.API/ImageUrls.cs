@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using Pitflix.Core.Api;
 using Pitflix.Core.Models;
 using Pitflix.Core.Services;
@@ -11,6 +12,46 @@ public static class ImageUrls
 
     /// <summary>Base URL with no trailing slash (e.g. http://localhost:5280).</summary>
     public static string PublicBase { get; set; } = "http://localhost:5280";
+
+    /// <summary>
+    /// Existence cache for files under the image root. <see cref="ToImageUrl"/> verifies the file is
+    /// really on disk before handing out a URL, which meant up to four synchronous <c>File.Exists</c>
+    /// calls per card — 160+ syscalls to render one 40-item catalog page, repeated on every request.
+    ///
+    /// A hit is cached for good: cached artwork is only ever added or replaced in place, never deleted
+    /// out from under us during a session (and a stale-but-present URL is harmless anyway — the UI
+    /// falls back to the remote poster on a 404). A miss is cached only briefly, because the scanner
+    /// and enrichment paths do fill these files in while the app is running.
+    /// </summary>
+    private static readonly ConcurrentDictionary<string, bool> ExistingFiles = new(StringComparer.OrdinalIgnoreCase);
+    private static readonly ConcurrentDictionary<string, DateTime> MissingFiles = new(StringComparer.OrdinalIgnoreCase);
+    private static readonly TimeSpan MissingFileTtl = TimeSpan.FromSeconds(30);
+
+    private static bool FileExistsCached(string fullPath)
+    {
+        if (ExistingFiles.ContainsKey(fullPath))
+            return true;
+        if (MissingFiles.TryGetValue(fullPath, out var checkedAt) && DateTime.UtcNow - checkedAt < MissingFileTtl)
+            return false;
+
+        if (File.Exists(fullPath))
+        {
+            MissingFiles.TryRemove(fullPath, out _);
+            ExistingFiles[fullPath] = true;
+            return true;
+        }
+
+        MissingFiles[fullPath] = DateTime.UtcNow;
+        return false;
+    }
+
+    /// <summary>Drops the cached existence results. Call after bulk artwork changes (image-cache wipe,
+    /// poster re-selection) so the next mapping re-checks the disk instead of trusting stale hits.</summary>
+    public static void InvalidateFileExistenceCache()
+    {
+        ExistingFiles.Clear();
+        MissingFiles.Clear();
+    }
 
     /// <summary>
     /// Maps paths under the image cache to <c>/images/...</c>. Uses relative path when possible
@@ -52,7 +93,7 @@ public static class ImageUrls
                 if (!full.StartsWith(rootWithSep, StringComparison.OrdinalIgnoreCase) &&
                     !full.Equals(root, StringComparison.OrdinalIgnoreCase))
                     return null;
-                if (!File.Exists(full))
+                if (!FileExistsCached(full))
                     return null;
                 return $"{PublicBase.TrimEnd('/')}/images/{relativeUrlPath}";
             }
@@ -152,6 +193,7 @@ public static class ImageUrls
             DateAdded = m.DateAdded,
             WatchStatus = m.WatchStatus,
             CompletedAt = m.CompletedAt,
+            RewatchCount = m.RewatchCount,
             PosterRemoteUrl = m.PosterRemoteUrl
         };
 
@@ -208,7 +250,8 @@ public static class ImageUrls
             Job = c.Job,
             ProfilePath = c.ProfilePath,
             ProfileLocalPath = ToImageUrl(c.ProfileLocalPath),
-            ProfileRemoteUrl = TmdbImageUrls.ProfileUrl(c.ProfilePath)
+            ProfileRemoteUrl = TmdbImageUrls.ProfileUrl(c.ProfilePath),
+            EpisodeCount = c.EpisodeCount,
         };
 
     public static WatchHistory MapWatchHistory(WatchHistory h) =>

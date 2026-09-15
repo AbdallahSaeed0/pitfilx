@@ -2,14 +2,25 @@ import 'dart:typed_data';
 import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
 import '../services/auth_service.dart';
+import '../services/cover_photo_store.dart';
 import '../services/profile_photo_store.dart';
 import '../services/social_service.dart';
 import '../theme/app_theme.dart';
+import '../utils/crop_image.dart';
 import '../widgets/widgets.dart';
+import 'cover_backdrop_picker_screen.dart';
+import '../widgets/pitflix_network_image.dart';
 
-/// Username/display name are real (`profiles` table). The photo picker is
-/// still session-only (see [ProfilePhotoStore]) — there's no Supabase
-/// Storage bucket wired up yet to actually upload/persist an avatar.
+enum _CoverPickChoice { camera, gallery, favorites }
+
+/// Username/display name and the avatar/cover photos are all real,
+/// persisted to Supabase (`profiles` table + `profile-images` storage
+/// bucket — see SocialService.uploadProfileImage). [ProfilePhotoStore]/
+/// [CoverPhotoStore] still hold freshly-picked bytes for instant preview
+/// while an upload is in flight; [_persistedAvatarUrl]/[_persistedCoverUrl]
+/// are the durable ones shown after a reload. Both photos are only editable
+/// from here now — Profile's own cover/avatar are display-only, tapping
+/// "Edit" is what brings you here.
 class EditProfileScreen extends StatefulWidget {
   const EditProfileScreen({super.key});
 
@@ -21,6 +32,10 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
   final _usernameController = TextEditingController();
   bool _loading = true;
   bool _saving = false;
+  String? _persistedAvatarUrl;
+  String? _persistedCoverUrl;
+  bool _uploadingPhoto = false;
+  bool _uploadingCover = false;
 
   @override
   void initState() {
@@ -34,6 +49,8 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
       if (!mounted) return;
       setState(() {
         _usernameController.text = profile?.username ?? '';
+        _persistedAvatarUrl = profile?.avatarUrl;
+        _persistedCoverUrl = profile?.coverUrl;
         _loading = false;
       });
     } catch (_) {
@@ -119,17 +136,136 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
     try {
       final picked = await ImagePicker().pickImage(
         source: source,
-        maxWidth: 512,
-        maxHeight: 512,
+        maxWidth: 1024,
+        maxHeight: 1024,
       );
-      if (picked == null) return;
-      final bytes = await picked.readAsBytes();
+      if (picked == null || !mounted) return;
+      final bytes = await cropPickedImage(
+        context,
+        picked.path,
+        isCircle: true,
+      );
+      if (bytes == null || !mounted) return; // Cancelled out of the cropper.
       ProfilePhotoStore.photoBytes.value = bytes;
+      setState(() => _uploadingPhoto = true);
+      final url = await SocialService.uploadProfileImage(
+        bytes: bytes,
+        isCover: false,
+        contentType: 'image/jpeg',
+      );
+      ProfilePhotoStore.avatarUrl.value = url;
+      if (!mounted) return;
+      setState(() {
+        _persistedAvatarUrl = url;
+        _uploadingPhoto = false;
+      });
     } catch (e) {
       if (!mounted) return;
+      setState(() => _uploadingPhoto = false);
       ScaffoldMessenger.of(
         context,
-      ).showSnackBar(SnackBar(content: Text("Couldn't get photo: $e")));
+      ).showSnackBar(SnackBar(content: Text("Couldn't save photo: $e")));
+    }
+  }
+
+  Future<void> _pickCover() async {
+    final choice = await showModalBottomSheet<_CoverPickChoice>(
+      context: context,
+      backgroundColor: AppColors.bgCard,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
+      ),
+      builder: (context) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            ListTile(
+              leading: const Icon(
+                Icons.photo_camera_outlined,
+                color: AppColors.textPrimary,
+              ),
+              title: Text('Take Photo', style: AppTextStyles.dmSans(fontSize: 15)),
+              onTap: () => Navigator.of(context).pop(_CoverPickChoice.camera),
+            ),
+            ListTile(
+              leading: const Icon(
+                Icons.photo_library_outlined,
+                color: AppColors.textPrimary,
+              ),
+              title: Text(
+                'Choose from Gallery',
+                style: AppTextStyles.dmSans(fontSize: 15),
+              ),
+              onTap: () => Navigator.of(context).pop(_CoverPickChoice.gallery),
+            ),
+            ListTile(
+              leading: const Icon(
+                Icons.movie_filter_outlined,
+                color: AppColors.textPrimary,
+              ),
+              title: Text(
+                'Choose from Favorites',
+                style: AppTextStyles.dmSans(fontSize: 15),
+              ),
+              onTap: () => Navigator.of(context).pop(_CoverPickChoice.favorites),
+            ),
+          ],
+        ),
+      ),
+    );
+    if (choice == null || !mounted) return;
+    if (choice == _CoverPickChoice.favorites) {
+      final url = await Navigator.of(
+        context,
+      ).push<String>(MaterialPageRoute(builder: (_) => const CoverBackdropPickerScreen()));
+      if (url == null || !mounted) return;
+      // A favorite's backdrop is already TMDB-hosted — clear any in-memory
+      // gallery pick so the network image (not stale bytes) shows.
+      CoverPhotoStore.photoBytes.value = null;
+      setState(() => _persistedCoverUrl = url);
+      return;
+    }
+    final source = choice == _CoverPickChoice.camera
+        ? ImageSource.camera
+        : ImageSource.gallery;
+    try {
+      // NOT constrained to the cover's own tiny display size (previously
+      // maxWidth:1080/maxHeight:400 here) — a portrait source photo would
+      // get scaled down to fit within that 400px height before cropping,
+      // leaving a genuinely low-resolution result that looked blurry once
+      // stretched across the full-width cover. Picking at full resolution
+      // and letting the cropper below produce the actual 1080x400-ish
+      // rectangle keeps real detail in the final image.
+      final picked = await ImagePicker().pickImage(
+        source: source,
+        maxWidth: 2160,
+        maxHeight: 2160,
+      );
+      if (picked == null || !mounted) return;
+      final bytes = await cropPickedImage(
+        context,
+        picked.path,
+        aspectRatio: 1080 / 400,
+      );
+      if (bytes == null || !mounted) return; // Cancelled out of the cropper.
+      CoverPhotoStore.photoBytes.value = bytes;
+      setState(() => _uploadingCover = true);
+      final url = await SocialService.uploadProfileImage(
+        bytes: bytes,
+        isCover: true,
+        contentType: 'image/jpeg',
+      );
+      if (!mounted) return;
+      setState(() {
+        _persistedCoverUrl = url;
+        _uploadingCover = false;
+      });
+    } catch (e) {
+      if (!mounted) return;
+      setState(() => _uploadingCover = false);
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text("Couldn't save cover: $e")));
     }
   }
 
@@ -165,6 +301,77 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
               child: ListView(
                 padding: const EdgeInsets.fromLTRB(20, 28, 20, 24),
                 children: [
+                  Text('COVER', style: AppTextStyles.sectionLabel()),
+                  const SizedBox(height: 8),
+                  GestureDetector(
+                    onTap: _uploadingCover ? null : _pickCover,
+                    child: ValueListenableBuilder<Uint8List?>(
+                      valueListenable: CoverPhotoStore.photoBytes,
+                      builder: (context, coverBytes, _) => Stack(
+                        alignment: Alignment.center,
+                        children: [
+                          Container(
+                            height: 110,
+                            width: double.infinity,
+                            clipBehavior: Clip.antiAlias,
+                            decoration: BoxDecoration(
+                              borderRadius: BorderRadius.circular(12),
+                              gradient: const LinearGradient(
+                                begin: Alignment.topLeft,
+                                end: Alignment.bottomRight,
+                                colors: [AppColors.logoAccentDim, Color(0xFF1A0D2E)],
+                              ),
+                            ),
+                            child: coverBytes != null
+                                ? Image.memory(coverBytes, fit: BoxFit.cover)
+                                : _persistedCoverUrl != null
+                                ? PitflixNetworkImage(
+                                    _persistedCoverUrl!,
+                                    fit: BoxFit.cover,
+                                    errorBuilder: (context, error, stackTrace) =>
+                                        const SizedBox.shrink(),
+                                  )
+                                : null,
+                          ),
+                          if (_uploadingCover)
+                            const Positioned.fill(
+                              child: DecoratedBox(
+                                decoration: BoxDecoration(color: Color(0x99000000)),
+                                child: Center(
+                                  child: SizedBox(
+                                    width: 22,
+                                    height: 22,
+                                    child: CircularProgressIndicator(
+                                      strokeWidth: 2.4,
+                                      color: AppColors.textPrimary,
+                                    ),
+                                  ),
+                                ),
+                              ),
+                            ),
+                          Positioned(
+                            right: 10,
+                            bottom: 10,
+                            child: Container(
+                              width: 32,
+                              height: 32,
+                              decoration: const BoxDecoration(
+                                color: AppColors.accent,
+                                shape: BoxShape.circle,
+                              ),
+                              alignment: Alignment.center,
+                              child: const Icon(
+                                Icons.camera_alt_outlined,
+                                size: 16,
+                                color: AppColors.bgBase,
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 28),
                   Center(
                     child: Stack(
                       clipBehavior: Clip.none,
@@ -191,6 +398,21 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
                                     width: 96,
                                     height: 96,
                                   )
+                                : _persistedAvatarUrl != null
+                                ? PitflixNetworkImage(
+                                    _persistedAvatarUrl!,
+                                    fit: BoxFit.cover,
+                                    width: 96,
+                                    height: 96,
+                                    errorBuilder: (context, error, stackTrace) =>
+                                        Text(
+                                          _initials,
+                                          style: AppTextStyles.bebas(
+                                            fontSize: 36,
+                                            color: AppColors.accent,
+                                          ),
+                                        ),
+                                  )
                                 : Text(
                                     _initials,
                                     style: AppTextStyles.bebas(
@@ -200,11 +422,29 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
                                   ),
                           ),
                         ),
+                        if (_uploadingPhoto)
+                          Container(
+                            width: 96,
+                            height: 96,
+                            decoration: const BoxDecoration(
+                              color: Color(0x99000000),
+                              shape: BoxShape.circle,
+                            ),
+                            alignment: Alignment.center,
+                            child: const SizedBox(
+                              width: 22,
+                              height: 22,
+                              child: CircularProgressIndicator(
+                                strokeWidth: 2.4,
+                                color: AppColors.textPrimary,
+                              ),
+                            ),
+                          ),
                         Positioned(
                           right: -2,
                           bottom: -2,
                           child: GestureDetector(
-                            onTap: _pickPhoto,
+                            onTap: _uploadingPhoto ? null : _pickPhoto,
                             child: Container(
                               width: 32,
                               height: 32,

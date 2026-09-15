@@ -1,12 +1,17 @@
-import { BookmarkPlus, Copy, Pencil, Play, Trash2 } from "lucide-react";
+import { BookmarkPlus, CheckSquare, Copy, FolderInput, FolderOpen, FolderPlus, Heart, Pencil, Play, Trash2 } from "lucide-react";
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { formatBytes, type DeviceFsEntry } from "./deviceUtils";
 
 export type DeviceContextMenuAction =
   | "open"
   | "play"
+  | "select"
+  | "move"
   | "add-to-library"
+  | "add-to-collections"
+  | "toggle-favorite"
   | "copy-path"
+  | "show-in-folder"
   | "rename"
   | "delete";
 
@@ -16,6 +21,9 @@ type Props = {
   y: number;
   onAction: (action: DeviceContextMenuAction) => void;
   onClose: () => void;
+  showAddToCollections?: boolean;
+  /** Files only (not folders) — undefined means "not applicable", hiding the menu item entirely. */
+  isFavorited?: boolean;
 };
 
 function entrySubtitle(entry: DeviceFsEntry): string {
@@ -26,7 +34,7 @@ function entrySubtitle(entry: DeviceFsEntry): string {
   return "File";
 }
 
-export function DeviceEntryContextMenu({ entry, x, y, onAction, onClose }: Props) {
+export function DeviceEntryContextMenu({ entry, x, y, onAction, onClose, showAddToCollections, isFavorited }: Props) {
   const menuRef = useRef<HTMLDivElement>(null);
   const [pos, setPos] = useState({ x, y });
 
@@ -131,8 +139,17 @@ export function DeviceEntryContextMenu({ entry, x, y, onAction, onClose }: Props
 
       {isVideo && item("play", "Play in media player", Play, { purple: true })}
       {divider("d1")}
-      {item("add-to-library", "Add to library", BookmarkPlus)}
-      {item("copy-path",      "Copy path",       Copy)}
+      {(isVideo || entry.is_directory) && showAddToCollections
+        ? item("add-to-collections", entry.is_directory ? "Add videos to My Videos" : "Add to My Videos", FolderPlus, { purple: true })
+        : null}
+      {isFavorited !== undefined
+        ? item("toggle-favorite", isFavorited ? "Remove from Favorites" : "Add to Favorites", Heart, { purple: !isFavorited })
+        : null}
+      {item("select", "Select",  CheckSquare)}
+      {item("move",   "Move",   FolderInput)}
+      {item("add-to-library", "Add to library",   BookmarkPlus)}
+      {item("copy-path",      "Copy path",        Copy)}
+      {item("show-in-folder", "Show in folder",   FolderOpen)}
       {item("rename",         "Rename",           Pencil)}
       {divider("d2")}
       {item("delete", "Delete", Trash2, { danger: true })}

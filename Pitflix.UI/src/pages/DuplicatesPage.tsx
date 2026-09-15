@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { RowListSkeleton } from "../components/ui/Skeleton";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useNavigate } from "react-router-dom";
 import {
@@ -229,9 +230,7 @@ export function DuplicatesPage() {
       </div>
 
       {isLoading && (
-        <div className="flex justify-center py-24">
-          <Spinner />
-        </div>
+        <RowListSkeleton />
       )}
 
       {isError && (

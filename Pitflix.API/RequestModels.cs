@@ -18,16 +18,17 @@ internal sealed record CreateListBody(string? Name);
 internal sealed record RenameListBody(string? Name);
 internal sealed record AddListItemBody(int TmdbId, string? MediaType, string? Title = null, string? PosterRemoteUrl = null, string? ImdbId = null);
 internal sealed record ImageSelectBody(int TmdbId, string? MediaType, string? PosterPath, string? BackdropPath,
-    string? PosterUrl = null, string? BackdropUrl = null);
+    string? PosterUrl = null, string? BackdropUrl = null, string? LogoUrl = null);
 internal sealed record SettingsBody(string? TmdbApiKey, string? OpenSubtitlesApiKey, string? OpenSubtitlesAppName,
-    string? SubDlApiKey, string? SubSourceApiKey, string? MdblistApiKey, string? TvdbApiKey,
+    string? SubDlApiKey, string? SubSourceApiKey, string? MdblistApiKey, string? OmdbApiKey, string? TvdbApiKey,
     string? LetterboxdUsername,
     List<string>? LibraryPaths, string? MediaPlayerPath, bool? UseBuiltinPlayer, bool? LibraryScanDesktopToasts,
     string? PlayerMode,
     string? QBittorrentBaseUrl, string? QBittorrentUsername, string? QBittorrentPassword,
     bool? SupabaseSyncEnabled = null, string? SupabaseUrl = null, string? SupabaseServiceRoleKey = null,
     // Opt-in embedded-player playback quality features (default "auto" / false — see PlaybackQualitySettings.tsx).
-    string? HdrMode = null, bool? AudioPassthrough = null);
+    string? HdrMode = null, bool? AudioPassthrough = null, string? FanartApiKey = null,
+    string? StremioAddonManifestUrl = null, string? CometAddonManifestUrl = null);
 
 internal sealed record WizardProgressBody(int Step, string? StateJson);
 
@@ -42,13 +43,15 @@ internal sealed record CompleteSetupBody(
 internal sealed record SubtitleDownloadBody(int FileId, string? VideoFilePath, string? LanguageCode);
 internal sealed record SubDlDownloadBody(string? FullLink, string? VideoFilePath, string? Language);
 internal sealed record SubSourceDownloadBody(int? SubtitleId, string? VideoFilePath, string? Language);
-internal sealed record TorrentDownloadBody(string? MagnetLink, string? SavePath);
+internal sealed record TorrentDownloadBody(string? MagnetLink, string? SavePath, int? FileIndex = null);
 internal sealed record TorrentFileSaveBody(string? TorrentFileUrl, string? SavePath, string? Title);
 internal sealed record StreamTrailerEntry(string? Name, string Key, string? Type, string YoutubeUrl);
 
 internal sealed record BulkWatchBody(int[]? MovieIds, int[]? ShowIds, string? WatchStatus);
 
 internal sealed record BulkLibraryIdsBody(int[]? MovieIds, int[]? ShowIds);
+internal sealed record PersonProfileOverrideBody(string? ProfilePath);
+internal sealed record RewatchCountBody(int Count);
 
 internal sealed record MatchTmdbBody(int TmdbId);
 internal sealed record BulkRescanSeriesRequest(int[] ShowIds);

@@ -23,6 +23,15 @@ export default defineConfig(async () => ({
   //
   // 1. prevent Vite from obscuring rust errors
   clearScreen: false,
+
+  // Without this, Vite's dependency scanner auto-discovers every *.html under the project root as a
+  // potential multi-page entry — including the dozens of generated asset copies Tauri drops under
+  // src-tauri/target/**/tauri-codegen-assets on release builds. One of those isn't scannable and
+  // crashes esbuild's scan worker (`write EPIPE`), which then skips dependency pre-bundling entirely.
+  // Pinning the entry to just our real index.html avoids the crawl.
+  optimizeDeps: {
+    entries: ["index.html"],
+  },
   // 2. tauri expects a fixed port, fail if that port is not available
   server: {
     // Avoid low ports and 5132–5231: Windows often excludes those (Hyper-V/WSL/VPN).

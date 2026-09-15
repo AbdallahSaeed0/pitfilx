@@ -18,6 +18,14 @@ public sealed class SkipSegmentsRepository
             .FirstOrDefaultAsync(e => e.Id == episodeId, cancellationToken).ConfigureAwait(false);
     }
 
+    public async Task<int?> GetShowTmdbIdAsync(int showId, CancellationToken cancellationToken = default)
+    {
+        return await _db.Shows.AsNoTracking()
+            .Where(s => s.Id == showId)
+            .Select(s => (int?)s.TmdbId)
+            .FirstOrDefaultAsync(cancellationToken).ConfigureAwait(false);
+    }
+
     /// <summary>Episodes for one (Show, Season), in playback order, capped to the first <paramref name="take"/>
     /// — mirrors the sampling cap used by fingerprint correlation, kept bounded here too since a season
     /// with one chapter-tagged episode is enough to resolve the whole season.</summary>
@@ -127,7 +135,7 @@ public sealed class SkipSegmentsRepository
             _ => tier3Source,
         };
 
-        if (introResult is { } ir && existing.IntroSource is not ("chapter" or "anilist"))
+        if (introResult is { } ir && existing.IntroSource is not ("chapter" or "anilist" or "theintrodb" or "introdb" or "skipdb"))
         {
             existing.IntroStartSeconds = ir.Start;
             existing.IntroEndSeconds = ir.End;
@@ -135,7 +143,7 @@ public sealed class SkipSegmentsRepository
             existing.IntroSource = IntroOutroSource(ir.Source);
         }
 
-        if (outroResult is { } or && existing.OutroSource is not ("chapter" or "anilist"))
+        if (outroResult is { } or && existing.OutroSource is not ("chapter" or "anilist" or "theintrodb" or "introdb" or "skipdb"))
         {
             existing.OutroStartSeconds = or.Start;
             existing.OutroEndSeconds = or.End;

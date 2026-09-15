@@ -59,3 +59,39 @@ export const openPlayerWindow = async (): Promise<void> => {
   if (!isTauri()) return;
   await invoke("player3_open", {});
 };
+
+/**
+ * Shows/hides the Windows taskbar thumbnail toolbar (Previous / Play-Pause /
+ * Next) and reflects play/pause state. No-op outside Tauri.
+ */
+export const taskbarSetPlaying = async (
+  hasSession: boolean,
+  isPlaying: boolean,
+): Promise<void> => {
+  if (!isTauri()) return;
+  try {
+    await invoke("taskbar_set_playing", { hasSession, isPlaying });
+  } catch (err) {
+    console.error("[pitflix-player] taskbar_set_playing failed", err);
+    void invoke("player2_debug_log", {
+      line: `taskbar_set_playing invoke failed: ${err instanceof Error ? err.message : String(err)}`,
+    }).catch(() => {});
+  }
+};
+
+/**
+ * Draws/clears a PotPlayer-style playback-progress line on the main window's
+ * taskbar icon. `fraction` is 0..1 through the current file. No-op outside Tauri.
+ */
+export const taskbarSetProgress = async (
+  hasSession: boolean,
+  fraction: number,
+  isPaused: boolean,
+): Promise<void> => {
+  if (!isTauri()) return;
+  try {
+    await invoke("taskbar_set_progress", { hasSession, fraction, isPaused });
+  } catch (err) {
+    console.error("[pitflix-player] taskbar_set_progress failed", err);
+  }
+};

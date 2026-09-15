@@ -8,6 +8,8 @@ export type MediaImageProps = {
   alt?: string;
   /** Wrapper: set size / aspect (e.g. <code>aspect-[2/3] w-full rounded-lg</code>). */
   className?: string;
+  /** Extra classes on the <code>&lt;img&gt;</code> itself, e.g. a `group-hover:blur-*` effect. */
+  imgClassName?: string;
   fallbackText?: string;
   /** Prefer <code>eager</code> for above-the-fold posters so WebView/intersection quirks do not skip loading. */
   loading?: "lazy" | "eager";
@@ -20,6 +22,7 @@ export function MediaImage({
   fallbackSrc,
   alt = "",
   className,
+  imgClassName,
   fallbackText,
   loading = "eager",
 }: MediaImageProps) {
@@ -91,22 +94,18 @@ export function MediaImage({
 
   return (
     <div className={cn("relative overflow-hidden", className)}>
-      {/* Blurred placeholder — matches spoiler-protection blur visually so the
-          loading state reads as "image incoming" instead of a flat gray block. */}
-      {!loaded ? (
-        <div
-          className="absolute inset-0 z-10 animate-pulse rounded-[inherit] bg-gradient-to-br from-zinc-700/70 via-zinc-800/60 to-zinc-900/80"
-          style={{ filter: "blur(12px)" }}
-        />
-      ) : null}
+      {/* Shimmering placeholder holding the image's exact footprint. The old blurred-dark version
+          was indistinguishable from an empty tile once a card's own overlay sat on top of it. */}
+      {!loaded ? <div className="pitflix-skeleton absolute inset-0 z-10 rounded-[inherit]" /> : null}
       <img
         ref={imgRef}
         key={displaySrc}
         src={displaySrc}
         alt={alt}
         className={cn(
-          "h-full w-full object-cover transition-[opacity,filter] duration-500 ease-out",
+          "h-full w-full object-cover transition-[opacity,filter,transform] duration-500 ease-out",
           loaded ? "opacity-100 blur-0" : "opacity-30 blur-xl",
+          imgClassName,
         )}
         loading={loading}
         onLoad={() => setLoaded(true)}

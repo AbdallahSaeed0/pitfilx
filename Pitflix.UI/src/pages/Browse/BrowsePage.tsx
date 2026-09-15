@@ -3,6 +3,8 @@ import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { ArrowRight, Compass, X } from "lucide-react";
 import { cancelBrowseDownload, getBrowseDownloadStatus, postBrowseDownload } from "../../api/webBrowse";
+import { useAppPrefsStore } from "../../store/appPrefsStore";
+import { setBrowseAdBlockEnabled } from "../../utils/browseAdBlock";
 import { cn } from "../../utils/cn";
 import { BrowseDownloadToast, type BrowseToastState } from "./BrowseDownloadToast";
 
@@ -12,9 +14,18 @@ type DownloadRequestEvent = {
   pageUrl: string;
 };
 
+type DetectedMedia = {
+  url: string;
+  type: "hls" | "dash";
+  detectedAt: number;
+  pageUrl: string;
+};
+
 const DOWNLOAD_POLL_MS = 800;
 
 const RESIZE_DEBOUNCE_MS = 96;
+
+const DETECTED_MEDIA_POLL_MS = 3000;
 
 export function BrowsePage() {
   const [addressInput, setAddressInput] = useState("");
@@ -22,6 +33,8 @@ export function BrowsePage() {
   const [isOpen, setIsOpen] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [toast, setToast] = useState<BrowseToastState | null>(null);
+  const [detectedCount, setDetectedCount] = useState(0);
+  const adBlockEnabledPref = useAppPrefsStore((s) => s.browseAdBlockEnabled);
 
   const containerRef = useRef<HTMLDivElement>(null);
   const isOpenRef = useRef(false);
@@ -110,6 +123,40 @@ export function BrowsePage() {
       if (resizeTimerRef.current) window.clearTimeout(resizeTimerRef.current);
     };
   }, [currentBounds]);
+
+  // The Rust-side `NetworkState` ad-block flag is per-process (defaults to
+  // on) and doesn't know about the persisted Settings preference on its
+  // own — push it every time this page mounts and whenever the preference
+  // changes, so it's authoritative even if Settings was never opened.
+  useEffect(() => {
+    if (!isTauri()) return;
+    void setBrowseAdBlockEnabled(adBlockEnabledPref).catch(() => {});
+  }, [adBlockEnabledPref]);
+
+  // Subtle "N streams detected" affordance — small, non-intrusive, doesn't
+  // replace the per-video download button which stays the primary way to
+  // grab a specific stream. Just surfaces that Phase 2's passive network
+  // detection found something for the current page.
+  useEffect(() => {
+    if (!isTauri() || !isOpen) {
+      setDetectedCount(0);
+      return;
+    }
+    let cancelled = false;
+    const poll = () => {
+      void invoke<DetectedMedia[]>("browse_get_detected_media")
+        .then((list) => {
+          if (!cancelled) setDetectedCount(list.length);
+        })
+        .catch(() => {});
+    };
+    poll();
+    const timer = window.setInterval(poll, DETECTED_MEDIA_POLL_MS);
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+    };
+  }, [isOpen, currentUrl]);
 
   // Rust -> JS: a download button was clicked inside the embedded page.
   useEffect(() => {
@@ -207,6 +254,11 @@ export function BrowsePage() {
           Go
           <ArrowRight className="h-4 w-4" />
         </button>
+        {isOpen && detectedCount > 0 ? (
+          <span className="shrink-0 whitespace-nowrap rounded-full bg-pitflix-card px-2.5 py-1 text-[11px] font-medium text-pitflix-muted">
+            {detectedCount} stream{detectedCount === 1 ? "" : "s"} detected
+          </span>
+        ) : null}
         {isOpen ? (
           <button
             type="button"

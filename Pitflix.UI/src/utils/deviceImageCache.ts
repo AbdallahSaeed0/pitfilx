@@ -77,23 +77,66 @@ function persistImageThumb(path: string, dataUrl: string): void {
   });
 }
 
+// See the identical pendingLookups mechanism in videoThumbnailCache.ts: coalesces concurrent
+// loadImageFromDisk calls (e.g. a folder with hundreds of image tiles all mounting in the same
+// React commit) into one shared batched transaction instead of each opening its own.
+let pendingLookups: Map<string, Array<(v: string | undefined) => void>> | null = null;
+let pendingLookupTimer: ReturnType<typeof setTimeout> | null = null;
+
+function flushPendingLookups(): void {
+  const batch = pendingLookups!;
+  pendingLookups = null;
+  pendingLookupTimer = null;
+  const paths = Array.from(batch.keys());
+  void loadImagesFromDiskBatch(paths).then((found) => {
+    for (const [path, resolvers] of batch) {
+      const val = found.has(path) ? cache.get(path) : undefined;
+      for (const resolve of resolvers) resolve(val);
+    }
+  });
+}
+
 export function loadImageFromDisk(path: string): Promise<string | undefined> {
   const inMemory = cache.get(path);
   if (inMemory !== undefined) return Promise.resolve(inMemory);
 
+  return new Promise<string | undefined>((resolve) => {
+    if (!pendingLookups) pendingLookups = new Map();
+    let resolvers = pendingLookups.get(path);
+    if (!resolvers) { resolvers = []; pendingLookups.set(path, resolvers); }
+    resolvers.push(resolve);
+    if (pendingLookupTimer == null) pendingLookupTimer = setTimeout(flushPendingLookups, 0);
+  });
+}
+
+/** Batched counterpart to `loadImageFromDisk` — see `loadThumbnailsFromDiskBatch` in
+ * videoThumbnailCache.ts for why this exists (one shared transaction instead of one per path). */
+export function loadImagesFromDiskBatch(paths: string[]): Promise<Set<string>> {
+  const found = new Set<string>();
+  const toQuery: string[] = [];
+  for (const path of paths) {
+    if (cache.has(path)) found.add(path);
+    else toQuery.push(path);
+  }
+  if (toQuery.length === 0) return Promise.resolve(found);
+
   return openImageDb().then((db) => {
-    if (!db) return undefined;
-    return new Promise<string | undefined>((resolve) => {
+    if (!db) return found;
+    return new Promise<Set<string>>((resolve) => {
       try {
-        const req = db.transaction(STORE_NAME, "readonly").objectStore(STORE_NAME).get(path);
-        req.onsuccess = () => {
-          const val = req.result;
-          if (typeof val === "string") { cacheFromDisk(path, val); resolve(val); }
-          else resolve(undefined);
-        };
-        req.onerror = () => resolve(undefined);
+        const tx = db.transaction(STORE_NAME, "readonly");
+        const store = tx.objectStore(STORE_NAME);
+        for (const path of toQuery) {
+          const req = store.get(path);
+          req.onsuccess = () => {
+            const val = req.result;
+            if (typeof val === "string") { cacheFromDisk(path, val); found.add(path); }
+          };
+        }
+        tx.oncomplete = () => resolve(found);
+        tx.onerror = () => resolve(found);
       } catch {
-        resolve(undefined);
+        resolve(found);
       }
     });
   });

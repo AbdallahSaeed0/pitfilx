@@ -1,11 +1,16 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!-- Modify this file to customize your launch splash screen -->
+<!-- Dark background + centered purple "P" mark (splash_p, a purple glyph on
+     transparent — no filled tile). This is what's on screen for the brief window
+     before Android 12+'s own SplashScreen API (see values-v31/styles.xml) or
+     Flutter's first frame (lib/screens/splash_screen.dart) takes over. Using the
+     transparent glyph rather than the purple splash_logo.png tile keeps the launch
+     dark and minimal instead of a full purple square. -->
 <layer-list xmlns:android="http://schemas.android.com/apk/res/android">
     <item android:drawable="@color/splash_background" />
-
     <item>
         <bitmap
             android:gravity="center"
-            android:src="@drawable/splash_logo" />
+            android:src="@drawable/splash_p" />
     </item>
 </layer-list>

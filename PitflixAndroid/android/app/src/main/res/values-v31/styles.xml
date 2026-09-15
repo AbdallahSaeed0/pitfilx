@@ -1,15 +1,13 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <!-- Android 12+ uses the system SplashScreen API instead of windowBackground
-         alone; without this override it shows a plain white background behind
-         the launcher icon. Match it to the Dart SplashScreen widget's dark
-         bgBase + logo mark instead, so there's no visible color flash when
-         Flutter's first frame takes over. Uses splash_logo.png (a flat PNG,
-         not the adaptive @mipmap/ic_launcher) so the OS doesn't crop it into
-         a circle with the icon's own purple background layer showing through. -->
+         alone. windowSplashScreenAnimatedIcon is shown centered on the dark
+         windowSplashScreenBackground; using the purple "P" glyph (splash_p,
+         transparent background) rather than the purple splash_logo.png tile keeps the
+         OS splash dark and minimal — a purple mark on dark, no full purple square. -->
     <style name="LaunchTheme" parent="@android:style/Theme.Light.NoTitleBar">
         <item name="android:windowSplashScreenBackground">@color/splash_background</item>
-        <item name="android:windowSplashScreenAnimatedIcon">@drawable/splash_logo</item>
+        <item name="android:windowSplashScreenAnimatedIcon">@drawable/splash_p</item>
         <item name="android:windowBackground">@drawable/launch_background</item>
     </style>
     <style name="NormalTheme" parent="@android:style/Theme.Light.NoTitleBar">

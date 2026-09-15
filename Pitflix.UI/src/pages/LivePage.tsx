@@ -39,6 +39,7 @@ import {
   type IptvProviderType,
 } from "../api/iptv";
 import { Spinner } from "../components/ui/Spinner";
+import { BackButton } from "../components/ui/BackButton";
 import { cn } from "../utils/cn";
 
 // ── Provider form ─────────────────────────────────────────────────────────────
@@ -774,6 +775,7 @@ export function LivePage() {
 
   return (
     <div className="flex h-full min-h-0 flex-col">
+      <BackButton />
       {/* Page header */}
       <div className="mb-6 flex items-center justify-between">
         <div>

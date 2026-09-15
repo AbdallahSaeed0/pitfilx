@@ -47,6 +47,85 @@ public sealed class ScanPipeline
         return await RunScanOnFilesAsync(paths, progress, cancellationToken).ConfigureAwait(false);
     }
 
+    /// <summary>
+    /// Non-destructive preview of what <see cref="RunRescanUnmatchedAsync"/> would do: runs the exact
+    /// same TMDB search + auto-match decision for every currently-unmatched file but writes nothing to
+    /// the database. Lets callers see (and vet) proposed matches before applying them.
+    /// </summary>
+    public async Task<IReadOnlyList<UnmatchedMatchPreview>> PreviewUnmatchedAsync(
+        CancellationToken cancellationToken = default)
+    {
+        var logs = await _repo.GetUnmatchedFilesAsync(cancellationToken).ConfigureAwait(false);
+        var paths = logs.Select(l => l.FilePath)
+            .Where(p => !string.IsNullOrWhiteSpace(p))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+
+        var previews = new List<UnmatchedMatchPreview>(paths.Count);
+        foreach (var filePath in paths)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            var parsed = NameParser.Parse(filePath);
+            var mediaType = string.IsNullOrEmpty(parsed.MediaType)
+                ? FileScanner.InferMediaType(filePath)
+                : parsed.MediaType;
+
+            if (mediaType != "Movie" && mediaType != "Series")
+            {
+                previews.Add(new UnmatchedMatchPreview(filePath, parsed.CleanName, parsed.Year, mediaType,
+                    parsed.IsArabic, false, null, null, null, 0));
+                continue;
+            }
+
+            List<TmdbSearchResult> searchResults;
+            try
+            {
+                searchResults = await _tmdb.SearchAsync(parsed.CleanName, mediaType, parsed.IsArabic, cancellationToken)
+                    .ConfigureAwait(false);
+                if (searchResults.Count == 0)
+                {
+                    foreach (var c in NameParser.BuildSearchCandidates(filePath))
+                    {
+                        if (string.Equals(c, parsed.CleanName, StringComparison.OrdinalIgnoreCase))
+                            continue;
+                        var res = await _tmdb.SearchAsync(c, mediaType, parsed.IsArabic, cancellationToken)
+                            .ConfigureAwait(false);
+                        if (res.Count > 0)
+                        {
+                            searchResults = res;
+                            break;
+                        }
+                    }
+                }
+            }
+            catch
+            {
+                previews.Add(new UnmatchedMatchPreview(filePath, parsed.CleanName, parsed.Year, mediaType,
+                    parsed.IsArabic, false, null, null, null, -1)); // ResultCount -1 = TMDB search error
+                continue;
+            }
+
+            var matched = TryPickAutoMatch(parsed, searchResults, mediaType, out var pick);
+            if (!matched)
+            {
+                var expanded = await MergeAlternateCandidateSearchesAsync(filePath, parsed, mediaType, searchResults,
+                    cancellationToken).ConfigureAwait(false);
+                matched = TryPickAutoMatch(parsed, expanded, mediaType, out pick);
+                if (matched)
+                    searchResults = expanded;
+            }
+
+            previews.Add(new UnmatchedMatchPreview(
+                filePath, parsed.CleanName, parsed.Year, mediaType, parsed.IsArabic,
+                matched, matched ? pick.Id : null,
+                matched ? pick.Title : null,
+                matched ? YearFromSearchResult(pick) : null,
+                searchResults.Count));
+        }
+
+        return previews;
+    }
+
     /// <summary>Processes an explicit list of media file paths (e.g. demo paths that are not on disk as a folder scan).</summary>
     public async Task<ScanPipelineResult> RunScanOnFilesAsync(IReadOnlyList<string> filePaths,
         IProgress<ScanProgress>? progress = null, CancellationToken cancellationToken = default,
@@ -138,7 +217,7 @@ public sealed class ScanPipeline
             int SkippedCombined() => result.SkippedAlreadyMatched + result.SkippedUnchangedUnmatched;
 
             void ReportScan(string status, bool notify = false, string? notifyTitle = null, string? notifyKind = null,
-                bool notifyMatched = false)
+                bool notifyMatched = false, int? notifyLibraryId = null, int? notifySeason = null)
             {
                 var emit = libraryNotifications && notify;
                 progress?.Report(new ScanProgress
@@ -153,7 +232,9 @@ public sealed class ScanPipeline
                     EmitLibraryNotification = emit,
                     LibraryNotificationTitle = emit ? notifyTitle : null,
                     LibraryNotificationKind = emit ? notifyKind : null,
-                    LibraryNotificationMatched = emit && notifyMatched
+                    LibraryNotificationMatched = emit && notifyMatched,
+                    LibraryNotificationLibraryId = emit ? notifyLibraryId : null,
+                    LibraryNotificationSeason = emit ? notifySeason : null
                 });
             }
 
@@ -279,6 +360,36 @@ public sealed class ScanPipeline
 
             var top = topPick;
 
+            // A movie's TmdbId maps to exactly one library entry; a second file resolving to a TmdbId
+            // that's already in the library is a duplicate copy (extra release/quality, a stray sample
+            // clip, a mis-filed second copy), not a new addition. Short-circuit before the TMDB details
+            // fetch / image downloads / cast replace — none of that changes anything visible — and don't
+            // fire a "just matched" notification, since nothing new was actually added to the library.
+            // (Series is exempt: one show TmdbId legitimately owns many files, one per episode.)
+            if (string.Equals(mediaType, "Movie", StringComparison.OrdinalIgnoreCase))
+            {
+                var existingMovie = await _repo.GetMovieByTmdbIdAsync(top.Id, cancellationToken).ConfigureAwait(false);
+                if (existingMovie != null &&
+                    !string.Equals(MediaPathNormalizer.PreferredPhysicalPath(existingMovie.FilePath),
+                        MediaPathNormalizer.PreferredPhysicalPath(filePath), StringComparison.OrdinalIgnoreCase))
+                {
+                    await _repo.SaveScanLogAsync(new ScanLog
+                    {
+                        FilePath = filePath,
+                        CleanName = parsed.CleanName,
+                        Status = "Matched",
+                        MatchedTitle = existingMovie.Title,
+                        TmdbId = top.Id,
+                        Confidence = parsed.Confidence.ToString(),
+                        SuggestionsJson = null,
+                        ScannedAt = DateTime.UtcNow
+                    }, cancellationToken).ConfigureAwait(false);
+                    result.Matched++;
+                    ReportScan("Matched (duplicate copy — already in library)");
+                    continue;
+                }
+            }
+
             ReportScan("Matching");
             TmdbDetails details;
             try
@@ -299,7 +410,7 @@ public sealed class ScanPipeline
 
             var alreadyHadMatchedScanLog =
                 await _repo.HasMatchedScanLogForPathVariantsAsync(filePath, cancellationToken).ConfigureAwait(false);
-            await ApplyMatchFromDetailsAsync(filePath, parsed, details, mediaType, cancellationToken)
+            var libraryId = await ApplyMatchFromDetailsAsync(filePath, parsed, details, mediaType, cancellationToken)
                 .ConfigureAwait(false);
 
             result.Matched++;
@@ -307,7 +418,8 @@ public sealed class ScanPipeline
                 ? $"{details.Title}{(parsed.Season is { } ps && parsed.Episode is { } pe ? $" · S{ps:D2}E{pe:D2}" : "")}"
                 : details.Title;
             var matchKind = KindForNotifications(mediaType);
-            ReportScan("Matched", libraryNotifications && !alreadyHadMatchedScanLog, matchTitle, matchKind, true);
+            ReportScan("Matched", libraryNotifications && !alreadyHadMatchedScanLog, matchTitle, matchKind, true,
+                libraryId, mediaType == "Series" ? parsed.Season : null);
         }
 
         return result;
@@ -538,7 +650,9 @@ public sealed class ScanPipeline
         return mediaType;
     }
 
-    private async Task ApplyMatchFromDetailsAsync(string filePath, ParseResult parsed, TmdbDetails details,
+    /// <summary>Saves the matched movie/show (+ episode, cast, scan log) and returns the library row id
+    /// (Show.Id or Movie.Id) so callers can build a deep link straight to it.</summary>
+    private async Task<int> ApplyMatchFromDetailsAsync(string filePath, ParseResult parsed, TmdbDetails details,
         string mediaType, CancellationToken cancellationToken)
     {
         string? posterLocal = null;
@@ -563,6 +677,7 @@ public sealed class ScanPipeline
 
         var isArabic = MediaLanguageHelper.ComputeIsArabic(details.OriginalLanguage, filePath);
 
+        int libraryId;
         if (mediaType == "Series")
         {
             var folderPath = NameParser.GetShowFolderFullPath(filePath);
@@ -590,6 +705,8 @@ public sealed class ScanPipeline
                 var ep = await BuildSeriesEpisodeRowAsync(saved, parsed, filePath, cancellationToken)
                     .ConfigureAwait(false);
                 await _repo.SaveEpisodeAsync(ep, cancellationToken).ConfigureAwait(false);
+                await MaybeOrganizeIntoSeasonFolderAsync(saved.Id, ep.Season, ep.EpisodeNumber, cancellationToken)
+                    .ConfigureAwait(false);
             }
             else if (LooksLikeSpecialsEpisode(filePath))
             {
@@ -609,6 +726,8 @@ public sealed class ScanPipeline
                 var ep = await BuildSeriesEpisodeRowAsync(saved, inferred, filePath, cancellationToken)
                     .ConfigureAwait(false);
                 await _repo.SaveEpisodeAsync(ep, cancellationToken).ConfigureAwait(false);
+                await MaybeOrganizeIntoSeasonFolderAsync(saved.Id, ep.Season, ep.EpisodeNumber, cancellationToken)
+                    .ConfigureAwait(false);
             }
 
             var castRows = details.Cast.Select(c => new CastMember
@@ -624,6 +743,7 @@ public sealed class ScanPipeline
             });
             await _repo.ReplaceCastMembersAsync(details.Id, "Series", castRows, cancellationToken)
                 .ConfigureAwait(false);
+            libraryId = saved.Id;
         }
         else
         {
@@ -644,7 +764,7 @@ public sealed class ScanPipeline
                 IsMatched = true,
                 DateAdded = DateTime.UtcNow
             };
-            await _repo.SaveMovieAsync(movie, cancellationToken).ConfigureAwait(false);
+            var savedMovie = await _repo.SaveMovieAsync(movie, cancellationToken).ConfigureAwait(false);
 
             var castRows = details.Cast.Select(c => new CastMember
             {
@@ -659,6 +779,7 @@ public sealed class ScanPipeline
             });
             await _repo.ReplaceCastMembersAsync(details.Id, "Movie", castRows, cancellationToken)
                 .ConfigureAwait(false);
+            libraryId = savedMovie.Id;
         }
 
         await _repo.SaveScanLogAsync(new ScanLog
@@ -672,6 +793,8 @@ public sealed class ScanPipeline
             SuggestionsJson = null,
             ScannedAt = DateTime.UtcNow
         }, cancellationToken).ConfigureAwait(false);
+
+        return libraryId;
     }
 
     private static int? ParseYear(string? releaseDate)
@@ -718,6 +841,31 @@ public sealed class ScanPipeline
             StillLocalPath = stillLocal,
             FilePath = filePath
         };
+    }
+
+    /// <summary>
+    /// When a freshly-scanned episode's season already has another cataloged episode on disk, moves
+    /// it next to its siblings via the same folder-organizing logic behind the manual "Wrap it" action.
+    /// A season's first-ever episode is left wherever it was found — there's nothing to align it with yet.
+    /// </summary>
+    private async Task MaybeOrganizeIntoSeasonFolderAsync(int showId, int season, int newEpisodeNumber,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            var siblings = await _repo.GetEpisodesForShowAsync(showId, cancellationToken).ConfigureAwait(false);
+            var hasExistingSibling = siblings.Any(e =>
+                e.Season == season && e.EpisodeNumber != newEpisodeNumber &&
+                !string.IsNullOrWhiteSpace(e.FilePath) && File.Exists(e.FilePath));
+            if (!hasExistingSibling)
+                return;
+
+            await _repo.WrapSeasonEpisodesIntoFolderAsync(showId, season, cancellationToken).ConfigureAwait(false);
+        }
+        catch
+        {
+            /* best-effort — a locked file or move failure shouldn't fail the scan */
+        }
     }
 
     private static bool LooksLikeSpecialsEpisode(string filePath)
@@ -860,7 +1008,7 @@ public sealed class ScanPipeline
     /// <summary>
     /// TMDB auto-match: rank by title similarity + year/language hints; avoid trusting API order or raw popularity alone.
     /// </summary>
-    private static bool TryPickAutoMatch(ParseResult parsed, List<TmdbSearchResult> results, string mediaType,
+    internal static bool TryPickAutoMatch(ParseResult parsed, List<TmdbSearchResult> results, string mediaType,
         out TmdbSearchResult chosen)
     {
         chosen = default!;
@@ -884,6 +1032,13 @@ public sealed class ScanPipeline
 
         var best = scored[0];
         var secondScore = scored.Count >= 2 ? scored[1].Score : -1.0;
+
+        // When the filename carries a year and it disagrees with the best candidate's year, the weak
+        // "trust popularity" acceptances below are unsafe — that path mis-matched e.g.
+        // "Police Academy 5 … 1988" to the more popular original "Police Academy (1984)". Strong title
+        // matches (handled above) are unaffected; only the low-confidence popularity fallbacks are gated.
+        var bestYear = YearFromSearchResult(best.r);
+        var bestYearConflicts = parsed.Year.HasValue && bestYear.HasValue && bestYear.Value != parsed.Year.Value;
 
         // Very high score (exact or near-exact title match) — accept with minimal gap requirement
         if (best.Score >= 0.95)
@@ -912,15 +1067,17 @@ public sealed class ScanPipeline
             return true;
         }
 
-        // High popularity + decent score — likely the correct mainstream title
-        if (best.r.Popularity >= 8.0 && best.Score >= 0.70 &&
+        // High popularity + decent score — likely the correct mainstream title (unless the year disagrees)
+        if (!bestYearConflicts && best.r.Popularity >= 8.0 && best.Score >= 0.70 &&
             (secondScore < 0 || best.Score - secondScore >= 0.02))
         {
             chosen = best.r;
             return true;
         }
 
-        if (best.Score >= minAccept && (secondScore < 0 || best.Score - secondScore >= minGap) &&
+        // Medium-confidence accept — also gated on year agreement: with a conflicting year we only trust
+        // the near-exact title branches above (0.95 / 0.84), never a merely "decent" title score.
+        if (!bestYearConflicts && best.Score >= minAccept && (secondScore < 0 || best.Score - secondScore >= minGap) &&
             best.Score >= minStrong - 0.04)
         {
             chosen = best.r;
@@ -960,8 +1117,9 @@ public sealed class ScanPipeline
             return true;
         }
 
-        // Fallback: if best score is decent and has clear popularity lead, accept
-        if (best.Score >= 0.58 && best.r.Popularity >= 5.0 &&
+        // Fallback: if best score is decent and has clear popularity lead, accept — but not when the
+        // filename's year contradicts this candidate (avoids "most popular same-name film" mismatches).
+        if (!bestYearConflicts && best.Score >= 0.58 && best.r.Popularity >= 5.0 &&
             (secondScore < 0 || best.Score - secondScore >= 0.01 || best.r.Popularity >= scored[1].r.Popularity * 1.5))
         {
             chosen = best.r;
@@ -976,10 +1134,13 @@ public sealed class ScanPipeline
         "the", "a", "an", "and", "or", "of", "le", "la", "les", "un", "une", "des", "el", "los", "las", "de", "du"
     };
 
-    private static string NormalizeTitleForMatch(string? s)
+    internal static string NormalizeTitleForMatch(string? s)
     {
         if (string.IsNullOrWhiteSpace(s))
             return "";
+        // Canonicalise Arabic script so spelling/diacritic variants of the same title compare equal
+        // (e.g. إسماعيلية ↔ اسماعيلية, صعيدى ↔ صعيدي). No-op for non-Arabic text.
+        s = ArabicText.Normalize(s);
         var sb = new System.Text.StringBuilder(s.Length);
         foreach (var c in s.ToLowerInvariant())
         {
@@ -1016,7 +1177,7 @@ public sealed class ScanPipeline
         return union == 0 ? 0 : (double)inter / union;
     }
 
-    private static double TitleSimilarityToOneTitle(string queryNorm, HashSet<string> queryTokens, string? candidate)
+    internal static double TitleSimilarityToOneTitle(string queryNorm, HashSet<string> queryTokens, string? candidate)
     {
         if (string.IsNullOrWhiteSpace(candidate))
             return 0;
@@ -1050,7 +1211,7 @@ public sealed class ScanPipeline
         return Math.Clamp(best, 0, 1);
     }
 
-    private static double ScoreSearchResultAgainstParsed(ParseResult parsed, TmdbSearchResult r, string mediaType)
+    internal static double ScoreSearchResultAgainstParsed(ParseResult parsed, TmdbSearchResult r, string mediaType)
     {
         var qNorm = NormalizeTitleForMatch(parsed.CleanName);
         if (qNorm.Length < 2)

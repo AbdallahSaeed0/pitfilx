@@ -12,6 +12,8 @@
           "device_copy_entries",
           "device_rename_entry",
           "device_entry_details",
+          "device_paths_exist",
+          "device_find_files",
           "device_create_folder"
         ],
         "deny": []

@@ -1,10 +1,10 @@
 import { useQuery } from "@tanstack/react-query";
+import { PosterGridSkeleton } from "../components/ui/Skeleton";
 import { useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { browseByKeyword } from "../api/browse";
 import { LibraryPosterGrid } from "../components/ui/LibraryPosterGrid";
 import { PosterCard } from "../components/ui/PosterCard";
-import { Spinner } from "../components/ui/Spinner";
 import { LibraryContextMenuLayer } from "../features/library/LibraryContextMenuLayer";
 import { useLibraryPosterCards } from "../features/library/useLibraryPosterCards";
 import type { MediaCard } from "../types/media";
@@ -80,9 +80,7 @@ export function KeywordBrowsePage() {
       )}
 
       {isLoading && (
-        <div className="flex justify-center py-24">
-          <Spinner />
-        </div>
+        <PosterGridSkeleton />
       )}
 
       {!isLoading && allItems.length === 0 && (

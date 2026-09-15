@@ -3,7 +3,7 @@ import { useNavigate } from "react-router-dom";
 import { getMovies } from "../api/movies";
 import { getAllSeries } from "../api/series";
 import { COMMON_GENRES } from "../data/commonGenres";
-import { toPosterSrc } from "../utils/posterSrc";
+import { POSTER_WIDTHS, toPosterSrc } from "../utils/posterSrc";
 import type { MediaCard } from "../types/media";
 
 const DECADES = [1960, 1970, 1980, 1990, 2000, 2010, 2020];
@@ -78,6 +78,7 @@ export function AllCategoriesPage() {
       item.selectedPosterPath || item.posterLocalPath ||
       item.selectedBackdropPath || item.backdropLocalPath ||
       item.posterRemoteUrl || undefined,
+      POSTER_WIDTHS.card,
     );
     for (const genre of genres) {
       genreItemCount.set(genre, (genreItemCount.get(genre) ?? 0) + 1);

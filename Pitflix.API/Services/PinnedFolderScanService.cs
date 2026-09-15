@@ -145,35 +145,56 @@ public sealed class PinnedFolderScanService : BackgroundService
         }
         // ─────────────────────────────────────────────────────────────────────
 
-        var notifyDesktop = await repo.GetLibraryScanDesktopToastsEnabledAsync(cancellationToken).ConfigureAwait(false);
-        var pipeline = new ScanPipeline(new FileScanner(), tmdb, repo);
-        var progress = new Progress<ScanProgress>(p =>
-        {
-            if (!p.EmitLibraryNotification || string.IsNullOrWhiteSpace(p.LibraryNotificationTitle))
-                return;
-            _ = _scanRuntime.BroadcastAsync(new
-            {
-                type = "libraryNotification",
-                source = "pinnedScan",
-                kind = p.LibraryNotificationKind ?? "",
-                title = p.LibraryNotificationTitle,
-                matched = p.LibraryNotificationMatched
-            }, CancellationToken.None);
-        });
-        var result = await pipeline.RunScanOnFilesAsync(distinct, progress, cancellationToken,
-                libraryNotifications: notifyDesktop, skipUnchangedUnmatchedScanLogs: true)
-            .ConfigureAwait(false);
-        await repo.SetLastPinnedScanAtAsync(DateTime.UtcNow, cancellationToken).ConfigureAwait(false);
-        _ratingsRefreshQueue.TryEnqueueStaleSweep();
+        // Claim the shared scan mutex for real — see the matching comment in
+        // LibraryAutoScanService.RunQuietScanAsync for why the outer "if (!IsRunning)" check alone
+        // isn't enough: without actually acquiring here, this 2-minute-interval pass never marked
+        // itself as running, so it could overlap with itself, the hourly auto-scan, or a manual scan.
+        var jobId = await _scanRuntime.BeginJobAsync(cancellationToken).ConfigureAwait(false);
+        if (jobId == null)
+            return;
 
-        if (result.Matched > 0 || result.Unmatched > 0)
+        try
         {
-            _ = _scanRuntime.BroadcastAsync(new
+            _scanRuntime.ResetProgress(distinct.Count);
+
+            var notifyDesktop = await repo.GetLibraryScanDesktopToastsEnabledAsync(cancellationToken).ConfigureAwait(false);
+            var pipeline = new ScanPipeline(new FileScanner(), tmdb, repo);
+            var progress = new Progress<ScanProgress>(p =>
             {
-                type = "libraryUpdated",
-                matched = result.Matched,
-                unmatched = result.Unmatched
-            }, CancellationToken.None);
+                _scanRuntime.Update(p.Current, p.CurrentFile, p.MatchedSoFar, p.UnmatchedSoFar, p.SkippedSoFar);
+                if (p.EmitLibraryNotification && !string.IsNullOrWhiteSpace(p.LibraryNotificationTitle))
+                {
+                    _ = _scanRuntime.BroadcastAsync(new
+                    {
+                        type = "libraryNotification",
+                        source = "pinnedScan",
+                        kind = p.LibraryNotificationKind ?? "",
+                        title = p.LibraryNotificationTitle,
+                        matched = p.LibraryNotificationMatched,
+                        libraryId = p.LibraryNotificationLibraryId,
+                        season = p.LibraryNotificationSeason
+                    }, CancellationToken.None);
+                }
+            });
+            var result = await pipeline.RunScanOnFilesAsync(distinct, progress, cancellationToken,
+                    libraryNotifications: notifyDesktop, skipUnchangedUnmatchedScanLogs: true)
+                .ConfigureAwait(false);
+            await repo.SetLastPinnedScanAtAsync(DateTime.UtcNow, cancellationToken).ConfigureAwait(false);
+            _ratingsRefreshQueue.TryEnqueueStaleSweep();
+
+            if (result.Matched > 0 || result.Unmatched > 0)
+            {
+                _ = _scanRuntime.BroadcastAsync(new
+                {
+                    type = "libraryUpdated",
+                    matched = result.Matched,
+                    unmatched = result.Unmatched
+                }, CancellationToken.None);
+            }
+        }
+        finally
+        {
+            await _scanRuntime.EndJobAsync().ConfigureAwait(false);
         }
     }
 }

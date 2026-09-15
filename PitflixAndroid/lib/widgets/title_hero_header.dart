@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import '../theme/app_theme.dart';
 import 'circle_icon_button.dart';
 import 'poster_gradients.dart';
+import 'pitflix_network_image.dart';
 
 /// Backdrop hero used by Title Detail (series & movie): dark gradient
 /// placeholder, back/more circular buttons, title, and meta line + rating.
@@ -12,6 +13,7 @@ class TitleHeroHeader extends StatelessWidget {
   final int gradientSeed;
   final String?
   imageUrl; // real TMDB backdrop; falls back to the gradient on null/error
+  final String? posterUrl; // small corner thumbnail; hidden if null
   final double height;
   final VoidCallback? onMorePressed;
 
@@ -32,6 +34,7 @@ class TitleHeroHeader extends StatelessWidget {
     required this.rating,
     required this.gradientSeed,
     this.imageUrl,
+    this.posterUrl,
     this.height = 200,
     this.onMorePressed,
     this.isFavorite,
@@ -53,13 +56,14 @@ class TitleHeroHeader extends StatelessWidget {
             ),
           ),
           if (imageUrl != null)
-            Image.network(
+            PitflixNetworkImage(
               imageUrl!,
               fit: BoxFit.cover,
               errorBuilder: (context, error, stackTrace) =>
                   const SizedBox.shrink(),
-              loadingBuilder: (context, child, progress) =>
-                  progress == null ? child : const SizedBox.shrink(),
+              // Nothing while it loads, so the gradient underneath shows through — same effect the
+              // old loadingBuilder had.
+              placeholder: const SizedBox.shrink(),
             ),
           DecoratedBox(
             decoration: BoxDecoration(
@@ -102,75 +106,105 @@ class TitleHeroHeader extends StatelessWidget {
             left: 20,
             right: 20,
             bottom: 16,
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              mainAxisSize: MainAxisSize.min,
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.end,
               children: [
-                Text(
-                  title,
-                  style: AppTextStyles.bebas(fontSize: 36, letterSpacing: 0.08),
-                ),
-                const SizedBox(height: 4),
-                Row(
-                  children: [
-                    Flexible(
-                      child: Text(
-                        metaLine,
-                        overflow: TextOverflow.ellipsis,
-                        style: AppTextStyles.dmSans(
-                          fontSize: 12,
-                          color: Colors.white.withValues(alpha: 0.55),
+                if (posterUrl != null) ...[
+                  ClipRRect(
+                    borderRadius: BorderRadius.circular(
+                      AppSpacing.posterRadius,
+                    ),
+                    child: SizedBox(
+                      width: 56,
+                      height: 84,
+                      child: PitflixNetworkImage(
+                        posterUrl!,
+                        fit: BoxFit.cover,
+                        errorBuilder: (context, error, stackTrace) =>
+                            const SizedBox.shrink(),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                ],
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Text(
+                        title,
+                        style: AppTextStyles.bebas(
+                          fontSize: 36,
+                          letterSpacing: 0.08,
                         ),
                       ),
-                    ),
-                    const SizedBox(width: 8),
-                    Container(
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 6,
-                        vertical: 2,
+                      const SizedBox(height: 4),
+                      Row(
+                        children: [
+                          Flexible(
+                            child: Text(
+                              metaLine,
+                              overflow: TextOverflow.ellipsis,
+                              style: AppTextStyles.dmSans(
+                                fontSize: 12,
+                                color: Colors.white.withValues(alpha: 0.55),
+                              ),
+                            ),
+                          ),
+                          const SizedBox(width: 8),
+                          Container(
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 6,
+                              vertical: 2,
+                            ),
+                            decoration: BoxDecoration(
+                              color: AppColors.accent,
+                              borderRadius: BorderRadius.circular(4),
+                            ),
+                            child: Text(
+                              '$rating ★',
+                              style: AppTextStyles.dmSans(
+                                fontSize: 11,
+                                fontWeight: FontWeight.w600,
+                                color: AppColors.bgBase,
+                              ),
+                            ),
+                          ),
+                        ],
                       ),
-                      decoration: BoxDecoration(
-                        color: AppColors.accent,
-                        borderRadius: BorderRadius.circular(4),
-                      ),
-                      child: Text(
-                        '$rating ★',
-                        style: AppTextStyles.dmSans(
-                          fontSize: 11,
-                          fontWeight: FontWeight.w600,
-                          color: AppColors.bgBase,
-                        ),
-                      ),
-                    ),
-                  ],
-                ),
-                if (progress != null) ...[
-                  const SizedBox(height: 8),
-                  Container(
-                    height: 6,
-                    clipBehavior: Clip.antiAlias,
-                    decoration: BoxDecoration(
-                      borderRadius: BorderRadius.circular(3),
-                      border: Border.all(
-                        color: Colors.white.withValues(alpha: 0.3),
-                        width: 1,
-                      ),
-                    ),
-                    child: Stack(
-                      fit: StackFit.expand,
-                      children: [
-                        const ColoredBox(color: AppColors.progressTrack),
-                        Align(
-                          alignment: Alignment.centerLeft,
-                          child: FractionallySizedBox(
-                            widthFactor: progress!.clamp(0.0, 1.0),
-                            child: const ColoredBox(color: AppColors.logoAccent),
+                      if (progress != null) ...[
+                        const SizedBox(height: 8),
+                        Container(
+                          height: 6,
+                          clipBehavior: Clip.antiAlias,
+                          decoration: BoxDecoration(
+                            borderRadius: BorderRadius.circular(3),
+                            border: Border.all(
+                              color: Colors.white.withValues(alpha: 0.3),
+                              width: 1,
+                            ),
+                          ),
+                          child: Stack(
+                            fit: StackFit.expand,
+                            children: [
+                              const ColoredBox(color: AppColors.progressTrack),
+                              Align(
+                                alignment: Alignment.centerLeft,
+                                child: FractionallySizedBox(
+                                  widthFactor: progress!.clamp(0.0, 1.0),
+                                  child: const ColoredBox(
+                                    color: AppColors.logoAccent,
+                                  ),
+                                ),
+                              ),
+                            ],
                           ),
                         ),
                       ],
-                    ),
+                    ],
                   ),
-                ],
+                ),
               ],
             ),
           ),

@@ -61,6 +61,14 @@ function main() {
     "-p:IncludeNativeLibrariesForSelfExtract=true",
     "-p:IncludeAllContentForSelfExtract=true",
     "-p:PublishTrimmed=false",
+    // Startup-vs-size was benchmarked here (steady state, port confirmed free before each run,
+    // all builds measured from this same folder — comparing across drives gives bogus numbers):
+    //   compressed (this config)      49 MB   ~2.47s
+    //   uncompressed                 104 MB   ~2.52s   ← 2x the size, no faster
+    //   uncompressed + ReadyToRun    145 MB   ~2.12s   ← 3x the size for ~0.35s
+    // Kept as-is: dropping compression on its own does nothing, and 96 MB more installer and
+    // per-update download is a bad trade for a third of a second that the boot splash already
+    // covers. Re-benchmark before changing these — don't assume a flag helps.
     "-p:EnableCompressionInSingleFile=true",
     "-p:DebugType=None",
     "-o",

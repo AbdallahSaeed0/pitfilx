@@ -28,6 +28,10 @@ public class Movie
     /// <summary>True when Completed was reached by actually finishing playback in-app (vs. a manual "mark watched" action).</summary>
     public bool CompletedFromPlayback { get; set; }
 
+    /// <summary>How many times this movie has been watched again after its first completion. Auto-increments
+    /// when playback completes on a movie already marked Completed; also manually adjustable.</summary>
+    public int RewatchCount { get; set; }
+
     /// <summary>JSON array of <see cref="TmdbCrewMember"/> from last metadata refresh (speeds detail page).</summary>
     public string? CrewCacheJson { get; set; }
 
@@ -43,4 +47,8 @@ public class Movie
     /// <summary>API-only JSON: TMDB poster when cache paths are empty.</summary>
     [NotMapped]
     public string? PosterRemoteUrl { get; set; }
+
+    /// <summary>TMDB <c>belongs_to_collection</c> id, cached lazily on first detail page visit.</summary>
+    public int? CollectionId { get; set; }
+    public string? CollectionName { get; set; }
 }

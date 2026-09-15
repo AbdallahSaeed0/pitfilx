@@ -1,10 +1,11 @@
 import { useState } from "react";
+import { PosterGridSkeleton } from "../components/ui/Skeleton";
 import { useQuery } from "@tanstack/react-query";
 import { ChevronRight, Settings, Trophy } from "lucide-react";
 import { Link } from "react-router-dom";
 import { getAwardsCatalog } from "../api/awards";
 import { MediaImage } from "../components/ui/MediaImage";
-import { Spinner } from "../components/ui/Spinner";
+import { BackButton } from "../components/ui/BackButton";
 import { cn } from "../utils/cn";
 import { getAwardBrandingFallbackSrc, getAwardBrandingImageSrc } from "../utils/awardBranding";
 import { toPosterSrc } from "../utils/posterSrc";
@@ -55,9 +56,7 @@ export function AwardsPage() {
 
   if (q.isLoading)
     return (
-      <div className="flex justify-center py-24">
-        <Spinner />
-      </div>
+      <PosterGridSkeleton />
     );
 
   if (q.isError)
@@ -75,7 +74,8 @@ export function AwardsPage() {
         });
 
   return (
-    <div className="mx-auto max-w-4xl space-y-6 pb-12">
+    <div className="w-full space-y-6 pb-12">
+      <BackButton className="mb-0" />
 
       {/* ── Header ──────────────────────────────────────────────────── */}
       <div>

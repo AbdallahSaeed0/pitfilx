@@ -28,7 +28,7 @@ public static class CatalogEndpoints
             var (items, total) = await MediaCatalogHelpers.QueryMediaCardsAsync(db, repo, isMovie: true, isArabic, search, genre, watch, sort, page, pageSize, ct, minImdbRating)
                 .ConfigureAwait(false);
             var tmdb = tmdbClientFactory.Create();
-            return Results.Json(await MediaCatalogHelpers.MakePageAsync(items, total, page, pageSize, tmdb, ct).ConfigureAwait(false), jsonSerializerOptions);
+            return Results.Json(await MediaCatalogHelpers.MakePageAsync(items, total, page, pageSize, tmdb, ct, repo).ConfigureAwait(false), jsonSerializerOptions);
         });
 
         // —— Series ——
@@ -50,7 +50,7 @@ public static class CatalogEndpoints
             var (items, total) = await MediaCatalogHelpers.QueryMediaCardsAsync(db, repo, isMovie: false, isArabic, search, genre, watch, sort, page, pageSize, ct, minImdbRating)
                 .ConfigureAwait(false);
             var tmdb = tmdbClientFactory.Create();
-            return Results.Json(await MediaCatalogHelpers.MakePageAsync(items, total, page, pageSize, tmdb, ct).ConfigureAwait(false), jsonSerializerOptions);
+            return Results.Json(await MediaCatalogHelpers.MakePageAsync(items, total, page, pageSize, tmdb, ct, repo).ConfigureAwait(false), jsonSerializerOptions);
         });
 
         // —— Video extras (featurettes, behind-the-scenes, clips) ——
@@ -195,6 +195,7 @@ public static class CatalogEndpoints
                     filePath = localEp?.FilePath,
                     subtitlePath = localEp?.SubtitlePath,
                     watchStatus,
+                    rewatchCount = localEp?.RewatchCount ?? 0,
                     stillLocalPath = localEp != null ? EpStill(localEp) : null,
                     stillUrl,
                     tmdbVoteAverage = tvVote,
@@ -206,8 +207,7 @@ public static class CatalogEndpoints
                 };
             })).ConfigureAwait(false);
 
-            foreach (var epNum in allEpisodeNumbers)
-                _ = ratings.WarmEpisodeImdbRatingAsync(show.TmdbId, season, epNum);
+            _ = ratings.WarmShowEpisodeRatingsAsync(show.TmdbId, season, allEpisodeNumbers);
 
             (string Name, string? PosterPath, string? AirDate, int EpisodeCount, double? VoteAverage)? header = null;
             if (tmdb != null)
@@ -275,7 +275,7 @@ public static class CatalogEndpoints
             if (credits == null)
                 return Results.Json(new { cast = Array.Empty<object>(), crew = Array.Empty<object>() }, jsonSerializerOptions);
 
-            var cast = credits.Value.Cast.Select(c => new CastMember
+            var castRaw = credits.Value.Cast.Select(c => new CastMember
             {
                 Id = 0,
                 PersonTmdbId = c.Id,
@@ -285,8 +285,20 @@ public static class CatalogEndpoints
                 Character = c.Character,
                 ProfilePath = c.ProfilePath,
                 BillingOrder = c.BillingOrder,
-            }).Select(ImageUrls.MapCastMember).ToList();
-            var crew = credits.Value.Crew.Select(ImageUrls.MapCrewMember).ToList();
+            }).ToList();
+            var crewRaw = credits.Value.Crew.ToList();
+
+            // Swap in a manually-picked person photo (set on their own actor page) so it shows up here
+            // too, not just on that standalone page.
+            var overrides = await repo.GetPersonProfileOverridesAsync(
+                castRaw.Select(c => c.PersonTmdbId).Concat(crewRaw.Select(c => c.Id)), ct).ConfigureAwait(false);
+            foreach (var c in castRaw)
+                if (overrides.TryGetValue(c.PersonTmdbId, out var path)) c.ProfileLocalPath = path;
+            foreach (var c in crewRaw)
+                if (overrides.TryGetValue(c.Id, out var path)) c.ProfileLocalPath = path;
+
+            var cast = castRaw.Select(ImageUrls.MapCastMember).ToList();
+            var crew = crewRaw.Select(ImageUrls.MapCrewMember).ToList();
 
             return Results.Json(new { cast, crew }, jsonSerializerOptions);
         });
@@ -297,6 +309,12 @@ public static class CatalogEndpoints
             if (!WatchStatuses.IsValid(status))
                 return Results.BadRequest(new { error = "Invalid watch status." });
             await repo.UpdateMovieWatchStatusAsync(id, status, ct).ConfigureAwait(false);
+            return Results.Json(new { success = true }, jsonSerializerOptions);
+        });
+
+        app.MapPost("/api/movies/{id:int}/rewatch-count", async (int id, RewatchCountBody body, LibraryRepository repo, CancellationToken ct) =>
+        {
+            await repo.SetMovieRewatchCountAsync(id, body.Count, ct).ConfigureAwait(false);
             return Results.Json(new { success = true }, jsonSerializerOptions);
         });
 

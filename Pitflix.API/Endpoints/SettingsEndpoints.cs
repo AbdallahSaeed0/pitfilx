@@ -25,13 +25,27 @@ app.MapGet("/api/settings", async (LibraryRepository repo, LibraryContext db, Ca
     var ssMasked = MaskKey(ssKey);
     var mdblistKey = await repo.GetSettingAsync("MdblistApiKey", ct).ConfigureAwait(false);
     var mdblistMasked = MaskKey(mdblistKey);
+    var omdbKey = await repo.GetSettingAsync("OmdbApiKey", ct).ConfigureAwait(false);
+    var omdbMasked = MaskKey(omdbKey);
     var tvdbKey = await repo.GetSettingAsync("TvdbApiKey", ct).ConfigureAwait(false);
     var tvdbMasked = MaskKey(tvdbKey);
+    var fanartKey = await repo.GetSettingAsync("FanartApiKey", ct).ConfigureAwait(false);
+    var fanartMasked = MaskKey(fanartKey);
     var letterboxdUsername = await repo.GetSettingAsync("LetterboxdUsername", ct).ConfigureAwait(false);
     var qbittorrentBaseUrl = await repo.GetSettingAsync("QBittorrentBaseUrl", ct).ConfigureAwait(false);
     var qbittorrentUsername = await repo.GetSettingAsync("QBittorrentUsername", ct).ConfigureAwait(false);
     var qbittorrentPassword = await repo.GetSettingAsync("QBittorrentPassword", ct).ConfigureAwait(false);
     var qbittorrentPasswordMasked = MaskKey(qbittorrentPassword);
+    var stremioAddonManifestUrl = await repo.GetSettingAsync("StremioAddonManifestUrl", ct).ConfigureAwait(false);
+    if (string.IsNullOrWhiteSpace(stremioAddonManifestUrl))
+        stremioAddonManifestUrl = StremioAddonService.DefaultManifestUrl;
+    var cometAddonManifestUrl = await repo.GetSettingAsync("CometAddonManifestUrl", ct).ConfigureAwait(false);
+    if (string.IsNullOrWhiteSpace(cometAddonManifestUrl) ||
+        string.Equals(
+            cometAddonManifestUrl.Trim(),
+            StremioAddonService.LegacyCometManifestUrl,
+            StringComparison.OrdinalIgnoreCase))
+        cometAddonManifestUrl = StremioAddonService.DefaultCometManifestUrl;
     var paths = await repo.GetAllLibraryPathsAsync(ct).ConfigureAwait(false);
     var pinnedScanPaths = (await repo.GetPinnedScanPathsAsync(ct).ConfigureAwait(false)).ToList();
     var excludedScanPaths = (await repo.GetExcludedScanPathsAsync(ct).ConfigureAwait(false)).ToList();
@@ -87,11 +101,15 @@ app.MapGet("/api/settings", async (LibraryRepository repo, LibraryContext db, Ca
         subDlApiKey = sdlMasked,
         subSourceApiKey = ssMasked,
         mdblistApiKey = mdblistMasked,
+        omdbApiKey = omdbMasked,
         tvdbApiKey = tvdbMasked,
+        fanartApiKey = fanartMasked,
         letterboxdUsername,
         qbittorrentBaseUrl,
         qbittorrentUsername,
         qbittorrentPassword = qbittorrentPasswordMasked,
+        stremioAddonManifestUrl,
+        cometAddonManifestUrl,
         libraryPaths = paths,
         pinnedScanPaths,
         excludedScanPaths,
@@ -147,8 +165,14 @@ app.MapPost("/api/settings", async (SettingsBody body, LibraryRepository repo, C
     if (!string.IsNullOrWhiteSpace(body.MdblistApiKey))
         await repo.SaveSettingAsync("MdblistApiKey", body.MdblistApiKey.Trim(), ct).ConfigureAwait(false);
 
+    if (!string.IsNullOrWhiteSpace(body.OmdbApiKey))
+        await repo.SaveSettingAsync("OmdbApiKey", body.OmdbApiKey.Trim(), ct).ConfigureAwait(false);
+
     if (!string.IsNullOrWhiteSpace(body.TvdbApiKey))
         await repo.SaveSettingAsync("TvdbApiKey", body.TvdbApiKey.Trim(), ct).ConfigureAwait(false);
+
+    if (!string.IsNullOrWhiteSpace(body.FanartApiKey))
+        await repo.SaveSettingAsync("FanartApiKey", body.FanartApiKey.Trim(), ct).ConfigureAwait(false);
 
     if (!string.IsNullOrWhiteSpace(body.LetterboxdUsername))
         await repo.SaveSettingAsync("LetterboxdUsername", body.LetterboxdUsername.Trim(), ct).ConfigureAwait(false);
@@ -161,6 +185,31 @@ app.MapPost("/api/settings", async (SettingsBody body, LibraryRepository repo, C
 
     if (!string.IsNullOrWhiteSpace(body.QBittorrentPassword))
         await repo.SaveSettingAsync("QBittorrentPassword", body.QBittorrentPassword.Trim(), ct).ConfigureAwait(false);
+
+    if (body.StremioAddonManifestUrl != null)
+    {
+        var manifestUrl = body.StremioAddonManifestUrl.Trim();
+        if (string.IsNullOrEmpty(manifestUrl))
+            manifestUrl = StremioAddonService.DefaultManifestUrl;
+        if (!StremioAddonService.TryValidatePublicHttpsUrl(manifestUrl, out _, out var manifestError))
+            return Results.BadRequest(new { error = manifestError });
+        await repo.SaveSettingAsync("StremioAddonManifestUrl", manifestUrl, ct).ConfigureAwait(false);
+    }
+
+    if (body.CometAddonManifestUrl != null)
+    {
+        var manifestUrl = body.CometAddonManifestUrl.Trim();
+        if (string.IsNullOrEmpty(manifestUrl))
+            manifestUrl = StremioAddonService.DefaultCometManifestUrl;
+        else if (string.Equals(
+                     manifestUrl,
+                     StremioAddonService.LegacyCometManifestUrl,
+                     StringComparison.OrdinalIgnoreCase))
+            manifestUrl = StremioAddonService.DefaultCometManifestUrl;
+        if (!StremioAddonService.TryValidatePublicHttpsUrl(manifestUrl, out _, out var manifestError))
+            return Results.BadRequest(new { error = manifestError });
+        await repo.SaveSettingAsync("CometAddonManifestUrl", manifestUrl, ct).ConfigureAwait(false);
+    }
 
     if (body.OpenSubtitlesAppName != null)
         await repo.SaveSettingAsync("OpenSubtitlesAppName", body.OpenSubtitlesAppName.Trim(), ct).ConfigureAwait(false);
@@ -388,6 +437,46 @@ app.MapGet("/api/settings/verify-mdblist", async (string? key, CancellationToken
     }
 });
 
+app.MapGet("/api/settings/verify-omdb", async (string? key, CancellationToken ct) =>
+{
+    var k = key?.Trim();
+    if (string.IsNullOrEmpty(k))
+        return Results.Json(new { valid = false, error = "Key is required." }, jsonSerializerOptions);
+
+    try
+    {
+        using var http = new HttpClient { Timeout = TimeSpan.FromSeconds(15) };
+        // Probe with The Shawshank Redemption (tt0111161)
+        var url = $"https://www.omdbapi.com/?i=tt0111161&apikey={Uri.EscapeDataString(k)}";
+        using var res = await http.GetAsync(url, ct).ConfigureAwait(false);
+        var body = await res.Content.ReadAsStringAsync(ct).ConfigureAwait(false);
+
+        JsonDocument doc;
+        try { doc = JsonDocument.Parse(body); }
+        catch
+        {
+            return Results.Json(new { valid = false, error = $"OMDb returned {(int)res.StatusCode}." }, jsonSerializerOptions);
+        }
+        using var _ = doc;
+
+        // OMDb returns { "Response": "False", "Error": "..." } on a bad/expired key or quota hit.
+        if (doc.RootElement.TryGetProperty("Response", out var respEl) &&
+            respEl.GetString()?.Equals("False", StringComparison.OrdinalIgnoreCase) == true)
+        {
+            var msg = doc.RootElement.TryGetProperty("Error", out var m) ? m.GetString() : null;
+            return Results.Json(new { valid = false, error = msg ?? "Invalid API key." }, jsonSerializerOptions);
+        }
+
+        var imdbRating = doc.RootElement.TryGetProperty("imdbRating", out var ir) ? ir.GetString() : null;
+        return Results.Json(new { valid = true, imdbRating, error = (string?)null }, jsonSerializerOptions);
+    }
+    catch (Exception ex)
+    {
+        app.Logger.LogWarning(ex, "OMDb API key verification failed");
+        return Results.Json(new { valid = false, error = ex.Message }, jsonSerializerOptions);
+    }
+});
+
 app.MapGet("/api/settings/verify-tvdb", async (string? key, CancellationToken ct) =>
 {
     var k = key?.Trim();
@@ -414,6 +503,44 @@ app.MapGet("/api/settings/verify-tvdb", async (string? key, CancellationToken ct
     catch (Exception ex)
     {
         app.Logger.LogWarning(ex, "TVDB API key verification failed");
+        return Results.Json(new { valid = false, error = ex.Message }, jsonSerializerOptions);
+    }
+});
+
+app.MapGet("/api/settings/verify-fanart", async (string? key, CancellationToken ct) =>
+{
+    var k = key?.Trim();
+    if (string.IsNullOrEmpty(k))
+        return Results.Json(new { valid = false, error = "Key is required." }, jsonSerializerOptions);
+
+    try
+    {
+        using var http = new HttpClient { Timeout = TimeSpan.FromSeconds(15) };
+        // Probe with Fight Club (tmdbId 550) — has plenty of Fanart artwork on a valid key.
+        var url = $"https://webservice.fanart.tv/v3/movies/550?api_key={Uri.EscapeDataString(k)}";
+        using var res = await http.GetAsync(url, ct).ConfigureAwait(false);
+
+        if (res.StatusCode == HttpStatusCode.Unauthorized || res.StatusCode == HttpStatusCode.Forbidden)
+            return Results.Json(new { valid = false, error = "Unauthorized — check the API key." }, jsonSerializerOptions);
+
+        var body = await res.Content.ReadAsStringAsync(ct).ConfigureAwait(false);
+        if (res.IsSuccessStatusCode)
+            return Results.Json(new { valid = true, error = (string?)null }, jsonSerializerOptions);
+
+        // Fanart returns 401/200-with-error-body for a bad key depending on endpoint; check the body too.
+        try
+        {
+            using var doc = JsonDocument.Parse(body);
+            if (doc.RootElement.TryGetProperty("error message", out var errEl))
+                return Results.Json(new { valid = false, error = errEl.GetString() ?? "Invalid API key." }, jsonSerializerOptions);
+        }
+        catch { /* not JSON — fall through to generic error below */ }
+
+        return Results.Json(new { valid = false, error = $"Fanart returned {(int)res.StatusCode}." }, jsonSerializerOptions);
+    }
+    catch (Exception ex)
+    {
+        app.Logger.LogWarning(ex, "Fanart API key verification failed");
         return Results.Json(new { valid = false, error = ex.Message }, jsonSerializerOptions);
     }
 });

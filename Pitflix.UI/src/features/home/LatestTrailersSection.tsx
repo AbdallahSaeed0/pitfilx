@@ -51,7 +51,13 @@ export function LatestTrailersSection({ embedded = false }: LatestTrailersProps)
     staleTime: 30 * 60_000,   // trailers list is stable; show cached data for 30 min
     gcTime: 2 * 60 * 60_000,  // keep in memory for 2 hours
     refetchInterval: 30 * 60_000, // background poll every 30 min
-    refetchOnMount: false,     // never block on mount if data is already in cache
+    // 'always': paint instantly from the on-disk cache (no spinner), but still kick off a
+    // background refetch every time this mounts. Was `false` — with `initialData` from
+    // localStorage, that meant a fresh app open (or any remount) never re-checked the API at
+    // all, only the 30-min refetchInterval could, and that timer resets whenever the query
+    // unmounts — so closing/reopening the app before 30 continuous minutes elapsed meant Home
+    // never saw new trailers even though ingestion had produced them server-side.
+    refetchOnMount: 'always',
   });
 
   // Persist every successful fetch, and flag genuinely new trailers for a brief highlight

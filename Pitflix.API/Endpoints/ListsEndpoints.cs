@@ -112,7 +112,7 @@ public static class ListsEndpoints
 
             var mapped = cards.Select(ImageUrls.MapMediaCard).ToList();
             var tmdbList = tmdbClientFactory.Create();
-            await MediaCardPosterEnricher.EnrichMissingRemotePostersAsync(mapped, tmdbList, ct).ConfigureAwait(false);
+            await MediaCardPosterEnricher.EnrichMissingRemotePostersAsync(mapped, tmdbList, ct, repo).ConfigureAwait(false);
             return Results.Json(mapped);
         });
 

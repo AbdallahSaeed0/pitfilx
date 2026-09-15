@@ -1,7 +1,7 @@
+use regex::Regex;
+use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
-use std::fs;
-use regex::Regex;
 
 #[derive(Debug, Clone, serde::Serialize)]
 pub struct SubtitleTrack {
@@ -24,21 +24,25 @@ fn log_subtitle_gen(msg: &str) {
 
 pub fn get_subtitle_tracks(video_path: &str) -> Result<Vec<SubtitleTrack>, String> {
     log_subtitle_gen(&format!("Detecting subtitle tracks in: {}", video_path));
-    
+
     let output = Command::new("ffprobe")
         .args(&[
-            "-v", "error",
-            "-select_streams", "s",
-            "-show_entries", "stream=index,language,tags=title",
-            "-of", "json",
+            "-v",
+            "error",
+            "-select_streams",
+            "s",
+            "-show_entries",
+            "stream=index,language,tags=title",
+            "-of",
+            "json",
             video_path,
         ])
         .output()
         .map_err(|e| format!("ffprobe error: {}", e))?;
 
     let stdout = String::from_utf8_lossy(&output.stdout);
-    let json: serde_json::Value = serde_json::from_str(&stdout)
-        .map_err(|e| format!("JSON parse error: {}", e))?;
+    let json: serde_json::Value =
+        serde_json::from_str(&stdout).map_err(|e| format!("JSON parse error: {}", e))?;
 
     let mut tracks = Vec::new();
     if let Some(streams) = json.get("streams").and_then(|v| v.as_array()) {
@@ -56,8 +60,17 @@ pub fn get_subtitle_tracks(video_path: &str) -> Result<Vec<SubtitleTrack>, Strin
                 .and_then(|t| t.as_str())
                 .map(|s| s.to_string());
 
-            log_subtitle_gen(&format!("Found track {}: {} ({})", index, language, title.as_deref().unwrap_or("no title")));
-            tracks.push(SubtitleTrack { index, language, title });
+            log_subtitle_gen(&format!(
+                "Found track {}: {} ({})",
+                index,
+                language,
+                title.as_deref().unwrap_or("no title")
+            ));
+            tracks.push(SubtitleTrack {
+                index,
+                language,
+                title,
+            });
         }
     }
 
@@ -71,7 +84,7 @@ pub fn find_english_subtitle_track(tracks: &[SubtitleTrack]) -> Option<SubtitleT
         .iter()
         .find(|t| t.language == "eng" || t.language == "en" || t.language == "english")
         .cloned();
-    
+
     if let Some(ref track) = english {
         log_subtitle_gen(&format!("Found English track at index: {}", track.index));
         return Some(track.clone());
@@ -79,19 +92,22 @@ pub fn find_english_subtitle_track(tracks: &[SubtitleTrack]) -> Option<SubtitleT
 
     // 2. FALLBACK: If no English track, use the first "unknown" track
     // This handles videos where subtitles aren't tagged correctly.
-    let unknown = tracks
-        .iter()
-        .find(|t| t.language == "unknown")
-        .cloned();
+    let unknown = tracks.iter().find(|t| t.language == "unknown").cloned();
 
     if let Some(ref track) = unknown {
-        log_subtitle_gen(&format!("No English track found, falling back to unknown track at index: {}", track.index));
+        log_subtitle_gen(&format!(
+            "No English track found, falling back to unknown track at index: {}",
+            track.index
+        ));
         return Some(track.clone());
     }
 
     // 3. LAST RESORT: Just use the first track found if any exist
     if let Some(track) = tracks.first() {
-        log_subtitle_gen(&format!("Falling back to first available track at index: {}", track.index));
+        log_subtitle_gen(&format!(
+            "Falling back to first available track at index: {}",
+            track.index
+        ));
         return Some(track.clone());
     }
 
@@ -99,17 +115,27 @@ pub fn find_english_subtitle_track(tracks: &[SubtitleTrack]) -> Option<SubtitleT
     None
 }
 
-pub fn extract_subtitle_to_srt(video_path: &str, track_index: i32, output_srt: &str) -> Result<(), String> {
-    log_subtitle_gen(&format!("Extracting subtitle track index {} to: {}", track_index, output_srt));
-    
+pub fn extract_subtitle_to_srt(
+    video_path: &str,
+    track_index: i32,
+    output_srt: &str,
+) -> Result<(), String> {
+    log_subtitle_gen(&format!(
+        "Extracting subtitle track index {} to: {}",
+        track_index, output_srt
+    ));
+
     // Use the absolute stream index directly with "0:stream_index"
     // The previous "0:s:index" was failing because it was trying to find the Nth subtitle stream,
     // but we already have the global stream index from ffprobe.
     let status = Command::new("ffmpeg")
         .args(&[
-            "-i", video_path,
-            "-map", &format!("0:{}", track_index),
-            "-c:s", "srt",
+            "-i",
+            video_path,
+            "-map",
+            &format!("0:{}", track_index),
+            "-c:s",
+            "srt",
             "-y",
             output_srt,
         ])
@@ -127,25 +153,38 @@ pub fn extract_subtitle_to_srt(video_path: &str, track_index: i32, output_srt: &
 
 pub fn parse_srt_file(srt_path: &str) -> Result<Vec<SubtitleCue>, String> {
     log_subtitle_gen(&format!("Parsing SRT file: {}", srt_path));
-    
-    let content = fs::read_to_string(srt_path)
-        .map_err(|e| format!("Failed to read SRT file: {}", e))?;
+
+    let content =
+        fs::read_to_string(srt_path).map_err(|e| format!("Failed to read SRT file: {}", e))?;
 
     let mut cues = Vec::new();
-    
+
     // Simpler regex that doesn't use look-ahead (not supported by Rust's regex crate)
     // This matches the index, timestamp line, and then captures everything until the next double newline or end of string
     let re = Regex::new(r"(?m)^(\d+)\s*\n(\d{2}:\d{2}:\d{2},\d{3})\s*-->\s*(\d{2}:\d{2}:\d{2},\d{3})\s*\n([\s\S]*?)(?:\n\n|\z)")
         .map_err(|e| format!("Regex error: {}", e))?;
 
     for cap in re.captures_iter(&content) {
-        let index = cap.get(1).and_then(|m| m.as_str().trim().parse::<usize>().ok()).unwrap_or(0);
+        let index = cap
+            .get(1)
+            .and_then(|m| m.as_str().trim().parse::<usize>().ok())
+            .unwrap_or(0);
         let start = cap.get(2).map(|m| m.as_str()).unwrap_or("").to_string();
         let end = cap.get(3).map(|m| m.as_str()).unwrap_or("").to_string();
-        let text = cap.get(4).map(|m| m.as_str()).unwrap_or("").trim().to_string();
+        let text = cap
+            .get(4)
+            .map(|m| m.as_str())
+            .unwrap_or("")
+            .trim()
+            .to_string();
 
         if !text.is_empty() {
-            cues.push(SubtitleCue { index, start, end, text });
+            cues.push(SubtitleCue {
+                index,
+                start,
+                end,
+                text,
+            });
         }
     }
 
@@ -160,14 +199,24 @@ pub fn translate_cue_with_argos(text: &str) -> Result<String, String> {
         .output()
         .or_else(|_| {
             Command::new("python")
-                .args(&["-m", "argostranslate.cli", "--from-lang", "en", "--to-lang", "ar"])
+                .args(&[
+                    "-m",
+                    "argostranslate.cli",
+                    "--from-lang",
+                    "en",
+                    "--to-lang",
+                    "ar",
+                ])
                 .arg(text)
                 .output()
         })
         .map_err(|e| format!("Argos translate error: {}", e))?;
 
     if !output.status.success() {
-        return Err(format!("Translation failed: {}", String::from_utf8_lossy(&output.stderr)));
+        return Err(format!(
+            "Translation failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        ));
     }
 
     Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
@@ -175,15 +224,17 @@ pub fn translate_cue_with_argos(text: &str) -> Result<String, String> {
 
 pub fn write_srt_file(cues: &[SubtitleCue], output_path: &str) -> Result<(), String> {
     log_subtitle_gen(&format!("Writing {} cues to: {}", cues.len(), output_path));
-    
+
     let mut content = String::new();
     for cue in cues {
-        content.push_str(&format!("{}\n{} --> {}\n{}\n\n", cue.index, cue.start, cue.end, cue.text));
+        content.push_str(&format!(
+            "{}\n{} --> {}\n{}\n\n",
+            cue.index, cue.start, cue.end, cue.text
+        ));
     }
 
-    fs::write(output_path, content)
-        .map_err(|e| format!("Failed to write SRT file: {}", e))?;
-    
+    fs::write(output_path, content).map_err(|e| format!("Failed to write SRT file: {}", e))?;
+
     log_subtitle_gen(&format!("SRT file written successfully"));
     Ok(())
 }
@@ -267,14 +318,21 @@ pub fn wrap_arabic_text(text: &str, max_chars: usize) -> String {
         }
         len_so_far += w.chars().count() + 1;
     }
-    format!("{}\n{}", words[..best_idx].join(" "), words[best_idx..].join(" "))
+    format!(
+        "{}\n{}",
+        words[..best_idx].join(" "),
+        words[best_idx..].join(" ")
+    )
 }
 
 pub fn is_subtitle_cached(video_path: &str) -> bool {
     let cache_path = get_subtitle_output_path(video_path);
     let exists = cache_path.exists();
     if exists {
-        log_subtitle_gen(&format!("Found cached Arabic subtitle: {}", cache_path.display()));
+        log_subtitle_gen(&format!(
+            "Found cached Arabic subtitle: {}",
+            cache_path.display()
+        ));
     }
     exists
 }
@@ -286,12 +344,19 @@ mod tests {
     #[test]
     fn test_find_english_subtitle() {
         let tracks = vec![
-            SubtitleTrack { index: 0, language: "eng".to_string(), title: Some("English".to_string()) },
-            SubtitleTrack { index: 1, language: "fr".to_string(), title: None },
+            SubtitleTrack {
+                index: 0,
+                language: "eng".to_string(),
+                title: Some("English".to_string()),
+            },
+            SubtitleTrack {
+                index: 1,
+                language: "fr".to_string(),
+                title: None,
+            },
         ];
         let found = find_english_subtitle_track(&tracks);
         assert!(found.is_some());
         assert_eq!(found.unwrap().index, 0);
     }
 }
-

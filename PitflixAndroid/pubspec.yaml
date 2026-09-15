@@ -1,5 +1,5 @@
 name: pitflix_android
-description: "A new Flutter project."
+description: "Pitflix — track, rate, and discover movies and TV shows."
 # The following line prevents the package from being accidentally published to
 # pub.dev using `flutter pub publish`. This is preferred for private packages.
 publish_to: 'none' # Remove this line if you wish to publish to pub.dev
@@ -16,7 +16,7 @@ publish_to: 'none' # Remove this line if you wish to publish to pub.dev
 # https://developer.apple.com/library/archive/documentation/General/Reference/InfoPlistKeyReference/Articles/CoreFoundationKeys.html
 # In Windows, build-name is used as the major, minor, and patch parts
 # of the product and file versions while build-number is used as the build suffix.
-version: 1.0.0+1
+version: 0.5.2+2
 
 environment:
   sdk: ^3.11.1
@@ -44,6 +44,9 @@ dependencies:
   # Profile photo picker (Edit Profile)
   image_picker: ^1.1.2
 
+  # Crop/reposition a picked avatar or cover photo before upload
+  image_cropper: ^8.1.0
+
   # Real app version display (Settings screen)
   package_info_plus: ^8.1.2
 
@@ -54,6 +57,59 @@ dependencies:
   # social schema (friends/activity/comments/likes)
   supabase_flutter: ^2.8.0
   url_launcher: ^6.3.2
+
+  # Letterboxd/TV Time export import (Settings > Library)
+  archive: ^3.6.1
+  csv: ^6.0.0
+  file_picker: ^8.1.6
+
+  # My Device (Settings > "Enable My Device") — local-only video browsing,
+  # fully isolated from the Supabase-synced library. photo_manager queries
+  # MediaStore for on-device videos (grouped by folder) and owns the
+  # READ_MEDIA_VIDEO/READ_EXTERNAL_STORAGE permission request; video_player
+  # drives the custom local player; path_provider is used for the on-disk
+  # scan-results cache.
+  photo_manager: ^3.10.0
+  # Pinned exact (no ^) — MyDevicePlayerScreen reads VideoPlayerController's
+  # @visibleForTesting `playerId` getter to talk to the volume-boost native
+  # channel (see third_party/video_player_android/PITFLIX_PATCH.md). That
+  # member is explicitly disclaimed as unstable ("shouldn't be used by
+  # anyone depending on the plugin"), so an unpinned version could rename or
+  # remove it in a routine minor/patch bump without any changelog warning.
+  # Bumping this requires re-checking that getter still exists/still means
+  # the same thing first.
+  video_player: 2.11.1
+  path_provider: ^2.1.6
+
+  # Disk-cached poster/backdrop images (Image.network only caches in memory,
+  # which doesn't survive an app restart — every poster was re-downloading
+  # from TMDB's CDN on every cold open, which is what actually made Home
+  # feel slow to load rather than any of the underlying API calls).
+  cached_network_image: ^3.4.1
+
+  # My Device's video row "Share" action — native OS share sheet for a local
+  # file.
+  share_plus: ^12.0.2
+
+  # Keeps the screen on while My Device's player is actually playing —
+  # without this the OS treats video playback as "idle" (no touch input)
+  # and dims/locks the screen on its own timeout mid-video.
+  wakelock_plus: ^1.3.3
+
+  # Left-half vertical swipe → screen brightness in MyDevicePlayerScreen
+  # (mirrors the right-half volume swipe). setScreenBrightness only affects
+  # this app's window, not the system-wide brightness setting.
+  screen_brightness: ^1.0.1
+
+# Vendored fork of video_player_android (see third_party/video_player_android/
+# PITFLIX_PATCH.md) — adds a LoudnessEnhancer-backed volume boost past the
+# 100% ceiling the stock plugin's setVolume hard-clamps to, for My Device's
+# player. Same version (2.9.5) already resolved from pub.dev, just relocated
+# and patched; video_player's own `^2.9.1` constraint on it is satisfied
+# either way (path overrides aren't constraint-checked).
+dependency_overrides:
+  video_player_android:
+    path: third_party/video_player_android
 
 dev_dependencies:
   flutter_test:
@@ -72,6 +128,11 @@ dev_dependencies:
 flutter_launcher_icons:
   android: true
   ios: true
+  web:
+    generate: true
+    image_path: "assets/icon/icon.png"
+    background_color: "#5B21B6"
+    theme_color: "#5B21B6"
   image_path: "assets/icon/icon.png"
   adaptive_icon_background: "#5B21B6"
   adaptive_icon_foreground: "assets/icon/icon_foreground.png"

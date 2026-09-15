@@ -11,10 +11,12 @@ import { PlaylistTileContextMenu } from "./PlaylistTileContextMenu";
 import type { DeviceFsEntry } from "./playerTypes";
 import type { PlayerEmbeddedPlaylistProps } from "./playerViewProps";
 
-/** PlaylistTile's rendered height (58px thumbnail + 2*py-[9px] padding, plus
- * room for the size line under the title) — baked in here since virtualized
- * rows are absolutely positioned and can't rely on sibling margin/space-y utilities. */
-const PLAYLIST_ROW_HEIGHT = 92;
+/** PlaylistTile's rendered height (72px thumbnail + 2*py-[9px] padding, plus
+ * room for the size line under the title, or — for library episodes — the
+ * IMDb/runtime badges + a clamped synopsis line) — baked in here since
+ * virtualized rows are absolutely positioned and can't rely on sibling
+ * margin/space-y utilities. */
+const PLAYLIST_ROW_HEIGHT = 128;
 
 type Props = PlayerEmbeddedPlaylistProps & {
   activeFilePath: string;
@@ -33,9 +35,11 @@ export function PlayerEmbeddedFolderPlaylist({
   setFolderPlaylistOpen,
   setFolderPlaylistPinned,
   navigateToSiblingFile,
+  exitAndClose,
   activeFilePath,
   isFullscreen,
   fsControlsVisible,
+  playlistEpisodeMetaByPath,
 }: Props) {
   const open = Boolean(currentFolderForPlaylist) && (folderPlaylistOpen || folderPlaylistPinned);
   const scrollRef = useRef<HTMLDivElement | null>(null);
@@ -45,6 +49,21 @@ export function PlayerEmbeddedFolderPlaylist({
     const confirmed = await pitflixConfirm(`Move "${entry.name}" to the Recycle Bin?`);
     if (!confirmed) return;
     try {
+      const isActive = normalizeMediaPathKey(entry.path) === normalizeMediaPathKey(activeFilePath);
+      if (isActive) {
+        // Deleting the file that's currently open would otherwise leave mpv holding it locked
+        // (trash fails) and the player showing a dead "No active libmpv session" error once the
+        // backend force-closes it — switch away first so the delete lands on an already-released
+        // file and the player keeps playing something.
+        const idx = folderPlaylistEntries.findIndex((e) => e.path === entry.path);
+        const remaining = folderPlaylistEntries.filter((e) => e.path !== entry.path);
+        const next = remaining[idx] ?? remaining[idx - 1] ?? null;
+        if (next) {
+          await navigateToSiblingFile(next);
+        } else {
+          await exitAndClose();
+        }
+      }
       await invoke("device_delete_entries", { paths: [entry.path] });
       setFolderPlaylistEntries((prev) => prev.filter((e) => e.path !== entry.path));
     } catch (err) {
@@ -158,6 +177,7 @@ export function PlayerEmbeddedFolderPlaylist({
                   <PlaylistTile
                     entry={e}
                     active={active}
+                    episodeMeta={playlistEpisodeMetaByPath.get(normalizeMediaPathKey(e.path))}
                     onSelect={() => void navigateToSiblingFile(e)}
                     onContextMenu={(ev) => {
                       ev.preventDefault();

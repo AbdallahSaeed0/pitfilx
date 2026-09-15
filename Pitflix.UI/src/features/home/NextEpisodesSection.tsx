@@ -1,13 +1,38 @@
 import { useQuery } from "@tanstack/react-query";
 import { Link } from "react-router-dom";
 import { CalendarClock, Search, Tv } from "lucide-react";
-import { useMemo, useState } from "react";
-import { getNextEpisodesAirScoped } from "../../api/homeDiscover";
+import { useEffect, useMemo, useState } from "react";
+import { getNextEpisodesAirScoped, type NextEpisodeAir } from "../../api/homeDiscover";
 import { NextEpisodeAirRowLink } from "../nextEpisodes/nextEpisodeAirUi";
 import { Spinner } from "../../components/ui/Spinner";
 import { useDebounce } from "../../hooks/useDebounce";
 
 type NextEpisodesProps = { embedded?: boolean; variant?: "priority" | "all" };
+
+/** Last successful fetch, persisted to disk so re-opening the app shows it instantly instead of
+ * a blocking spinner — same pattern as LatestTrailersSection. */
+function cacheKey(variant: "priority" | "all") {
+  return `pitflix.home.next-episodes.${variant}.v1`;
+}
+
+function loadCached(variant: "priority" | "all"): NextEpisodeAir[] | undefined {
+  try {
+    const raw = localStorage.getItem(cacheKey(variant));
+    if (!raw) return undefined;
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? (parsed as NextEpisodeAir[]) : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+function saveCached(variant: "priority" | "all", list: NextEpisodeAir[]) {
+  try {
+    localStorage.setItem(cacheKey(variant), JSON.stringify(list));
+  } catch {
+    /* storage full / disabled — non-fatal, just skip persistence */
+  }
+}
 
 export function NextEpisodesSection({ embedded = false, variant = "priority" }: NextEpisodesProps) {
   const [filterQ, setFilterQ] = useState("");
@@ -16,8 +41,17 @@ export function NextEpisodesSection({ embedded = false, variant = "priority" }: 
   const q = useQuery({
     queryKey: ["home-next-episodes", variant],
     queryFn: () => getNextEpisodesAirScoped({ view: variant, limit: variant === "all" ? 160 : 56 }),
+    initialData: () => loadCached(variant),
     staleTime: 120_000,
+    // Paint instantly from the on-disk cache, but still refetch every time this mounts — the
+    // backend's own cache/persisted next-airing data make this cheap now, so there's no reason
+    // to make a fresh app open wait on it.
+    refetchOnMount: "always",
   });
+
+  useEffect(() => {
+    if (q.data) saveCached(variant, q.data);
+  }, [q.data, variant]);
 
   const rowsAll = q.data ?? [];
   const rows = useMemo(() => {

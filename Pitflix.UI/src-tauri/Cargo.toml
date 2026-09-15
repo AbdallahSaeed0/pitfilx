@@ -1,6 +1,6 @@
 [package]
 name = "pitflixui"
-version = "0.5.0"
+version = "0.5.2"
 description = "A Tauri App"
 authors = ["you"]
 edition = "2021"
@@ -37,7 +37,12 @@ futures-util = "0.3"
 sha1 = "0.10"
 urlencoding = "2"
 tauri-plugin-prevent-default = { version = "4", features = ["platform-windows"] }
+tauri-plugin-single-instance = "2"
 trash = "5"
+tokio = { version = "1", features = ["net", "sync", "time", "rt-multi-thread"] }
+tokio-util = { version = "0.7", features = ["io"] }
+axum = "0.8"
+librqbit = { version = "=8.1.1", default-features = false, features = ["default-tls"] }
 
 [target.'cfg(windows)'.dependencies]
 winreg = "0.52"
@@ -55,5 +60,6 @@ windows = { version = "0.61", features = [
   "Win32_UI_Shell_Common",
   "Win32_UI_HiDpi",
   "Win32_UI_WindowsAndMessaging",
+  "Win32_System_Com",
 ] }
-
+webview2-com = "0.38"

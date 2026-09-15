@@ -18,4 +18,12 @@ public sealed class ScanProgress
     public string? LibraryNotificationKind { get; set; }
 
     public bool LibraryNotificationMatched { get; set; }
+
+    /// <summary>The library Movie/Show row id for a matched notification — lets the client deep-link
+    /// to `/movie/{id}` or `/series/{id}` instead of just showing a toast. Null for unmatched files.</summary>
+    public int? LibraryNotificationLibraryId { get; set; }
+
+    /// <summary>Season number for a matched episode notification, so the client can deep-link straight
+    /// to that season instead of just the show page. Null for movies and specials.</summary>
+    public int? LibraryNotificationSeason { get; set; }
 }

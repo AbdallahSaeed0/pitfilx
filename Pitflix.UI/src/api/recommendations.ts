@@ -27,3 +27,24 @@ export const fetchRecommendations = (body: {
   api
     .post<RecommendationsResponse>("/recommendations/from", body, { validateStatus: () => true })
     .then((r) => ({ status: r.status, data: r.data }));
+
+export type LibraryRecommendationItem = RecommendationItem & {
+  score: number;
+  contributingSeeds: { tmdbId: number; mediaType: string; title: string }[];
+  isInLibrary: boolean;
+  libraryId: number | null;
+  watchStatus: string | null;
+};
+
+export type LibraryRecommendationsResponse = {
+  items: LibraryRecommendationItem[];
+  computedAtUtc: string | null;
+  refreshed: boolean;
+  error?: string | null;
+};
+
+export const fetchLibraryRecommendations = () =>
+  api.get<LibraryRecommendationsResponse>("/recommendations/library").then((r) => r.data);
+
+export const refreshLibraryRecommendations = () =>
+  api.post<LibraryRecommendationsResponse>("/recommendations/library/refresh").then((r) => r.data);

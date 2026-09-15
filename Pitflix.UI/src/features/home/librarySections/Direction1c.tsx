@@ -1,7 +1,7 @@
 import { useNavigate, Link } from "react-router-dom";
 import { Check, ChevronRight, Play } from "lucide-react";
 import { MediaImage } from "../../../components/ui/MediaImage";
-import { toPosterSrc } from "../../../utils/posterSrc";
+import { POSTER_WIDTHS, toPosterSrc } from "../../../utils/posterSrc";
 import { trustedResumeHeadFromRow } from "../../../utils/trustedResume";
 import { continueWatchingHeadline, episodeInfoLine, parseSeEp } from "../ContinueWatchingHero";
 import { formatMinutesLeft, upNextEpisodeBadge, upNextProgressPercent } from "./shared";
@@ -25,7 +25,7 @@ export function Direction1c({
 }: DirectionProps) {
   const navigate = useNavigate();
 
-  const backdropSrc = toPosterSrc(featured.backdropLocalPath ?? undefined);
+  const backdropSrc = toPosterSrc(featured.backdropLocalPath ?? undefined, POSTER_WIDTHS.hero);
   const headline = continueWatchingHeadline(featured);
   const epInfo = episodeInfoLine(featured);
   const detailPath =
@@ -61,7 +61,7 @@ export function Direction1c({
                   }`}
                 >
                   <MediaImage
-                    src={toPosterSrc(h.posterLocalPath ?? h.posterRemoteUrl ?? undefined)}
+                    src={toPosterSrc(h.posterLocalPath ?? h.posterRemoteUrl ?? undefined, POSTER_WIDTHS.thumb)}
                     alt=""
                     className="h-16 w-[46px] shrink-0 rounded-[5px] bg-pitflix-card"
                     fallbackText={h.title.slice(0, 2)}
@@ -148,7 +148,7 @@ export function Direction1c({
           </div>
           <div className="flex flex-col gap-0.5">
             {upNext.map((card, i) => {
-              const poster = toPosterSrc(card.posterUrl ?? undefined);
+              const poster = toPosterSrc(card.posterUrl ?? undefined, POSTER_WIDTHS.thumb);
               const pct = upNextProgressPercent(card);
               const active = i === 0;
               return (

@@ -1,9 +1,11 @@
 import { useQuery } from "@tanstack/react-query";
+import { PosterGridSkeleton } from "../components/ui/Skeleton";
 import { useMemo, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { getPerson, getPersonStreamCredits, getBatchCachedRatings, type CreditRatings } from "../api/people";
 import { getPersonAwards, type PersonNomination } from "../api/awards";
 import { CeremonyIcon, ceremonyAccent, ceremonyShortName } from "../components/awards/CeremonyBadge";
+import { PersonPhotoGallery } from "../components/PersonPhotoGallery";
 import { MediaImage } from "../components/ui/MediaImage";
 import { Spinner } from "../components/ui/Spinner";
 import { cn } from "../utils/cn";
@@ -330,12 +332,22 @@ function FilmographyTabs({
   ).filter((t) => t.count > 0);
 
   const [tab, setTab] = useState<FilmographyTab>(tabs[0]?.key ?? "acting");
+  const [sortBy, setSortBy] = useState<"rating" | "year">("rating");
 
   const activeCredits =
     tab === "acting"    ? castCredits :
     tab === "directing" ? directors :
     tab === "writing"   ? writers :
     tab === "producing" ? producers : otherCrew;
+
+  const sortedCredits = useMemo(() => {
+    if (sortBy === "rating") return activeCredits; // API already returns rating order
+    return [...activeCredits].sort((a, b) => {
+      const ay = a.year ? parseInt(a.year, 10) : -1;
+      const by = b.year ? parseInt(b.year, 10) : -1;
+      return by - ay;
+    });
+  }, [activeCredits, sortBy]);
 
   return (
     <div className="mt-10">
@@ -358,8 +370,24 @@ function FilmographyTabs({
           ))}
         </div>
       </div>
-      <p className="mb-4 text-xs text-pitflix-muted">From TMDB · sorted by rating</p>
-      <CreditGrid credits={activeCredits} localByTmdbId={localByTmdbId} ratingsMap={ratingsMap} navigate={navigate} />
+      <div className="mb-4 flex items-center gap-2 text-xs text-pitflix-muted">
+        <span>From TMDB · sort by</span>
+        {(["rating", "year"] as const).map((s) => (
+          <button
+            key={s}
+            type="button"
+            onClick={() => setSortBy(s)}
+            className={`rounded-full px-2.5 py-0.5 text-[11px] font-semibold transition-all ${
+              sortBy === s
+                ? "bg-pitflix-primary text-white"
+                : "border border-white/10 text-pitflix-muted hover:border-white/25 hover:text-white"
+            }`}
+          >
+            {s === "rating" ? "Rating" : "Year"}
+          </button>
+        ))}
+      </div>
+      <CreditGrid credits={sortedCredits} localByTmdbId={localByTmdbId} ratingsMap={ratingsMap} navigate={navigate} />
     </div>
   );
 }
@@ -368,6 +396,7 @@ export function PersonPage() {
   const { tmdbId } = useParams();
   const navigate = useNavigate();
   const id = Number(tmdbId);
+  const [showPhotoGallery, setShowPhotoGallery] = useState(false);
 
   const { data, isLoading } = useQuery({
     queryKey: ["person", id],
@@ -413,9 +442,7 @@ export function PersonPage() {
   if (!Number.isFinite(id) || id <= 0) return <p className="text-pitflix-muted">Invalid person</p>;
   if (isLoading)
     return (
-      <div className="flex justify-center py-24">
-        <Spinner />
-      </div>
+      <PosterGridSkeleton />
     );
 
   const person = data?.person as {
@@ -463,12 +490,18 @@ export function PersonPage() {
 
       {/* Hero */}
       <div className="flex flex-wrap gap-8">
-        <MediaImage
-          src={person?.profileImageUrl ?? undefined}
-          alt={person?.name ?? ""}
-          className="h-72 w-[216px] shrink-0 overflow-hidden rounded-lg bg-pitflix-card object-cover object-top"
-          fallbackText={person?.name?.slice(0, 3) ?? "?"}
-        />
+        <button
+          type="button"
+          className="block h-72 w-[216px] shrink-0 cursor-pointer text-left"
+          onClick={() => setShowPhotoGallery(true)}
+        >
+          <MediaImage
+            src={person?.profileImageUrl ?? undefined}
+            alt={person?.name ?? ""}
+            className="h-72 w-[216px] shrink-0 overflow-hidden rounded-lg bg-pitflix-card object-cover object-top"
+            fallbackText={person?.name?.slice(0, 3) ?? "?"}
+          />
+        </button>
         <div className="min-w-0 flex-1">
           <h1 className="mb-1 text-3xl font-bold text-white">{person?.name ?? "Person"}</h1>
           {person?.birthday || person?.placeOfBirth ? (
@@ -482,6 +515,14 @@ export function PersonPage() {
           )}
         </div>
       </div>
+
+      {showPhotoGallery && Number.isFinite(id) && id > 0 ? (
+        <PersonPhotoGallery
+          tmdbId={id}
+          name={person?.name ?? "Person"}
+          onClose={() => setShowPhotoGallery(false)}
+        />
+      ) : null}
 
       {/* Library appearances */}
       {localAppearances.length > 0 && (

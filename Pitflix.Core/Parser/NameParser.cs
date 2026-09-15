@@ -9,6 +9,11 @@ public static partial class NameParser
     [GeneratedRegex(@"(?i)S(?<s>\d{1,2})[._\s-]*(?:E|EP)(?<e>\d{1,3})(?![0-9])", RegexOptions.CultureInvariant)]
     private static partial Regex SeasonEpisodePattern();
 
+    // "NxNN" scene layout, e.g. 1x05, 12x103. Episode requires 2–3 digits so resolutions and titles
+    // like "4x4" or "1920x1080" are not misread as season/episode markers.
+    [GeneratedRegex(@"(?i)(?<!\d)(?<s>\d{1,2})x(?<e>\d{2,3})(?![0-9])", RegexOptions.CultureInvariant)]
+    private static partial Regex SeasonEpisodeXPattern();
+
     // "Episode 3", "Ep.03", "E03"
     [GeneratedRegex(@"(?i)(?<!\w)(?:EPISODE|EP|E)[.\s_-]*(?<e>\d{1,3})(?!\d)", RegexOptions.CultureInvariant)]
     private static partial Regex EpisodeWordPattern();
@@ -16,6 +21,13 @@ public static partial class NameParser
     // Filename is just a number (01, 1, 103) optionally with small suffix.
     [GeneratedRegex(@"^(?<e>\d{1,3})(?:\s*[-_.]\s*\w+)?$", RegexOptions.CultureInvariant)]
     private static partial Regex EpisodeNumberOnlyPattern();
+
+    // "ShowName.01", "ShowName - 02", "ShowName_03": a bare 1-2 digit number trailing the title,
+    // separated by punctuation, with no E/Episode/SxxExx marker at all. Only trusted where the caller
+    // already knows the file sits under a Season N folder (see TryInferEpisodeFromFileName call site) —
+    // 3-digit values are excluded so 480/720/1080/2160 quality tags are never misread as an episode.
+    [GeneratedRegex(@"(?<=[.\s_-])(?<e>\d{1,2})\s*$", RegexOptions.CultureInvariant)]
+    private static partial Regex TrailingBareEpisodeNumberPattern();
 
     [GeneratedRegex(@"(?<!\d)(?:19\d{2}|20[0-2]\d|2030)(?!\d)", RegexOptions.CultureInvariant)]
     private static partial Regex YearPattern();
@@ -119,7 +131,17 @@ public static partial class NameParser
         "akwam.net", "mycima.tv", "wecima.com", "aflamhq", "aflam", "mazika2day", "mazika",
         "arabseed", "akoam", "akoam.com", "shahid4u", "cima4u", "faselhd", "egydead",
         "dvrip", "camrip", "tsrip", "psa", "rarbg", "ettv", "evo", "ntb",
-        "nobody", "mr", "by"
+        "nobody", "mr", "by",
+        // Encodes / sources / release qualifiers that were slipping through and polluting search titles.
+        "imax", "xvid", "divx", "hd", "hc", "6ch", "youtube", "sample",
+        // Streaming-site tails (…​CimaClub.Com / …MaZiKa2daY.CoM leave a bare "com").
+        // NOTE: intentionally not "net"/"org" — those are real title words ("The Net").
+        "com",
+        // Localisation tags on Arabic rips.
+        "arabic", "مدبلج", "مترجم", "مدبلجه", "مترجمة",
+        // Arabic structural words that prefix/suffix rip filenames but aren't part of the TMDB title:
+        // film / play / series / episode / full / complete / version.
+        "فيلم", "مسرحية", "مسلسل", "حلقة", "الحلقة", "كامل", "كامله", "كاملة", "نسخة", "نسخه"
     ];
 
     /// <summary>Trailing release-group token after a hyphen (e.g. <c>...HEVC-PSA</c>).</summary>
@@ -152,18 +174,39 @@ public static partial class NameParser
         var mediaType = ResolveLibraryMediaType(filePath);
 
         var seMatch = SeasonEpisodePattern().Match(fileName);
+        string? seasonEpisodeToken = null;
         int? season = null;
         int? episode = null;
         if (seMatch.Success)
         {
             season = int.Parse(seMatch.Groups["s"].Value, CultureInfo.InvariantCulture);
             episode = int.Parse(seMatch.Groups["e"].Value, CultureInfo.InvariantCulture);
+            seasonEpisodeToken = seMatch.Value;
         }
         else
         {
-            // If the file sits under a Season folder but the release name is "Episode 3" or "03", infer SxxExx.
-            season = TryInferSeasonFromPath(filePath);
-            episode = TryInferEpisodeFromFileName(fileName);
+            var xMatch = SeasonEpisodeXPattern().Match(fileName);
+            if (xMatch.Success)
+            {
+                season = int.Parse(xMatch.Groups["s"].Value, CultureInfo.InvariantCulture);
+                episode = int.Parse(xMatch.Groups["e"].Value, CultureInfo.InvariantCulture);
+                seasonEpisodeToken = xMatch.Value;
+            }
+            else
+            {
+                // If the file sits under a Season folder but the release name is "Episode 3" or "03", infer SxxExx.
+                season = TryInferSeasonFromPath(filePath);
+                episode = TryInferEpisodeFromFileName(fileName);
+                // A known Season folder makes a trailing bare number ("ShowName.03.mkv") unambiguous
+                // enough to trust as the episode number — outside a Season folder this stays unset.
+                if (season.HasValue && !episode.HasValue)
+                {
+                    var trailing = TrailingBareEpisodeNumberPattern().Match(fileName.TrimEnd());
+                    if (trailing.Success &&
+                        int.TryParse(trailing.Groups["e"].Value, NumberStyles.Integer, CultureInfo.InvariantCulture, out var te))
+                        episode = te;
+                }
+            }
         }
 
         // Files like ShowName\01.mkv (no Season N in path): we still have an episode number but season
@@ -178,9 +221,28 @@ public static partial class NameParser
         if (yearMatch.Success && int.TryParse(yearMatch.Value, out var y) && y is >= 1900 and <= 2030)
             year = y;
 
-        var clean = BuildCleanName(fileName, seMatch.Success ? seMatch.Value : null, yearMatch.Success ? yearMatch.Value : null);
+        // The show title precedes the SxxExx / NxNN marker in virtually all layouts; everything after it
+        // is release noise or the episode title. Truncating at the marker prevents leftovers like
+        // "Show - - Title" (dangling separators) and keeps the episode title out of the show query.
+        var nameSource = fileName;
+        if (!string.IsNullOrEmpty(seasonEpisodeToken))
+        {
+            var tokenIdx = fileName.IndexOf(seasonEpisodeToken, StringComparison.OrdinalIgnoreCase);
+            if (tokenIdx > 0)
+                nameSource = fileName.Substring(0, tokenIdx);
+        }
 
-        if (ShouldInferTitleFromPath(fileName, clean))
+        var clean = BuildCleanName(nameSource, seasonEpisodeToken, yearMatch.Success ? yearMatch.Value : null);
+
+        // Leading-index episode files ("01 - Pilot.mkv") name the episode, not the show — take the show
+        // title from the folder instead of the leftover episode title.
+        var hadLeadingIndexEpisode =
+            seasonEpisodeToken == null &&
+            episode.HasValue &&
+            string.Equals(mediaType, "Series", StringComparison.OrdinalIgnoreCase) &&
+            LeadingIndexPattern().IsMatch(fileName.Trim());
+
+        if (ShouldInferTitleFromPath(fileName, clean) || hadLeadingIndexEpisode)
         {
             var inferred = InferTitleFromPath(filePath);
             if (!string.IsNullOrEmpty(inferred))
@@ -192,7 +254,7 @@ public static partial class NameParser
             clean = FinalizeCleanName(PolishMovieDisplayTitle(clean));
 
         var confidence = ParseConfidence.Low;
-        if (seMatch.Success)
+        if (seasonEpisodeToken != null)
             confidence = ParseConfidence.High;
         else if (season.HasValue && episode.HasValue)
             confidence = ParseConfidence.Medium;
@@ -229,6 +291,26 @@ public static partial class NameParser
         }
 
         Add(parsed.CleanName);
+
+        // Arabizi chat-speak → romanized variant ("Khayal Ma2ata" → "Khayal Maata") so TMDB can hit it.
+        Add(ArabicText.RomanizeChatSpeak(parsed.CleanName));
+
+        // Arabic script normalized (alef/ya/ta-marbuta unified) as an alternate query spelling.
+        if (ArabicText.ContainsArabic(parsed.CleanName))
+        {
+            Add(ArabicText.Normalize(parsed.CleanName));
+
+            // Arabic rips frequently append the cast: "TITLE - actor - actor". Try the title alone.
+            // Scoped to Arabic so English titles with a real " - " (e.g. "Mission Impossible - Fallout")
+            // are never truncated.
+            var dashIdx = parsed.CleanName.IndexOf(" - ", StringComparison.Ordinal);
+            if (dashIdx > 2)
+            {
+                var head = parsed.CleanName[..dashIdx];
+                Add(head);
+                Add(ArabicText.Normalize(head));
+            }
+        }
 
         // If the file name is "10 Something..." try removing the index prefix.
         Add(StripLeadingIndexPrefix(parsed.CleanName));
@@ -346,10 +428,26 @@ public static partial class NameParser
             return "";
 
         // Paths like ..\Show.Name\Season 1\episode.mkv with no Movies/Series parent still need a TV lookup.
-        if (SeasonEpisodePattern().IsMatch(fileName))
+        if (SeasonEpisodePattern().IsMatch(fileName) || SeasonEpisodeXPattern().IsMatch(fileName))
             return "Series";
 
-        if (TryInferSeasonFromPath(filePath).HasValue && TryInferEpisodeFromFileName(fileName).HasValue)
+        if (TryInferSeasonFromPath(filePath).HasValue)
+        {
+            if (TryInferEpisodeFromFileName(fileName).HasValue)
+                return "Series";
+
+            // Bare trailing number ("ShowName.03.mkv") under a known Season folder — same fallback
+            // the main Parse() flow uses to fill in Episode; see there for why it's gated on the folder.
+            var trailing = TrailingBareEpisodeNumberPattern().Match(fileName.TrimEnd());
+            if (trailing.Success)
+                return "Series";
+        }
+
+        // An explicit "E04" / "Episode 2" marker in the filename is unambiguous on its own — don't
+        // also require a Season N folder. Without this, files like "Show.E04.mp4" or "Show Episode 2.mp4"
+        // sitting directly in a show folder (no per-season subfolder) fall through with MediaType="",
+        // which then blocks the season-defaults-to-1 fallback below and the episode never gets attached.
+        if (EpisodeWordPattern().IsMatch(fileName))
             return "Series";
 
         return "";
@@ -462,6 +560,10 @@ public static partial class NameParser
         if (hasTrailingEncodeSuffix)
             s = Regex.Replace(s, @"(?i)[_-]\s*\d{1,2}$", " ", RegexOptions.CultureInvariant);
 
+        // Audio channel layouts (5.1 / 7.1 / 2.0) must go before dots collapse to spaces, otherwise
+        // "5.1" survives as "5 1" and wrecks the search title (e.g. "The Matrix 5 1" → 0 TMDB results).
+        s = Regex.Replace(s, @"(?<!\d)[2457]\.[01](?!\d)", " ", RegexOptions.CultureInvariant);
+
         s = s.Replace('.', ' ').Replace('_', ' ');
 
         s = ApplyNoiseStrippingToTitle(s);
@@ -477,6 +579,11 @@ public static partial class NameParser
     private static string ApplyNoiseStrippingToTitle(string s)
     {
         s = Regex.Replace(s, @"(?i)\bultra\s+hd\b", " ultra ", RegexOptions.CultureInvariant);
+
+        // Multi-word release qualifiers.
+        s = Regex.Replace(s, @"(?i)\bdirector'?s\s+cut\b", " ", RegexOptions.CultureInvariant);
+        // Space-separated audio layout that survived separator normalisation ("5 1", "7 1", "2 0").
+        s = Regex.Replace(s, @"(?<![\w\d])[2457]\s+[01](?![\w\d])", " ", RegexOptions.CultureInvariant);
 
         // Strip trailing episode-like patterns: "- 01", "- 12", etc.
         s = Regex.Replace(s, @"\s*-\s*\d{1,3}\s*$", " ", RegexOptions.CultureInvariant);
@@ -500,6 +607,10 @@ public static partial class NameParser
     /// <summary>Trim edges; drop trailing/leading punctuation; strip trailing quality-only tokens.</summary>
     private static string FinalizeCleanName(string s)
     {
+        // Strip zero-width and bidirectional control characters (common in Arabic rips, e.g. "…منير‬")
+        // — they never belong in a title and corrupt the TMDB search query.
+        s = Regex.Replace(s, "[​-‏‪-‮⁦-⁩؜﻿]", "",
+            RegexOptions.CultureInvariant);
         s = CollapseSpaces(s).Trim();
         s = Regex.Replace(s, @"^[\s._\-]+|[\s._\-]+$", "");
         // Trailing token that is only a quality number

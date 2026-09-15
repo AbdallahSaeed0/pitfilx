@@ -40,7 +40,7 @@ export function SkipSegmentOverlay({ active, onSkip, onDismiss }: Props) {
     typeof segment.confidence === "number" && segment.confidence < LOW_CONFIDENCE_THRESHOLD;
 
   return (
-    <div className="pointer-events-none absolute inset-0 z-40 flex items-end justify-end p-6 pb-24">
+    <div className="pointer-events-none absolute inset-0 z-40 flex items-end justify-end p-6 pb-36">
       <div
         className={`pointer-events-auto flex items-center gap-1 rounded-xl border backdrop-blur-md transition-opacity ${
           lowConfidence

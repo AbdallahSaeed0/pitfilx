@@ -1,10 +1,11 @@
-import { Captions, Search, SlidersHorizontal } from "lucide-react";
-import { useCallback, useEffect, useRef, useState, type RefObject } from "react";
+import { Captions, Check, EyeOff, FileText, Search, SlidersHorizontal, X } from "lucide-react";
+import { useCallback, useEffect, useMemo, useRef, useState, type RefObject } from "react";
 import { createPortal } from "react-dom";
 import { cn } from "../../utils/cn";
 import { DEFAULT_SUBTITLE_PREFS, persistEpSubPick } from "./playerStorage";
 import { playbackEpisodeKey } from "../../playback/playbackApi";
 import type { PlaybackLaunchState } from "../../types/playback";
+import type { MpvTrack } from "./playerTypes";
 import type { PlayerEmbeddedSubtitlesProps } from "./playerViewProps";
 
 type Props = PlayerEmbeddedSubtitlesProps & {
@@ -14,21 +15,122 @@ type Props = PlayerEmbeddedSubtitlesProps & {
   onFullscreenPointerActivity: () => void;
 };
 
-function trackLabel(
-  type: "embedded" | "external",
-  t?: { id?: number | null; lang?: string | null; title?: string | null; selected?: boolean },
-  path?: string,
-): string {
-  if (type === "external" && path) {
-    return path.replace(/^.*[/\\]/, "");
+function externalFileLabel(path: string): string {
+  return path.replace(/^.*[/\\]/, "");
+}
+
+/** Primary language subtag from a BCP-47-ish tag, e.g. "en-US" / "es_419" / "pt-BR" -> "en"/"es"/"pt". */
+function parseLangTag(code: string): { lang: string } {
+  const lang = (code.split(/[-_]/)[0] || "").toLowerCase();
+  return { lang };
+}
+
+/** Deterministic, good-contrast palette for the language-code badges — same language always gets the
+ * same color within a session, and colors are spread out enough that adjacent rows read as distinct. */
+const BADGE_COLORS = [
+  "#EF4444", "#F97316", "#F59E0B", "#84CC16", "#10B981", "#14B8A6",
+  "#06B6D4", "#3B82F6", "#6366F1", "#8B5CF6", "#A855F7", "#EC4899",
+];
+
+/** Flag emoji don't render as pictographs on Windows/WebView2 (this app's runtime) — they fall back to
+ * the bare regional-indicator letters, which looks like a bug rather than a flag. A colored code badge
+ * is legible everywhere and doubles as the track's short language code at a glance. */
+function badgeColorForLang(key: string): string {
+  let hash = 0;
+  for (let i = 0; i < key.length; i++) hash = (hash * 31 + key.charCodeAt(i)) >>> 0;
+  return BADGE_COLORS[hash % BADGE_COLORS.length]!;
+}
+
+type LangBadge = { text: string; color: string };
+
+function resolveBadge(lang: string): LangBadge | null {
+  if (!lang) return null;
+  return { text: lang.slice(0, 2).toUpperCase(), color: badgeColorForLang(lang) };
+}
+
+let languageDisplayNames: Intl.DisplayNames | null | undefined;
+function languageName(langCode: string): string | null {
+  if (languageDisplayNames === undefined) {
+    try {
+      languageDisplayNames = new Intl.DisplayNames(["en"], { type: "language" });
+    } catch {
+      languageDisplayNames = null;
+    }
   }
-  const base = (t?.lang || t?.title || `Track ${t?.id ?? ""}`).trim();
-  return t?.selected ? `${base} (current)` : base;
+  if (!langCode) return null;
+  try {
+    return languageDisplayNames?.of(langCode) ?? null;
+  } catch {
+    return null;
+  }
+}
+
+function detectBadges(title?: string | null): ("FORCED" | "SDH")[] {
+  const lower = (title || "").toLowerCase();
+  const badges: ("FORCED" | "SDH")[] = [];
+  if (lower.includes("forced")) badges.push("FORCED");
+  if (lower.includes("sdh") || lower.includes("hearing")) badges.push("SDH");
+  return badges;
+}
+
+type EmbeddedTrackDisplay = {
+  badge: LangBadge | null;
+  primary: string;
+  code: string | null;
+  badges: ("FORCED" | "SDH")[];
+  searchable: string;
+};
+
+/** Builds a display row per embedded track — human language name, colored code badge, forced/SDH
+ * badges — and numbers same-language duplicates ("English 2") so they stay distinguishable. */
+function buildEmbeddedTrackDisplays(tracks: MpvTrack[]): EmbeddedTrackDisplay[] {
+  const seenCount = new Map<string, number>();
+  return tracks.map((t) => {
+    const rawLang = t.lang?.trim() || "";
+    const { lang } = rawLang ? parseLangTag(rawLang) : { lang: "" };
+    const name = lang ? languageName(lang) : null;
+    const fallback = t.title?.trim() || `Track ${t.id ?? ""}`;
+    const dedupeKey = name ?? fallback;
+    const seen = seenCount.get(dedupeKey) ?? 0;
+    seenCount.set(dedupeKey, seen + 1);
+    const primary = seen > 0 ? `${name ?? fallback} ${seen + 1}` : (name ?? fallback);
+    const badges = detectBadges(t.title);
+    return {
+      badge: resolveBadge(lang),
+      primary,
+      code: rawLang ? rawLang.toUpperCase() : null,
+      badges,
+      searchable: `${primary} ${rawLang} ${t.title ?? ""}`.toLowerCase(),
+    };
+  });
+}
+
+type ExternalSubDisplay = {
+  badge: LangBadge | null;
+  primary: string;
+  filename: string;
+  code: string | null;
+};
+
+/** External subtitle files are usually named "<release>.<lang>.srt" — pull the language subtag out
+ * of the filename (when it's a real language code) so these read the same as embedded tracks instead
+ * of a raw release-name wall of text. Falls back to the plain filename when no code is recognized. */
+function buildExternalSubDisplay(path: string): ExternalSubDisplay {
+  const filename = externalFileLabel(path);
+  const m = /\.([a-z]{2,3}(?:-[a-z]{2})?)\.(?:srt|vtt|ass|ssa|sub)$/i.exec(filename);
+  if (m) {
+    const { lang } = parseLangTag(m[1]!);
+    const name = languageName(lang);
+    if (name) {
+      return { badge: resolveBadge(lang), primary: name, filename, code: m[1]!.toUpperCase() };
+    }
+  }
+  return { badge: null, primary: filename, filename, code: null };
 }
 
 type MenuPlacement = { bottom: number; left: number; maxHeight: number };
 
-const PANEL_WIDTH_PX = 300;
+const PANEL_WIDTH_PX = 320;
 
 function computeMenuPlacement(anchor: HTMLElement): MenuPlacement {
   const r = anchor.getBoundingClientRect();
@@ -69,11 +171,33 @@ export function PlayerEmbeddedSubtitleMenu({
   const menuRef = useRef<HTMLDivElement>(null);
   const [menuOpen, setMenuOpen] = useState(false);
   const [placement, setPlacement] = useState<MenuPlacement | null>(null);
+  const [trackFilter, setTrackFilter] = useState("");
+
+  const embeddedRows = useMemo(() => {
+    const displays = buildEmbeddedTrackDisplays(subTracks);
+    return subTracks.map((t, i) => ({ track: t, display: displays[i]! }));
+  }, [subTracks]);
+  const externalRows = useMemo(
+    () => externalSubFiles.map((p) => ({ path: p, display: buildExternalSubDisplay(p) })),
+    [externalSubFiles],
+  );
+  const filterQuery = trackFilter.trim().toLowerCase();
+  const filteredEmbedded = filterQuery
+    ? embeddedRows.filter((r) => r.display.searchable.includes(filterQuery))
+    : embeddedRows;
+  const filteredExternal = filterQuery
+    ? externalRows.filter(
+        (r) => r.display.primary.toLowerCase().includes(filterQuery) || r.display.filename.toLowerCase().includes(filterQuery),
+      )
+    : externalRows;
+  const totalTrackCount = subTracks.length + externalSubFiles.length;
+  const showGroupLabels = subTracks.length > 0 && externalSubFiles.length > 0;
 
   const closeMenu = useCallback(() => {
     setMenuOpen(false);
     setSubAppearanceOpen(false);
     setPlacement(null);
+    setTrackFilter("");
   }, [setSubAppearanceOpen]);
 
   const openMenu = useCallback(() => {
@@ -143,7 +267,7 @@ export function PlayerEmbeddedSubtitleMenu({
     <div
       ref={menuRef}
       id="pitflix-sub-menu-panel"
-      className="fixed z-[200] flex w-[min(92vw,300px)] -translate-x-1/2 flex-col overflow-hidden rounded-lg border border-white/15 bg-black shadow-xl"
+      className="fixed z-[200] flex w-[min(92vw,320px)] -translate-x-1/2 flex-col overflow-hidden rounded-lg border border-white/15 bg-black shadow-xl"
       style={{
         bottom: placement.bottom,
         left: placement.left,
@@ -152,53 +276,73 @@ export function PlayerEmbeddedSubtitleMenu({
       }}
       onClick={(e) => e.stopPropagation()}
     >
-        <div className="flex shrink-0 items-center justify-between gap-2 border-b border-white/10 px-2 py-1.5">
-          <label className="flex cursor-pointer items-center gap-2 text-[10px] text-white">
-            <input
-              type="checkbox"
-              className="rounded border-white/30"
-              checked={subVisible}
+        <div className="flex shrink-0 items-center justify-between gap-2 border-b border-white/10 bg-white/[0.03] px-3 py-2.5">
+          <div className="flex items-center gap-1.5">
+            <Captions className="h-3.5 w-3.5 text-pitflix-primary" strokeWidth={2.5} />
+            <span className="text-[12px] font-semibold text-white">Subtitles</span>
+          </div>
+          <div className="flex shrink-0 items-center gap-1">
+            <button
+              type="button"
+              role="switch"
+              aria-checked={subVisible}
+              aria-label={subVisible ? "Hide subtitles" : "Show subtitles"}
+              title={subVisible ? "Hide subtitles" : "Show subtitles"}
               disabled={sessionBlocksTransport}
-              onChange={() => toggleSub()}
-            />
-            Show subtitles
-          </label>
-          <div className="flex shrink-0 items-center gap-0.5">
+              className={cn(
+                "relative mr-1 h-5 w-9 shrink-0 rounded-full transition-colors disabled:cursor-not-allowed disabled:opacity-40",
+                subVisible ? "bg-pitflix-primary" : "bg-white/15 hover:bg-white/20",
+              )}
+              onClick={() => toggleSub()}
+            >
+              <span
+                className={cn(
+                  "absolute left-0.5 top-0.5 h-4 w-4 rounded-full bg-white shadow-sm transition-transform",
+                  subVisible ? "translate-x-4" : "translate-x-0",
+                )}
+              />
+            </button>
+
+            <div className="h-4 w-px shrink-0 bg-white/10" />
+
             <button
               type="button"
               aria-label="Search subtitles online"
               title="Search subtitles online"
-              className="flex h-6 w-6 items-center justify-center rounded text-pitflix-primary hover:bg-white/10"
+              className="flex h-9 w-9 items-center justify-center rounded-md text-pitflix-primary transition-colors hover:bg-pitflix-primary/15"
               onClick={(e) => {
                 e.stopPropagation();
                 closeMenu();
                 onOpenSubtitleSearch();
               }}
             >
-              <Search className="h-3.5 w-3.5" strokeWidth={2} />
+              <Search className="h-[18px] w-[18px]" strokeWidth={2} />
             </button>
             <button
               type="button"
               aria-label="Subtitle appearance"
               title="Subtitle appearance"
               className={cn(
-                "flex h-6 w-6 items-center justify-center rounded text-white hover:bg-white/10",
-                subAppearanceOpen ? "bg-white/15" : "text-white/70",
+                "flex h-7 w-7 items-center justify-center rounded-md transition-colors",
+                subAppearanceOpen
+                  ? "bg-pitflix-primary/15 text-pitflix-primary"
+                  : "text-white/70 hover:bg-white/10 hover:text-white",
               )}
               onClick={(e) => {
                 e.stopPropagation();
                 setSubAppearanceOpen((v) => !v);
               }}
             >
-              <SlidersHorizontal className="h-3 w-3" />
+              <SlidersHorizontal className="h-3.5 w-3.5" />
             </button>
             <button
               type="button"
               aria-label="Close subtitles panel"
-              className="flex h-6 w-6 items-center justify-center rounded text-white/70 hover:bg-white/10 hover:text-white"
+              title="Close"
+              className="flex h-7 w-7 items-center justify-center rounded-md text-white/70 transition-colors hover:bg-white/10 hover:text-white"
               onClick={() => closeMenu()}
             >
-              ✕
+              <X className="h-3.5 w-3.5" strokeWidth={2} />
             </button>
           </div>
         </div>
@@ -358,54 +502,145 @@ export function PlayerEmbeddedSubtitleMenu({
             </button>
             </div>
           ) : (
-          <div className="px-1 py-1">
-          <p className="px-2 py-1 text-[9px] font-semibold uppercase tracking-wide text-white/55">Track</p>
-          <button
-            type="button"
-            disabled={sessionBlocksTransport}
-            className={cn(
-              "mb-0.5 flex w-full rounded px-2 py-1.5 text-left text-[11px] text-white hover:bg-white/10 disabled:opacity-40",
-              subMenuValue === "" ? "bg-white/15" : "",
-            )}
-            onClick={() => pickTrack("")}
-          >
-            Off
-          </button>
-          {subTracks.map((t) => {
+          <div className="px-1.5 py-1.5">
+          <div className="flex items-center justify-between px-1.5 py-1">
+            <p className="text-[9px] font-semibold uppercase tracking-wide text-white/55">Track</p>
+            {totalTrackCount > 6 ? (
+              <span className="text-[9px] tabular-nums text-white/35">
+                {filteredEmbedded.length + filteredExternal.length}/{totalTrackCount}
+              </span>
+            ) : null}
+          </div>
+
+          {totalTrackCount > 6 ? (
+            <div className="relative mx-0.5 mb-2">
+              <Search className="pointer-events-none absolute left-2.5 top-1/2 h-3 w-3 -translate-y-1/2 text-white/35" />
+              <input
+                type="text"
+                value={trackFilter}
+                onChange={(e) => setTrackFilter(e.currentTarget.value)}
+                placeholder="Filter languages…"
+                className="w-full rounded-lg border border-white/10 bg-white/5 py-1.5 pl-7 pr-2 text-[11px] text-white placeholder:text-white/35 focus:border-pitflix-primary/50 focus:outline-none"
+              />
+            </div>
+          ) : null}
+
+          {!filterQuery ? (
+            <button
+              type="button"
+              disabled={sessionBlocksTransport}
+              className={cn(
+                "mb-0.5 flex w-full items-center gap-2.5 rounded-lg px-2.5 py-2 text-left text-[12px] text-white transition-colors hover:bg-white/10 disabled:opacity-40",
+                subMenuValue === "" ? "bg-pitflix-primary/15 ring-1 ring-inset ring-pitflix-primary/30" : "",
+              )}
+              onClick={() => pickTrack("")}
+            >
+              <EyeOff className="h-3.5 w-3.5 shrink-0 text-white/50" />
+              <span className="flex-1 font-medium">Off</span>
+              {subMenuValue === "" ? <Check className="h-3.5 w-3.5 shrink-0 text-pitflix-primary" strokeWidth={2.5} /> : null}
+            </button>
+          ) : null}
+
+          {showGroupLabels && filteredEmbedded.length > 0 ? (
+            <p className="mb-0.5 mt-1.5 px-2.5 text-[8px] font-semibold uppercase tracking-wide text-white/35">Embedded</p>
+          ) : null}
+
+          {filteredEmbedded.map(({ track: t, display }) => {
             const val = `e:${t.id ?? ""}`;
+            const active = subMenuValue === val;
             return (
               <button
                 key={`s-${t.id ?? ""}`}
                 type="button"
                 disabled={sessionBlocksTransport}
                 className={cn(
-                  "mb-0.5 flex w-full rounded px-2 py-1.5 text-left text-[11px] text-white hover:bg-white/10 disabled:opacity-40",
-                  subMenuValue === val ? "bg-white/15" : "",
+                  "mb-0.5 flex w-full items-center gap-2.5 rounded-lg px-2.5 py-2 text-left text-[12px] text-white transition-colors hover:bg-white/10 disabled:opacity-40",
+                  active ? "bg-pitflix-primary/15 ring-1 ring-inset ring-pitflix-primary/30" : "",
                 )}
                 onClick={() => pickTrack(val)}
               >
-                {trackLabel("embedded", t)}
+                {display.badge ? (
+                  <span
+                    className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full text-[8px] font-bold leading-none text-white"
+                    style={{ backgroundColor: display.badge.color }}
+                  >
+                    {display.badge.text}
+                  </span>
+                ) : (
+                  <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-white/5">
+                    <Captions className="h-3 w-3 text-white/40" />
+                  </span>
+                )}
+                <span className="min-w-0 flex-1 truncate font-medium">{display.primary}</span>
+                {display.badges.map((b) => (
+                  <span
+                    key={b}
+                    className={cn(
+                      "shrink-0 rounded px-1 py-px text-[8px] font-bold leading-tight",
+                      b === "FORCED" ? "bg-amber-500/20 text-amber-400" : "bg-sky-500/20 text-sky-400",
+                    )}
+                  >
+                    {b}
+                  </span>
+                ))}
+                {display.code ? (
+                  <span className="shrink-0 font-mono text-[9px] text-white/35">{display.code}</span>
+                ) : null}
+                {active ? <Check className="h-3.5 w-3.5 shrink-0 text-pitflix-primary" strokeWidth={2.5} /> : null}
               </button>
             );
           })}
-          {externalSubFiles.map((p) => {
+
+          {showGroupLabels && filteredExternal.length > 0 ? (
+            <p className="mb-0.5 mt-1.5 px-2.5 text-[8px] font-semibold uppercase tracking-wide text-white/35">External files</p>
+          ) : null}
+
+          {filteredExternal.map(({ path: p, display }) => {
             const val = `x:${encodeURIComponent(p)}`;
+            const active = subMenuValue === val;
             return (
               <button
                 key={`ext-${p}`}
                 type="button"
                 disabled={sessionBlocksTransport}
                 className={cn(
-                  "mb-0.5 flex w-full rounded px-2 py-1.5 text-left text-[11px] text-white hover:bg-white/10 disabled:opacity-40",
-                  subMenuValue === val ? "bg-white/15" : "",
+                  "mb-0.5 flex w-full items-start gap-2.5 rounded-lg px-2.5 py-2 text-left text-[12px] text-white transition-colors hover:bg-white/10 disabled:opacity-40",
+                  active ? "bg-pitflix-primary/15 ring-1 ring-inset ring-pitflix-primary/30" : "",
                 )}
                 title={p}
                 onClick={() => pickTrack(val)}
               >
-                <span className="line-clamp-2">{trackLabel("external", undefined, p)}</span>
+                {display.badge ? (
+                  <span
+                    className="mt-px flex h-5 w-5 shrink-0 items-center justify-center rounded-full text-[8px] font-bold leading-none text-white"
+                    style={{ backgroundColor: display.badge.color }}
+                  >
+                    {display.badge.text}
+                  </span>
+                ) : (
+                  <span className="mt-px flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-white/5">
+                    <FileText className="h-3 w-3 text-white/40" />
+                  </span>
+                )}
+                <span className="min-w-0 flex-1">
+                  <span className="flex items-center gap-1.5">
+                    <span className="truncate font-medium">{display.primary}</span>
+                    {display.code ? (
+                      <span className="shrink-0 font-mono text-[9px] text-white/35">{display.code}</span>
+                    ) : null}
+                  </span>
+                  {display.code ? (
+                    <span className="line-clamp-1 block text-[9px] text-white/35">{display.filename}</span>
+                  ) : null}
+                </span>
+                {active ? <Check className="mt-0.5 h-3.5 w-3.5 shrink-0 text-pitflix-primary" strokeWidth={2.5} /> : null}
               </button>
             );
           })}
+
+          {filterQuery && filteredEmbedded.length === 0 && filteredExternal.length === 0 ? (
+            <p className="px-2 py-3 text-center text-[10px] text-white/40">No tracks match "{trackFilter.trim()}"</p>
+          ) : null}
           </div>
           )}
         </div>

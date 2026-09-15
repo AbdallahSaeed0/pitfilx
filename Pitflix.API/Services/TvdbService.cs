@@ -84,6 +84,16 @@ public sealed class TvdbService
         }
     }
 
+    /// <summary>Resolves a show's TheTVDB id from its TMDB id — needed by other providers (e.g. Fanart.tv)
+    /// that key TV lookups off TheTVDB rather than TMDB. Requires a TVDB API key to be configured;
+    /// returns null otherwise (movies don't need this — Fanart looks those up by TMDB id directly).</summary>
+    public async Task<int?> ResolveTvdbIdAsync(int tmdbId, string mediaType, CancellationToken ct)
+    {
+        var key = await GetApiKeyAsync(ct).ConfigureAwait(false);
+        if (string.IsNullOrWhiteSpace(key)) return null;
+        return await GetTvdbIdAsync(tmdbId, mediaType, key, ct).ConfigureAwait(false);
+    }
+
     public async Task<IReadOnlyList<TvdbPerson>?> GetPeopleAsync(int tmdbId, string mediaType,
         CancellationToken ct)
     {

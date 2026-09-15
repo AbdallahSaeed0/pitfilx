@@ -76,7 +76,11 @@ export function SettingsMobileSyncSection() {
     setMessage(null);
     try {
       const result = await pushMobileSync();
-      setMessage(result.success ? "Synced." : (result.error ?? "Sync failed."));
+      setMessage(
+        result.success
+          ? `Synced. ${result.error ?? ""}`.trim()
+          : (result.error ?? "Sync failed."),
+      );
       setMessageIsError(!result.success);
       refresh();
     } finally {

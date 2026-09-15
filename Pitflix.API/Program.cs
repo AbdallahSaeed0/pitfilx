@@ -16,6 +16,7 @@ using Pitflix.API.Endpoints;
 using Pitflix.API.Services;
 using Pitflix.API.Services.Awards;
 using Pitflix.API.Services.Browse;
+using Pitflix.API.Services.Recommendations;
 using Pitflix.API.Services.Supabase;
 using Pitflix.API.Services.Trailers;
 using Pitflix.API.Services.Trakt;
@@ -83,6 +84,9 @@ builder.Services.AddScoped<RatingsSnapshotRepository>();
 builder.Services.AddScoped<SkipSegmentsRepository>();
 builder.Services.AddScoped<SkipSegmentDetectionService>();
 builder.Services.AddScoped<AudioFingerprintService>();
+builder.Services.AddSingleton<TheIntroDbService>();
+builder.Services.AddSingleton<IntroDbService>();
+builder.Services.AddSingleton<SkipDbService>();
 builder.Services.AddSingleton<SkipFingerprintQueue>();
 builder.Services.AddHostedService<SkipFingerprintHostedService>();
 builder.Services.AddSingleton<ScanRuntime>();
@@ -90,6 +94,9 @@ builder.Services.AddSingleton<SmartMatchRuntime>();
 builder.Services.AddHostedService<LibraryAutoScanService>();
 builder.Services.AddHostedService<PinnedFolderScanService>();
 builder.Services.AddHostedService<TrailerIngestionHostedService>();
+builder.Services.AddHostedService<NextAiringRefreshHostedService>();
+builder.Services.AddScoped<LibraryRecommendationsService>();
+builder.Services.AddHostedService<LibraryRecommendationsHostedService>();
 builder.Services.AddMemoryCache();
 builder.Services.AddHttpClient();
 builder.Services.AddHttpClient("Wikidata", c =>
@@ -110,6 +117,17 @@ builder.Services.AddScoped<WatchSoMuchScraperService>();
 builder.Services.AddScoped<YtsScraperService>();
 builder.Services.AddScoped<TpbScraperService>();
 builder.Services.AddScoped<PsaScraperService>();
+builder.Services.AddScoped<EztvScraperService>();
+builder.Services.AddScoped<StremioAddonService>();
+builder.Services.AddHttpClient("StremioAddon", client =>
+{
+    client.Timeout = TimeSpan.FromSeconds(25);
+    client.MaxResponseContentBufferSize = 2 * 1024 * 1024;
+}).ConfigurePrimaryHttpMessageHandler(() => new HttpClientHandler
+{
+    AllowAutoRedirect = false,
+    AutomaticDecompression = DecompressionMethods.All,
+});
 builder.Services.AddScoped<ImdbParentsGuideService>();
 builder.Services.AddHostedService<ParentsGuidePrewarmHostedService>();
 builder.Services.AddSingleton<RatingsRefreshQueue>();
@@ -128,7 +146,13 @@ builder.Services.AddSingleton<BrowseDownloadJobTracker>();
 builder.Services.AddSingleton<BrowseDownloadService>();
 builder.Services.AddScoped<IptvService>();
 builder.Services.AddSingleton<MdbListService>();
+builder.Services.AddSingleton<ImdbTop100Store>();
+builder.Services.AddSingleton<ImdbTop100TvStore>();
+builder.Services.AddHostedService<ImdbTop100RefreshHostedService>();
+builder.Services.AddHttpClient(nameof(OmdbRatingClient));
+builder.Services.AddSingleton<OmdbRatingClient>();
 builder.Services.AddSingleton<TvdbService>();
+builder.Services.AddSingleton<FanartClient>();
 builder.Services.AddSingleton<Pitflix.API.Services.Letterboxd.LetterboxdService>();
 builder.Services.AddSingleton(sp =>
 {
@@ -175,6 +199,7 @@ await using (var scope = app.Services.CreateAsyncScope())
     await repo.EnsureListItemMetadataColumnsAsync();
     await repo.EnsureWatchHistoryResumeColumnsAsync();
     await repo.EnsureWatchStatusColumnsAsync();
+    await repo.EnsureRewatchCountColumnAsync();
     await repo.EnsureUserListTablesAndSeedAsync();
     await repo.EnsureCastMemberPersonTmdbIdColumnAsync();
     await repo.EnsureCastMemberProfilePathAndBillingOrderColumnsAsync();
@@ -183,6 +208,7 @@ await using (var scope = app.Services.CreateAsyncScope())
     await repo.EnsureKeywordsJsonColumnsAsync();
     await repo.EnsureContentRatingColumnAsync();
     await repo.EnsureUnifiedTrackingAsync();
+    await repo.EnsureCatalogSortIndexesAsync();
     // Back-fill TmdbId / SeasonNumber / EpisodeNumber on history rows created before enrichment was added.
     // Runs in the background so it never delays startup.
     // IMPORTANT: capture the IServiceProvider, not the scoped `repo` ? each background operation
@@ -211,9 +237,13 @@ await using (var scope = app.Services.CreateAsyncScope())
     await AddShowNetworkMigration.RunIfNeededAsync(repo);
     await AddCompletedFromPlaybackMigration.RunIfNeededAsync(repo);
     await AddMdbListEpisodeRatingsCacheMigration.RunIfNeededAsync(repo);
+    await FixEpisodeImdbRatingCacheMigration.RunIfNeededAsync(repo);
     await AddIptvTablesMigration.RunIfNeededAsync(repo);
     await AddTraktTablesMigration.RunIfNeededAsync(repo);
+    await AddTraktLastSyncedAtMigration.RunIfNeededAsync(repo);
     await AddSupabaseSyncTablesMigration.RunIfNeededAsync(repo);
+    await AddNextAiringCacheMigration.RunIfNeededAsync(repo);
+    await AddRecommendationEngineMigration.RunIfNeededAsync(repo);
     var awardNomineeCacheRepo = scope.ServiceProvider.GetRequiredService<AwardNomineeCacheRepository>();
     await awardNomineeCacheRepo.EnsureTableAsync(CancellationToken.None).ConfigureAwait(false);
     AppSettings.ResolveTmdbApiKeyFromSources(repo);
@@ -286,10 +316,21 @@ app.Use(async (context, next) =>
         return;
     }
 
+    // `?w=200` serves a downscaled variant instead. The cache holds w500 posters, but grid cells are
+    // ~145 px wide — handing over the full-size file costs ~4x the bytes and, worse, a 500x750 decode
+    // per card. See ImageThumbnailService; it falls back to the original if resizing isn't possible.
+    var servePath = fullPath;
+    if (ImageThumbnailService.NormalizeWidth(context.Request.Query["w"]) is { } thumbWidth)
+    {
+        servePath = await ImageThumbnailService
+            .GetOrCreateAsync(fullPath, thumbWidth, root, context.RequestAborted)
+            .ConfigureAwait(false);
+    }
+
     context.Response.Headers["Access-Control-Allow-Origin"] = "*";
     context.Response.Headers["Cache-Control"] = "public,max-age=86400";
-    context.Response.ContentType = ImageServeHelpers.ImageContentTypeForExtension(fullPath);
-    await context.Response.SendFileAsync(fullPath).ConfigureAwait(false);
+    context.Response.ContentType = ImageServeHelpers.ImageContentTypeForExtension(servePath);
+    await context.Response.SendFileAsync(servePath).ConfigureAwait(false);
 });
 
 // 3) Static files (backup) ? same physical root, /images request path
@@ -351,6 +392,8 @@ app.MapWsmEndpoints(jsonSerializerOptions);
 app.MapYtsEndpoints(jsonSerializerOptions);
 app.MapTpbEndpoints(jsonSerializerOptions);
 app.MapPsaEndpoints(jsonSerializerOptions);
+app.MapEztvEndpoints(jsonSerializerOptions);
+app.MapStremioAddonEndpoints(jsonSerializerOptions);
 app.MapRatingsEndpoints(jsonSerializerOptions);
 app.MapAwardsEndpoints(jsonSerializerOptions);
 
@@ -365,6 +408,7 @@ app.MapSkipEndpoints(jsonSerializerOptions);
 app.MapPlayerControlEndpoints(jsonSerializerOptions);
 
 app.MapMiscEndpoints(jsonSerializerOptions, imagesPath);
+app.MapRecommendationsEndpoints(jsonSerializerOptions);
 app.MapIptvEndpoints(jsonSerializerOptions);
 app.MapTraktEndpoints(jsonSerializerOptions);
 app.MapBrowseEndpoints(jsonSerializerOptions);

@@ -28,9 +28,15 @@ class TitleItem {
   final int userRating; // 0-5 stars
   final bool watchLater;
 
+  /// How many times this title has been watched again since its first
+  /// completion (see UserLibraryService.setTitleRewatchCount — persisted in
+  /// watch_records.rewatch_count, mirroring Episode.rewatchCount).
+  final int rewatchCount;
+
   // Poster card extras
   final String? episodeSub; // "S2 · E3" shown under title on Watch Next cards
   final double? progress; // 0-1 watched progress for Watch Next cards
+  final String? posterBadge; // "S05E05" top-right chip, e.g. Currently Watching's next episode
 
   // Real-data extras (TMDB) — relative paths (e.g. "/abc123.jpg"), null for
   // mock titles. Resolve to a full URL via TmdbService.posterUrl/backdropUrl.
@@ -51,12 +57,28 @@ class TitleItem {
   /// (which only resolves against mock data). Empty until fetched.
   final List<CastMember> cast;
 
+  /// Real crew (TMDB credits) — director, writers, composer and so on, merged one entry per person
+  /// and ordered by role. Comes from the same `/credits` response as [cast]. Empty until fetched.
+  final List<CastMember> crew;
+
   /// Local Pitflix.API library row id (Movie.Id / Show.Id) — set only for
   /// titles that came from [fromLocalMediaCard] or Home's Currently Watching
-  /// section. Required by the poster/backdrop-change endpoint, which only
-  /// works for titles already matched in the local library; null for
-  /// TMDB-only titles (Trending/Search/Coming Soon) that aren't in it yet.
+  /// section. Null for TMDB-only titles (Trending/Search/Coming Soon) that
+  /// aren't in the local library.
   final int? libraryId;
+
+  /// Movie release date / show first-air date, when known — used to gate
+  /// "mark watched"/rate actions on not-yet-released Coming Soon titles.
+  /// Null for mock data and for [fromLocalMediaCard] titles (already in the
+  /// local library, so necessarily released).
+  final DateTime? releaseDate;
+
+  /// True once [releaseDate] is known and is still in the future — Coming
+  /// Soon titles should not be markable as watched/rated yet. Titles with no
+  /// known release date (null) are treated as released, matching prior
+  /// behavior.
+  bool get isUnreleased =>
+      releaseDate != null && releaseDate!.isAfter(DateTime.now());
 
   const TitleItem({
     required this.id,
@@ -76,14 +98,18 @@ class TitleItem {
     this.watched = false,
     this.userRating = 0,
     this.watchLater = false,
+    this.rewatchCount = 0,
     this.episodeSub,
     this.progress,
+    this.posterBadge,
     this.posterPath,
     this.backdropPath,
     this.tmdbId,
     this.isSummaryOnly = false,
     this.cast = const [],
+    this.crew = const [],
     this.libraryId,
+    this.releaseDate,
   });
 
   /// True when this title is worth enriching with a full detail lookup
@@ -93,6 +119,7 @@ class TitleItem {
   TitleItem copyWith({
     List<Season>? seasons,
     List<CastMember>? cast,
+    List<CastMember>? crew,
     String? posterPath,
     String? backdropPath,
   }) => TitleItem(
@@ -113,14 +140,18 @@ class TitleItem {
     watched: watched,
     userRating: userRating,
     watchLater: watchLater,
+    rewatchCount: rewatchCount,
     episodeSub: episodeSub,
     progress: progress,
+    posterBadge: posterBadge,
     posterPath: posterPath ?? this.posterPath,
     backdropPath: backdropPath ?? this.backdropPath,
     tmdbId: tmdbId,
     isSummaryOnly: isSummaryOnly,
     cast: cast ?? this.cast,
+    crew: crew ?? this.crew,
     libraryId: libraryId,
+    releaseDate: releaseDate,
   );
 
   bool get isShow => kind == TitleKind.show;
@@ -153,6 +184,7 @@ class TitleItem {
       backdropPath: json['backdrop_path'] as String?,
       tmdbId: id,
       isSummaryOnly: true,
+      releaseDate: dateStr == null ? null : DateTime.tryParse(dateStr),
     );
   }
 
@@ -195,6 +227,7 @@ class TitleItem {
       posterPath: json['poster_path'] as String?,
       backdropPath: json['backdrop_path'] as String?,
       tmdbId: id,
+      releaseDate: dateStr == null ? null : DateTime.tryParse(dateStr),
     );
   }
 

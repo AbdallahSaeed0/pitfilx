@@ -8,6 +8,7 @@ import {
   Maximize,
   MessageSquare,
   Pause,
+  PictureInPicture2,
   Pin,
   Play,
   Search,
@@ -41,6 +42,7 @@ type Props = {
   playbackSpeed: number;
   skipSeconds: number;
   alwaysOnTop: boolean;
+  isPip: boolean;
   isFullscreen: boolean;
   hasPlaylist: boolean;
   playlistCount: number;
@@ -57,6 +59,7 @@ type Props = {
   onSetSkipSeconds: (seconds: number) => void;
   onSetAudioTrack: (id: number) => void;
   onToggleAlwaysOnTop: () => void;
+  onTogglePip: () => void;
   onToggleFullscreen: () => void;
   onNext: () => void;
   onPrevious: () => void;
@@ -115,6 +118,7 @@ export function PlayerContextMenu({
   playbackSpeed,
   skipSeconds,
   alwaysOnTop,
+  isPip,
   isFullscreen,
   hasPlaylist,
   playlistCount,
@@ -131,6 +135,7 @@ export function PlayerContextMenu({
   onSetSkipSeconds,
   onSetAudioTrack,
   onToggleAlwaysOnTop,
+  onTogglePip,
   onToggleFullscreen,
   onNext,
   onPrevious,
@@ -251,6 +256,12 @@ export function PlayerContextMenu({
             onClick={() => { setCustomSkipInput(String(skipSeconds)); setPanel("skip"); }}
           />
           <MenuSeparator />
+          <MenuRow
+            label="Mini player (picture-in-picture)"
+            icon={PictureInPicture2}
+            checked={isPip}
+            onClick={() => run(onTogglePip)}
+          />
           <MenuRow
             label="Always on top"
             icon={Pin}

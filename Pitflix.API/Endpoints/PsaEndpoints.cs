@@ -7,6 +7,11 @@ namespace Pitflix.API.Endpoints;
 public static class PsaEndpoints
 {
     private static readonly TimeSpan CacheTtl = TimeSpan.FromMinutes(30);
+    // PSA's scrape is a multi-query, multi-site cascade (see PsaScraperService) — much more expensive
+    // than WSM/TPB's single fetch. Previously empty results were never cached at all, so re-opening
+    // the PSA tab for a sparse title re-ran the whole cascade every time. Cache empty results too, just
+    // for a shorter window than real hits so a newly-uploaded release still surfaces reasonably soon.
+    private static readonly TimeSpan EmptyCacheTtl = TimeSpan.FromMinutes(10);
 
     public static void MapPsaEndpoints(this WebApplication app, JsonSerializerOptions jsonSerializerOptions)
     {
@@ -22,8 +27,7 @@ public static class PsaEndpoints
                 return Results.Json(new { items = cached!.Select(PsaTorrentJson).ToList() }, jsonSerializerOptions);
 
             var items = await psa.ScrapeMovieAsync(t, year.Value, ct).ConfigureAwait(false);
-            if (items.Count > 0)
-                cache.Set(cacheKey, items, CacheTtl);
+            cache.Set(cacheKey, items, items.Count > 0 ? CacheTtl : EmptyCacheTtl);
 
             return Results.Json(new { items = items.Select(PsaTorrentJson).ToList() }, jsonSerializerOptions);
         });
@@ -40,8 +44,7 @@ public static class PsaEndpoints
                 return Results.Json(new { items = cached!.Select(PsaTorrentJson).ToList() }, jsonSerializerOptions);
 
             var items = await psa.ScrapeEpisodeAsync(t, season, episode, ct).ConfigureAwait(false);
-            if (items.Count > 0)
-                cache.Set(cacheKey, items, CacheTtl);
+            cache.Set(cacheKey, items, items.Count > 0 ? CacheTtl : EmptyCacheTtl);
 
             return Results.Json(new { items = items.Select(PsaTorrentJson).ToList() }, jsonSerializerOptions);
         });
@@ -58,8 +61,7 @@ public static class PsaEndpoints
                 return Results.Json(new { items = cached!.Select(PsaTorrentJson).ToList() }, jsonSerializerOptions);
 
             var items = await psa.ScrapeSeasonAsync(t, season, ct).ConfigureAwait(false);
-            if (items.Count > 0)
-                cache.Set(cacheKey, items, CacheTtl);
+            cache.Set(cacheKey, items, items.Count > 0 ? CacheTtl : EmptyCacheTtl);
 
             return Results.Json(new { items = items.Select(PsaTorrentJson).ToList() }, jsonSerializerOptions);
         });

@@ -19,11 +19,10 @@ export function loadPlayerVolume(): number {
 export const EPISODE_SUB_PICK_STORAGE_KEY = "pitflix.player.episodeSubtitlePick.v1";
 export const MAX_EPISODE_SUB_PICKS = 200;
 
-/** Kill switch for the intro/outro skip button — fingerprint-sourced segments have shown
- *  wrong skip windows even at confidence >= 0.75 (energy-envelope correlation getting fooled
- *  by similar speech rhythm across unrelated scenes, not just low-confidence heuristic
- *  guesses). Fetch/derivation logic stays active (cheap, useful for diagnosis); only the UI is
- *  suppressed. Flip back to false once fingerprinting is more discriminating. */
+/** Emergency-only kill switch for the intro/outro skip button — normally the source
+ *  whitelist in PlayerPage.tsx's `activeSkipSegment` (chapter/anilist only) is what keeps
+ *  unreliable fingerprint/blackframe/silence/heuristic segments off screen. Only flip this to
+ *  true if a bad segment somehow slips past that filter. */
 export const SKIP_OVERLAY_DISABLED = false;
 
 /** Fullscreen auto-hide: idle before fading chrome (ms). Slightly longer while paused. */

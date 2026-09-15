@@ -1,9 +1,21 @@
 import 'package:supabase_flutter/supabase_flutter.dart';
+import 'ratings_service.dart';
+import 'tmdb_service.dart';
+import 'user_library_service.dart';
 
 /// Thin wrapper around Supabase Auth (GoTrue) — matches this codebase's
 /// static-class service pattern (see LocalBackendService/TmdbService).
 abstract class AuthService {
   static GoTrueClient get _auth => Supabase.instance.client.auth;
+
+  /// Wipes every in-memory data cache — must run on any account change so a
+  /// newly signed-in account never reads the previous one's cached lists,
+  /// favorites, watch records, custom artwork or ratings.
+  static void _clearCaches() {
+    UserLibraryService.clearCache();
+    TmdbService.clearCache();
+    RatingsService.clearCache();
+  }
 
   static User? get currentUser => _auth.currentUser;
   static Session? get currentSession => _auth.currentSession;
@@ -15,7 +27,10 @@ abstract class AuthService {
   static Future<AuthResponse> signUp(String email, String password) =>
       _auth.signUp(email: email, password: password);
 
-  static Future<void> signOut() => _auth.signOut();
+  static Future<void> signOut() async {
+    _clearCaches();
+    await _auth.signOut();
+  }
 
   /// Changes the signed-in account's password. Re-authenticates with
   /// [currentPassword] first (Supabase's `updateUser` doesn't itself verify
@@ -41,5 +56,16 @@ abstract class AuthService {
       params: {'p_username': username},
     );
     return result as String?;
+  }
+
+  /// Permanently deletes the signed-in account and everything tied to it
+  /// (profile, friendships, activity, lists, watch records, episode
+  /// progress — see `014_pitflix_delete_own_account.sql`'s notes on what
+  /// cascades and what doesn't). Irreversible. Signs the local session out
+  /// immediately after, since the account no longer exists to hold one.
+  static Future<void> deleteAccount() async {
+    await Supabase.instance.client.rpc('delete_own_account');
+    _clearCaches();
+    await _auth.signOut();
   }
 }

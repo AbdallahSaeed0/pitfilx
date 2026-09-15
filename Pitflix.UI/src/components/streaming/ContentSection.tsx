@@ -1,6 +1,7 @@
 import { useQuery } from "@tanstack/react-query";
 import { getWatchedTmdbIds } from "../../api/history";
 import { getStreamDiscover, type DiscoverCategory } from "../../api/stream";
+import { lookupImdbRating, useImdbRatingsMap } from "../../hooks/useImdbRatingsMap";
 import { HorizontalScrollRow } from "../ui/HorizontalScrollRow";
 import { StreamMediaCard } from "./StreamMediaCard";
 
@@ -31,6 +32,10 @@ export function ContentSection({ title, category }: Props) {
   const watchedMovieSet = new Set(watchedMovieIds ?? EMPTY_IDS);
   const watchedSeriesSet = new Set(watchedSeriesIds ?? EMPTY_IDS);
 
+  const imdbRatingsMap = useImdbRatingsMap(
+    (data ?? []).map((item) => ({ tmdbId: item.id, mediaType: item.mediaType })),
+  );
+
   return (
     <div className="mb-8">
       <h3 className="mb-3 text-xs font-bold uppercase tracking-widest text-white/70">{title}</h3>
@@ -53,6 +58,7 @@ export function ContentSection({ title, category }: Props) {
               isWatched={
                 item.mediaType === "Movie" ? watchedMovieSet.has(item.id) : watchedSeriesSet.has(item.id)
               }
+              imdbRating={lookupImdbRating(imdbRatingsMap, item.id, item.mediaType)}
             />
           ))}
         </HorizontalScrollRow>

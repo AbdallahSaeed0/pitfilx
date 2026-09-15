@@ -8,6 +8,9 @@ export type WsmTorrent = {
   badges: string[];
   magnetLink: string;
   torrentFileUrl: string;
+  directUrl?: string | null;
+  infoHash?: string | null;
+  fileIndex?: number | null;
 };
 
 export type WsmPayload = {
@@ -26,7 +29,7 @@ export const getSeasonWsmTorrents = (tmdbId: number, season: number, imdbId: str
 
 export type WsmDownloadResult = { action: "queued" | "open_magnet" };
 
-export const downloadWsmTorrent = (body: { magnetLink: string; savePath?: string }) =>
+export const downloadWsmTorrent = (body: { magnetLink: string; savePath?: string; fileIndex?: number | null }) =>
   api.post<WsmDownloadResult>("/wsm/download", body).then((r) => r.data);
 
 export const saveTorrentFile = (body: { torrentFileUrl: string; savePath: string; title: string }) =>

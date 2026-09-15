@@ -73,13 +73,20 @@ function StreamCastCrewSection({ cast, crew, navigate }: {
     ] as { key: StreamCastTabKey; label: string; count: number }[]
   ).filter((t) => t.count > 0);
 
+  // TV crew comes from TMDB's aggregate_credits (see StreamEndpoints.cs), which carries a
+  // per-job episode count — show that instead of the bare job label ("Directed 5" rather than
+  // "Director") so multiple directors/writers on a series are distinguishable by how much of it
+  // they actually did. Movies (and any TV crew without a count) just fall back to the job label.
+  const jobLabel = (c: StreamDetailsCrewMember, verb: string): string =>
+    c.episodeCount != null && c.episodeCount > 0 ? `${verb} ${c.episodeCount}` : c.job;
+
   const items: { name: string; role?: string | null; imgSrc?: string | null; id: number; key: string }[] =
     tab === "cast"
       ? cast.map((c) => ({ name: c.name, role: c.character, imgSrc: c.profileUrl, id: c.id, key: `${c.id}-${c.name}` }))
       : tab === "directors"
-      ? directors.map((c) => ({ name: c.name, role: c.job, imgSrc: c.profileUrl, id: c.id, key: `${c.id}-${c.job}` }))
+      ? directors.map((c) => ({ name: c.name, role: jobLabel(c, "Directed"), imgSrc: c.profileUrl, id: c.id, key: `${c.id}-${c.job}` }))
       : tab === "writers"
-      ? writers.map((c) => ({ name: c.name, role: c.job, imgSrc: c.profileUrl, id: c.id, key: `${c.id}-${c.job}` }))
+      ? writers.map((c) => ({ name: c.name, role: jobLabel(c, "Wrote"), imgSrc: c.profileUrl, id: c.id, key: `${c.id}-${c.job}` }))
       : otherCrew.map((c) => ({ name: c.name, role: c.job, imgSrc: c.profileUrl, id: c.id, key: `${c.id}-${c.job}` }));
 
   if (tabs.length === 0) return null;
@@ -188,6 +195,7 @@ export function StreamingDetailsPage() {
   const cast = d?.cast ?? [];
   const crew = d?.crew ?? [];
   const collection = (d as { collection?: { id: number; name: string; posterUrl?: string | null } | null })?.collection ?? null;
+  const companies = d?.companies ?? [];
 
   const imdbLoading = imdbQ.isFetching || (imdbId == null && imdbQ.fetchStatus !== "idle");
 
@@ -487,11 +495,8 @@ export function StreamingDetailsPage() {
       <ParentsGuideSection imdbId={imdbId} />
 
       {/* Seasons */}
-      {seasons.length > 0 && (
-        <div className="mt-8">
-          <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-pitflix-muted">Seasons</h2>
-          <div className="grid grid-cols-3 gap-3 sm:grid-cols-4 md:grid-cols-5 lg:grid-cols-6">
-            {seasons.map((s) => (
+      {seasons.length > 0 && (() => {
+        const tiles = seasons.map((s) => (
               <div
                 key={s.seasonNumber}
                 role="button"
@@ -519,7 +524,7 @@ export function StreamingDetailsPage() {
                   imdbId,
                   seasonNumber: s.seasonNumber,
                 })}
-                className="group relative flex cursor-pointer flex-col overflow-hidden rounded-lg border border-pitflix-card/60 bg-pitflix-surface/60 text-left shadow hover:border-pitflix-primary/50"
+                className="group relative flex w-40 shrink-0 cursor-pointer flex-col overflow-hidden rounded-lg border border-pitflix-card/60 bg-pitflix-surface/60 text-left shadow hover:border-pitflix-primary/50"
               >
                 <button
                   type="button"
@@ -548,10 +553,19 @@ export function StreamingDetailsPage() {
                   </p>
                 </div>
               </div>
-            ))}
+        ));
+
+        return (
+          <div className="mt-8">
+            <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-pitflix-muted">Seasons</h2>
+            {/* Always a single-row slider (never a wrapping grid) — HorizontalDragScroll never
+               wraps to a second line by construction, and its scroll buttons auto-hide when
+               everything already fits in one row. Same w-40 tile width as the library detail
+               page's Seasons row so posters look the same size on both. */}
+            <HorizontalDragScroll className="pb-1">{tiles}</HorizontalDragScroll>
           </div>
-        </div>
-      )}
+        );
+      })()}
 
       <WsmDownloadModal
         isOpen={wsmSeasonDownload != null}
@@ -566,6 +580,36 @@ export function StreamingDetailsPage() {
 
       {/* Cast & Crew */}
       <StreamCastCrewSection cast={cast} crew={crew} navigate={navigate} />
+
+      {/* Studios & Networks */}
+      {companies.length > 0 && (
+        <div className="mt-8">
+          <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-pitflix-muted">
+            {mediaType === "Series" ? "Network & Studio" : "Studio"}
+          </h2>
+          <div className="flex flex-wrap gap-3">
+            {companies.map((c) => (
+              <button
+                key={`${c.kind}-${c.id}`}
+                type="button"
+                onClick={() =>
+                  navigate("/stream-studio", {
+                    state: { studioId: c.id, kind: c.kind, name: c.name, logoUrl: c.logoUrl },
+                  })
+                }
+                title={`See everything on ${c.name}`}
+                className="flex h-14 min-w-[96px] items-center justify-center rounded-lg border border-pitflix-card bg-white/95 px-4 py-2 shadow transition hover:border-pitflix-primary/60 hover:-translate-y-0.5"
+              >
+                {c.logoUrl ? (
+                  <img src={c.logoUrl} alt={c.name} className="max-h-9 max-w-[110px] object-contain" />
+                ) : (
+                  <span className="text-xs font-semibold text-pitflix-bg">{c.name}</span>
+                )}
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
 
       {/* Collection */}
       {collection && mediaType === "Movie" && (
@@ -601,7 +645,7 @@ export function StreamingDetailsPage() {
       {recs.length > 0 && (
         <div className="mt-8">
           <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-pitflix-muted">More like this</h2>
-          <div className="grid grid-cols-4 gap-2.5 sm:grid-cols-8">
+          <HorizontalDragScroll className="pb-1">
             {recs.map((r) => (
               <button
                 key={`${r.mediaType}-${r.id}`}
@@ -617,7 +661,7 @@ export function StreamingDetailsPage() {
                     } satisfies StreamingDetailsLocationState,
                   })
                 }
-                className="group flex flex-col overflow-hidden rounded-lg border border-pitflix-card/60 bg-pitflix-surface/60 text-left shadow"
+                className="group flex w-40 shrink-0 flex-col overflow-hidden rounded-lg border border-pitflix-card/60 bg-pitflix-surface/60 text-left shadow hover:border-pitflix-primary/50"
               >
                 <div className="aspect-[2/3] w-full bg-pitflix-card/40">
                   <MediaImage
@@ -627,13 +671,13 @@ export function StreamingDetailsPage() {
                     fallbackText={r.mediaType === "Movie" ? "Movie" : "TV"}
                   />
                 </div>
-                <div className="p-1.5">
-                  <p className="line-clamp-2 text-[10px] font-semibold leading-snug text-white">{r.title}</p>
-                  {r.year && <p className="mt-0.5 text-[9px] text-pitflix-muted">{r.year}</p>}
+                <div className="p-2">
+                  <p className="line-clamp-2 text-[11px] font-semibold leading-snug text-white">{r.title}</p>
+                  {r.year && <p className="mt-0.5 text-[10px] text-pitflix-muted">{r.year}</p>}
                 </div>
               </button>
             ))}
-          </div>
+          </HorizontalDragScroll>
         </div>
       )}
 
@@ -657,7 +701,7 @@ export function StreamingDetailsPage() {
       )}
       {menu ? (
         <MediaContextMenu
-          label={menu.target.title}
+          target={menu.target}
           x={menu.x}
           y={menu.y}
           showRescan={menu.target.kind !== "streaming"}

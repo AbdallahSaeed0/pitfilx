@@ -1,6 +1,6 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { CirclePlay, RefreshCw, Search, Settings } from "lucide-react";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 import {
   browseTrailers,
@@ -12,6 +12,8 @@ import {
 import { TrailerModal } from "../components/trailers/TrailerModal";
 import { MediaImage } from "../components/ui/MediaImage";
 import { Pagination } from "../components/ui/Pagination";
+import { CardGridSkeleton } from "../components/ui/Skeleton";
+import { BackButton } from "../components/ui/BackButton";
 import { useDebounce } from "../hooks/useDebounce";
 import { cn } from "../utils/cn";
 
@@ -56,25 +58,6 @@ function filterTrailersLocal(
     }
     return true;
   });
-}
-
-function TrailerGridSkeleton({ count = 10 }: { count?: number }) {
-  return (
-    <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5">
-      {Array.from({ length: count }).map((_, i) => (
-        <div
-          key={i}
-          className="overflow-hidden rounded-xl border border-pitflix-card/40 bg-pitflix-surface/30 animate-pulse"
-        >
-          <div className="aspect-video w-full bg-pitflix-card/60" />
-          <div className="space-y-2 p-2">
-            <div className="h-3.5 rounded bg-pitflix-card/50" />
-            <div className="h-2.5 w-2/3 rounded bg-pitflix-card/40" />
-          </div>
-        </div>
-      ))}
-    </div>
-  );
 }
 
 export function TrailersPage() {
@@ -170,6 +153,46 @@ export function TrailersPage() {
     setCurrentPage(1);
   }, [mode, filter, debouncedSearch]);
 
+  // Deep link from a "new trailer" notification: `?clip=<youtubeKey>` plays that clip straight
+  // away instead of dropping the user on the grid to hunt for it. Prefer the real card once the
+  // list has loaded (it carries poster/title); fall back to a minimal card built from the URL so
+  // a clip that isn't in the current feed/tab still plays.
+  const clipKey = searchParams.get("clip");
+  const clipTitle = searchParams.get("title");
+  const handledClipRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (!clipKey) {
+      handledClipRef.current = null;
+      return;
+    }
+    if (handledClipRef.current === clipKey) return;
+    const found = list.find((t) => t.youtubeKey === clipKey);
+    // Still loading and not found yet — wait, the card may be in the incoming page.
+    if (!found && initialLoading) return;
+    handledClipRef.current = clipKey;
+    setActive(
+      found ?? {
+        tmdbId: 0,
+        mediaType: "",
+        title: clipTitle ?? "Trailer",
+        posterUrl: null,
+        youtubeKey: clipKey,
+        trailerTitle: "",
+      },
+    );
+  }, [clipKey, clipTitle, list, initialLoading]);
+
+  const closeTrailer = () => {
+    setActive(null);
+    if (!clipKey && !clipTitle) return;
+    // Drop the deep-link params so the modal doesn't reopen on the next render, and so clicking
+    // the same notification again re-triggers the effect above.
+    const p = new URLSearchParams(searchParams);
+    p.delete("clip");
+    p.delete("title");
+    setSearchParams(p, { replace: true });
+  };
+
   // Paginate results
   const totalPages = Math.ceil(list.length / itemsPerPage);
   const paginatedList = useMemo(() => {
@@ -179,7 +202,8 @@ export function TrailersPage() {
   }, [list, currentPage]);
 
   return (
-    <div className="mx-auto max-w-6xl space-y-5 pb-12">
+    <div className="w-full space-y-5 pb-12">
+      <BackButton className="mb-0" />
       <div className="flex flex-wrap items-center justify-between gap-3">
         <h1 className="flex items-center gap-2 text-xl font-bold text-white md:text-2xl">
           <CirclePlay className="h-7 w-7 shrink-0 text-pitflix-primary md:h-8 md:w-8" />
@@ -259,7 +283,7 @@ export function TrailersPage() {
         ) : null}
       </div>
 
-      {initialLoading ? <TrailerGridSkeleton /> : null}
+      {initialLoading ? <CardGridSkeleton count={20} /> : null}
 
       {error ? (
         <p className="text-sm text-rose-200/90">Could not load trailers. Is the API running?</p>
@@ -331,7 +355,7 @@ export function TrailersPage() {
         </>
       ) : null}
 
-      <TrailerModal open={!!active} onClose={() => setActive(null)} trailer={active} />
+      <TrailerModal open={!!active} onClose={closeTrailer} trailer={active} />
     </div>
   );
 }

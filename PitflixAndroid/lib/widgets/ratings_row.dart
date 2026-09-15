@@ -2,7 +2,10 @@ import 'package:flutter/material.dart';
 import '../theme/app_theme.dart';
 
 /// Multi-platform ratings strip (TMDB / IMDb / Rotten Tomatoes critics &
-/// audience) with brand-coloured logo badges above each score.
+/// audience / Metacritic / Letterboxd) with brand-coloured logo badges above
+/// each score. A source's cell is simply omitted when RatingsService/MDBList
+/// didn't return a value for it (title not tracked by that provider, or
+/// MDBList not configured).
 class RatingsRow extends StatelessWidget {
   final Map<String, dynamic> ratings;
 
@@ -30,6 +33,16 @@ class RatingsRow extends StatelessWidget {
         _RatingEntry(
           source: _RatingSource.rtAudience,
           value: ratings['rtAudience'] as String,
+        ),
+      if (_nonEmpty(ratings['metacritic']))
+        _RatingEntry(
+          source: _RatingSource.metacritic,
+          value: ratings['metacritic'] as String,
+        ),
+      if (_nonEmpty(ratings['letterboxd']))
+        _RatingEntry(
+          source: _RatingSource.letterboxd,
+          value: ratings['letterboxd'] as String,
         ),
     ];
 
@@ -59,7 +72,7 @@ class RatingsRow extends StatelessWidget {
   static bool _nonEmpty(dynamic v) => v is String && v.isNotEmpty;
 }
 
-enum _RatingSource { tmdb, imdb, rtCritics, rtAudience }
+enum _RatingSource { tmdb, imdb, rtCritics, rtAudience, metacritic, letterboxd }
 
 class _RatingEntry {
   final _RatingSource source;
@@ -80,7 +93,12 @@ class _RatingCell extends StatelessWidget {
         _LogoBadge(source: entry.source),
         const SizedBox(height: 6),
         Text(
-          entry.value,
+          // Letterboxd is natively a 0-5 scale, unlike every other source
+          // here (0-10 or a 0-100%) — spelling that out avoids it reading
+          // like a suspiciously low score on the same scale as the rest.
+          entry.source == _RatingSource.letterboxd
+              ? '${entry.value}/5'
+              : entry.value,
           style: AppTextStyles.bebas(fontSize: 20),
         ),
       ],
@@ -100,6 +118,8 @@ class _LogoBadge extends StatelessWidget {
       _RatingSource.imdb => _ImdbLogo(),
       _RatingSource.rtCritics => _RtLogo(audience: false),
       _RatingSource.rtAudience => _RtLogo(audience: true),
+      _RatingSource.metacritic => _MetacriticLogo(),
+      _RatingSource.letterboxd => _LetterboxdLogo(),
     };
   }
 }
@@ -197,4 +217,73 @@ class _RtLogo extends StatelessWidget {
       ),
     );
   }
+}
+
+/// Metacritic — dark pill, score-colored (green/yellow/red like the site's
+/// own Metascore badge).
+class _MetacriticLogo extends StatelessWidget {
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 3),
+      decoration: BoxDecoration(
+        color: const Color(0xFF1A1A1A),
+        borderRadius: BorderRadius.circular(4),
+        border: Border.all(color: Colors.white.withValues(alpha: 0.2)),
+      ),
+      child: const Text(
+        'Metacritic',
+        style: TextStyle(
+          fontFamily: 'DM Sans',
+          fontSize: 8,
+          fontWeight: FontWeight.w800,
+          color: Colors.white,
+          letterSpacing: 0.2,
+          height: 1,
+        ),
+      ),
+    );
+  }
+}
+
+/// Letterboxd — dark pill with its signature orange/green/blue dots.
+class _LetterboxdLogo extends StatelessWidget {
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 3),
+      decoration: BoxDecoration(
+        color: const Color(0xFF14181C),
+        borderRadius: BorderRadius.circular(4),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          _dot(const Color(0xFFFF8000)),
+          const SizedBox(width: 2),
+          _dot(const Color(0xFF00E054)),
+          const SizedBox(width: 2),
+          _dot(const Color(0xFF40BCF4)),
+          const SizedBox(width: 4),
+          const Text(
+            'Letterboxd',
+            style: TextStyle(
+              fontFamily: 'DM Sans',
+              fontSize: 8,
+              fontWeight: FontWeight.w800,
+              color: Colors.white,
+              letterSpacing: 0.1,
+              height: 1,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _dot(Color color) => Container(
+    width: 6,
+    height: 6,
+    decoration: BoxDecoration(color: color, shape: BoxShape.circle),
+  );
 }

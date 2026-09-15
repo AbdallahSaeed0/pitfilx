@@ -711,13 +711,45 @@ public partial class MainWindow : Window
 
             App.Log($"BuildFolderPlaylist: queued {siblings.Count} files; current at idx {currentIdx} — prev/next now visible");
 
+            // Best-effort: if this is a series episode, resolve show/season and
+            // pull full episode metadata (title, IMDb rating, runtime, overview)
+            // so the Playlist popup can render real episode rows instead of raw
+            // filenames.  Any failure here just falls back to filename rows.
+            Dictionary<string, PlayerApiClient.PlaylistEpisodeInfo>? episodeMeta = null;
+            try
+            {
+                var resolved = await PlayerApiClient.ResolveByPathAsync(normCurrent).ConfigureAwait(false);
+                if (resolved is { MediaType: "Series", LibraryShowId: int showId, Season: int seasonNum })
+                {
+                    var episodes = await PlayerApiClient.GetSeasonEpisodesAsync(showId, seasonNum).ConfigureAwait(false);
+                    if (episodes.Count > 0)
+                    {
+                        var map = new Dictionary<string, PlayerApiClient.PlaylistEpisodeInfo>(StringComparer.OrdinalIgnoreCase);
+                        foreach (var ep in episodes)
+                        {
+                            if (string.IsNullOrWhiteSpace(ep.FilePath)) continue;
+                            string norm;
+                            try { norm = Path.GetFullPath(ep.FilePath); }
+                            catch { norm = ep.FilePath; }
+                            map[norm] = ep;
+                        }
+                        episodeMeta = map;
+                        App.Log($"BuildFolderPlaylist: enriched {map.Count} episode row(s) for show {showId} season {seasonNum}");
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                App.Log($"BuildFolderPlaylist: episode metadata enrichment failed (non-fatal): {ex.Message}");
+            }
+
             // Hand the final file list over to ControlsWindow so the Playlist
             // popup (in the ⋮ menu) can render it.  Order matches mpv's
             // playlist after the move, so the index in this list lines up
             // with mpv's playlist-pos for click-to-jump.
             await Dispatcher.InvokeAsync(() =>
             {
-                _controls?.SetPlaylist(siblings, normCurrent);
+                _controls?.SetPlaylist(siblings, normCurrent, episodeMeta);
                 _controls?.SetPlaylistNavVisible(true);
 #if WINDOWS
                 _taskbarPlaylistFiles = siblings;

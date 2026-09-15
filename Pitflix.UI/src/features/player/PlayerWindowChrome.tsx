@@ -1,4 +1,4 @@
-import { List, Pin, Square, Maximize, X } from "lucide-react";
+import { List, Minus, Pin, Square, Maximize, X } from "lucide-react";
 import { cn } from "../../utils/cn";
 
 type Props = {
@@ -7,6 +7,7 @@ type Props = {
   hasPlaylist: boolean;
   playlistOpen: boolean;
   onTogglePlaylist: () => void;
+  onMinimize: () => void;
   isMaximized: boolean;
   onToggleMaximize: () => void;
   isFullscreen: boolean;
@@ -17,13 +18,14 @@ type Props = {
 const chromeBtn =
   "flex h-8 w-8 items-center justify-center rounded-md text-white/80 transition hover:bg-white/15 hover:text-white";
 
-/** Top-right window controls: pin, playlist, maximize, fullscreen, close. */
+/** Top-right window controls: pin, playlist, minimize, maximize, fullscreen, close. */
 export function PlayerWindowChrome({
   alwaysOnTop,
   onToggleAlwaysOnTop,
   hasPlaylist,
   playlistOpen,
   onTogglePlaylist,
+  onMinimize,
   isMaximized,
   onToggleMaximize,
   isFullscreen,
@@ -50,6 +52,14 @@ export function PlayerWindowChrome({
           <List className="h-4 w-4" />
         </button>
       ) : null}
+      <button
+        type="button"
+        title="Minimize"
+        className={chromeBtn}
+        onClick={onMinimize}
+      >
+        <Minus className="h-4 w-4" />
+      </button>
       <button
         type="button"
         title={isMaximized ? "Restore window" : "Maximize (keep taskbar visible)"}

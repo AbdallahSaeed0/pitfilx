@@ -1037,7 +1037,7 @@
             <Border Background="#F0141014"
                     BorderBrush="#7C3AED" BorderThickness="1"
                     CornerRadius="10" Padding="6"
-                    MinWidth="440" MaxWidth="640">
+                    MinWidth="440" MaxWidth="720">
                 <Border.Effect>
                     <DropShadowEffect Color="#7C3AED" BlurRadius="20"
                                       ShadowDepth="0" Opacity="0.45"/>

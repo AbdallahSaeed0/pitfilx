@@ -8,6 +8,18 @@ export type DeviceFsEntry = {
   size_bytes?: number | null;
 };
 
+/** Library episode metadata (title/rating/runtime/synopsis) used to enrich a folder
+ * playlist row when the file resolves to a known series episode. Keyed by
+ * `normalizeMediaPathKey(filePath)` in a lookup map. */
+export type PlaylistEpisodeMeta = {
+  title?: string | null;
+  overview?: string | null;
+  imdbVoteAverage?: number | null;
+  runtimeMinutes?: number | null;
+  stillUrl?: string | null;
+  stillLocalPath?: string | null;
+};
+
 export type Player2Event =
   | {
       type: "State";

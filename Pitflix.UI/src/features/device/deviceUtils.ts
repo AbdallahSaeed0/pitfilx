@@ -3,6 +3,40 @@ export const BROWSE_PATH_KEY = "pitflix.device.browsePath.v1";
 export const GRID_COLS_KEY = "pitflix.device.gridCols.v1";
 export const SIDEBAR_COLLAPSED_KEY = "pitflix.device.sidebarCollapsed.v1";
 
+// Private Mode — a separate, fully-hidden set of folders + browse position. Stored under its own
+// keys so it never mixes with the normal saved-folder list, and "active" lives in sessionStorage
+// (not localStorage) so it doesn't silently persist as on across app restarts.
+export const PRIVATE_FOLDERS_KEY = "pitflix.device.privateFolders.v1";
+export const PRIVATE_BROWSE_PATH_KEY = "pitflix.device.privateBrowsePath.v1";
+export const PRIVATE_MODE_ACTIVE_KEY = "pitflix.device.privateModeActive.v1";
+
+export function readPrivateModeActiveFlag(): boolean {
+  try {
+    return sessionStorage.getItem(PRIVATE_MODE_ACTIVE_KEY) === "1";
+  } catch {
+    return false;
+  }
+}
+
+export function loadPrivateFolders(): string[] {
+  try {
+    const raw = localStorage.getItem(PRIVATE_FOLDERS_KEY);
+    if (!raw) return [];
+    const j = JSON.parse(raw) as unknown;
+    return Array.isArray(j) ? j.filter((x): x is string => typeof x === "string" && x.length > 0) : [];
+  } catch {
+    return [];
+  }
+}
+
+export function savePrivateFolders(paths: string[]) {
+  try {
+    localStorage.setItem(PRIVATE_FOLDERS_KEY, JSON.stringify(paths));
+  } catch {
+    // ignore
+  }
+}
+
 export const GRID_COLS_MIN = 3;
 export const GRID_COLS_MAX = 12;
 
@@ -40,6 +74,9 @@ export type DeviceFsEntry = {
   is_directory: boolean;
   media_kind?: string | null;
   size_bytes?: number | null;
+  /** Milliseconds since epoch — when the file landed on this disk (falls back to last-modified
+   * where the OS/filesystem has no separate creation time). */
+  created_at?: number | null;
 };
 
 export function loadSaved(): string[] {
@@ -119,6 +156,10 @@ export function recordDeviceLastPlayedFromPlayer(
   const fromDevice =
     opts?.suppressContinueWatching === true || opts?.returnToPathname === "/my-device";
   if (!fromDevice) return;
+  // Same universal trigger point as before (return from the player), now also feeding the global
+  // History list — this fires for a video opened from a normal folder, an actress folder, or a
+  // category folder alike, since all three route through the player with these same opts.
+  recordHistory(readPrivateModeActiveFlag(), filePath, "video");
   const folder = parentDirectory(filePath);
   if (!folder) return;
   saveLastPlayed(folder, filePath);
@@ -134,6 +175,138 @@ export function loadLastPlayedFilePaths(folderPath: string): string[] {
   } catch {
     return [];
   }
+}
+
+/** Removes one file from the "Resume where you left off" slider for its folder. */
+export function removeLastPlayed(folderPath: string, filePath: string): void {
+  try {
+    const raw = localStorage.getItem(LAST_PLAYED_KEY);
+    if (!raw) return;
+    const map = JSON.parse(raw) as LastPlayedMap;
+    const folderKey = normalizePathKey(folderPath);
+    const next = toList(map[folderKey]).filter((p) => p !== filePath);
+    if (next.length > 0) map[folderKey] = next;
+    else delete map[folderKey];
+    localStorage.setItem(LAST_PLAYED_KEY, JSON.stringify(map));
+    if (typeof window !== "undefined") {
+      window.dispatchEvent(
+        new CustomEvent("pitflix-device-last-played", { detail: { folderPath: folderKey, filePath } }),
+      );
+    }
+  } catch { /* ignore */ }
+}
+
+// ── My Favorite ──────────────────────────────────────────────────────────────
+// Separate keys per mode (same pattern as SCROLL_MAP_KEY_NORMAL/PRIVATE elsewhere) so a favorite
+// added while browsing privately never surfaces in normal mode or vice versa. Files only (not
+// folders) — an individually favorited video/image, addable from any normal folder, actress folder,
+// or category folder.
+const FAVORITES_KEY_NORMAL = "pitflix.device.favorites.v1";
+const FAVORITES_KEY_PRIVATE = "pitflix.device.privateFavorites.v1";
+
+export type DeviceMediaKind = "video" | "image";
+export type DeviceFavoriteEntry = { path: string; mediaKind: DeviceMediaKind; addedAt: number };
+
+function favoritesKey(privateMode: boolean): string {
+  return privateMode ? FAVORITES_KEY_PRIVATE : FAVORITES_KEY_NORMAL;
+}
+
+export function loadFavorites(privateMode: boolean): DeviceFavoriteEntry[] {
+  try {
+    const raw = localStorage.getItem(favoritesKey(privateMode));
+    if (!raw) return [];
+    const list = JSON.parse(raw) as unknown;
+    if (!Array.isArray(list)) return [];
+    return list.filter(
+      (e): e is DeviceFavoriteEntry =>
+        !!e && typeof e === "object" && typeof (e as DeviceFavoriteEntry).path === "string",
+    );
+  } catch {
+    return [];
+  }
+}
+
+function saveFavorites(privateMode: boolean, list: DeviceFavoriteEntry[]): void {
+  try {
+    localStorage.setItem(favoritesKey(privateMode), JSON.stringify(list));
+  } catch { /* ignore */ }
+}
+
+export function isFavorite(privateMode: boolean, path: string): boolean {
+  return loadFavorites(privateMode).some((e) => e.path === path);
+}
+
+export function addFavorite(privateMode: boolean, path: string, mediaKind: DeviceMediaKind): void {
+  const list = loadFavorites(privateMode).filter((e) => e.path !== path);
+  list.unshift({ path, mediaKind, addedAt: Date.now() });
+  saveFavorites(privateMode, list);
+}
+
+export function removeFavorite(privateMode: boolean, path: string): void {
+  saveFavorites(privateMode, loadFavorites(privateMode).filter((e) => e.path !== path));
+}
+
+/** Adds if not already favorited, removes if it is. Returns the new favorited state. */
+export function toggleFavorite(privateMode: boolean, path: string, mediaKind: DeviceMediaKind): boolean {
+  if (isFavorite(privateMode, path)) {
+    removeFavorite(privateMode, path);
+    return false;
+  }
+  addFavorite(privateMode, path, mediaKind);
+  return true;
+}
+
+// ── History ────────────────────────────────────────────────────────────────
+// One entry per item, bumped to the top and its timestamp refreshed on reopen — not a full
+// chronological log. Separate keys per mode, same reasoning as favorites above. Covers anything
+// opened from a normal folder, an actress folder, or a category folder — recorded from
+// recordDeviceLastPlayedFromPlayer (videos, on return from the player — the same trigger the
+// existing per-folder "last played" feature already uses) and directly at open time for images
+// (there's no equivalent "player session" to wait for).
+const HISTORY_KEY_NORMAL = "pitflix.device.history.v1";
+const HISTORY_KEY_PRIVATE = "pitflix.device.privateHistory.v1";
+const HISTORY_MAX = 300;
+
+export type DeviceHistoryEntry = { path: string; mediaKind: DeviceMediaKind; openedAt: number };
+
+function historyKey(privateMode: boolean): string {
+  return privateMode ? HISTORY_KEY_PRIVATE : HISTORY_KEY_NORMAL;
+}
+
+export function loadHistory(privateMode: boolean): DeviceHistoryEntry[] {
+  try {
+    const raw = localStorage.getItem(historyKey(privateMode));
+    if (!raw) return [];
+    const list = JSON.parse(raw) as unknown;
+    if (!Array.isArray(list)) return [];
+    return list.filter(
+      (e): e is DeviceHistoryEntry =>
+        !!e && typeof e === "object" && typeof (e as DeviceHistoryEntry).path === "string",
+    );
+  } catch {
+    return [];
+  }
+}
+
+function saveHistory(privateMode: boolean, list: DeviceHistoryEntry[]): void {
+  try {
+    localStorage.setItem(historyKey(privateMode), JSON.stringify(list));
+  } catch { /* ignore */ }
+}
+
+export function recordHistory(privateMode: boolean, path: string, mediaKind: DeviceMediaKind): void {
+  if (!path.trim()) return;
+  const list = loadHistory(privateMode).filter((e) => e.path !== path);
+  list.unshift({ path, mediaKind, openedAt: Date.now() });
+  saveHistory(privateMode, list.slice(0, HISTORY_MAX));
+}
+
+export function removeHistoryEntry(privateMode: boolean, path: string): void {
+  saveHistory(privateMode, loadHistory(privateMode).filter((e) => e.path !== path));
+}
+
+export function clearHistory(privateMode: boolean): void {
+  saveHistory(privateMode, []);
 }
 
 export type DeviceEntryDetails = {

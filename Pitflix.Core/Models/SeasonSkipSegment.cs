@@ -17,7 +17,7 @@ public class SeasonSkipSegment
     public double? IntroStartSeconds { get; set; }
     public double? IntroEndSeconds { get; set; }
     public double? IntroConfidence { get; set; }
-    /// <summary>"chapter" | "anilist" | "fingerprint" | "heuristic"</summary>
+    /// <summary>"chapter" | "anilist" | "theintrodb" | "introdb" | "skipdb" | "fingerprint" | "heuristic"</summary>
     public string? IntroSource { get; set; }
 
     /// <summary>For OutroSource == "fingerprint" these are computed from the episode that
@@ -30,7 +30,7 @@ public class SeasonSkipSegment
     public double? OutroStartSeconds { get; set; }
     public double? OutroEndSeconds { get; set; }
     public double? OutroConfidence { get; set; }
-    /// <summary>"chapter" | "anilist" | "fingerprint" | "heuristic"</summary>
+    /// <summary>"chapter" | "anilist" | "theintrodb" | "introdb" | "skipdb" | "fingerprint" | "heuristic"</summary>
     public string? OutroSource { get; set; }
 
     /// <summary>Outro window expressed as seconds-before-file-end instead of an absolute

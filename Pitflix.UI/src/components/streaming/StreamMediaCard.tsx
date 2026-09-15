@@ -11,10 +11,22 @@ type Props = {
   returnSeedQuery?: string;
   returnSeedKind?: "Both" | "Movie" | "Series";
   isWatched?: boolean;
+  /** Real IMDb rating (from the batch-cached ratings lookup), when available — overrides the
+   * TMDB vote_average badge so the card shows the same rating the detail page would. */
+  imdbRating?: number | null;
 };
 
-export function StreamMediaCard({ item, className, returnSeedQuery, returnSeedKind, isWatched }: Props) {
+export function StreamMediaCard({
+  item,
+  className,
+  returnSeedQuery,
+  returnSeedKind,
+  isWatched,
+  imdbRating,
+}: Props) {
   const navigate = useNavigate();
+  const hasImdb = item.ratingSource === "imdb" || (imdbRating != null && imdbRating > 0);
+  const displayRating = item.ratingSource === "imdb" ? item.voteAverage : (imdbRating ?? item.voteAverage);
 
   const goToDetails = (autoPlay = false) => {
     const state: StreamingDetailsLocationState = {
@@ -49,9 +61,16 @@ export function StreamMediaCard({ item, className, returnSeedQuery, returnSeedKi
         </span>
 
         {/* Rating badge */}
-        {item.voteAverage > 0 ? (
-          <span className="absolute right-1.5 top-1.5 rounded bg-black/70 px-1.5 py-0.5 text-[9px] font-semibold text-yellow-400">
-            ★ {item.voteAverage.toFixed(1)}
+        {displayRating > 0 ? (
+          <span className="absolute right-1.5 top-1.5 flex items-center gap-1 rounded bg-black/70 px-1.5 py-0.5 text-[9px] font-semibold text-yellow-400">
+            {hasImdb ? (
+              <span className="rounded-[2px] bg-yellow-400 px-1 text-[8px] font-extrabold text-black">
+                IMDb
+              </span>
+            ) : (
+              "★"
+            )}
+            {displayRating.toFixed(1)}
           </span>
         ) : null}
 

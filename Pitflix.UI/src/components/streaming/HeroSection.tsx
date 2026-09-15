@@ -3,6 +3,7 @@ import { useNavigate } from "react-router-dom";
 import { ChevronLeft, ChevronRight, Info, Play } from "lucide-react";
 import type { StreamDiscoverItem } from "../../api/stream";
 import type { StreamingDetailsLocationState } from "../../pages/StreamingDetailsPage";
+import { lookupImdbRating, useImdbRatingsMap } from "../../hooks/useImdbRatingsMap";
 import { cn } from "../../utils/cn";
 
 type Props = {
@@ -14,6 +15,9 @@ export function HeroSection({ items }: Props) {
   const featured = items.slice(0, 6);
   const [activeIdx, setActiveIdx] = useState(0);
   const [fading, setFading] = useState(false);
+  const imdbRatingsMap = useImdbRatingsMap(
+    featured.map((i) => ({ tmdbId: i.id, mediaType: i.mediaType })),
+  );
 
   const switchTo = (idx: number) => {
     setFading(true);
@@ -38,6 +42,8 @@ export function HeroSection({ items }: Props) {
   if (!featured.length) return null;
 
   const item = featured[activeIdx]!;
+  const heroImdbRating = lookupImdbRating(imdbRatingsMap, item.id, item.mediaType);
+  const heroRating = heroImdbRating ?? item.voteAverage;
 
   const navigate_ = (autoPlay: boolean) => {
     const state: StreamingDetailsLocationState = {
@@ -94,10 +100,16 @@ export function HeroSection({ items }: Props) {
           </h2>
 
           <div className="mb-3 flex items-center gap-3 text-sm text-white/70">
-            {item.voteAverage > 0 ? (
+            {heroRating > 0 ? (
               <span className="flex items-center gap-1">
-                <span className="text-yellow-400">★</span>
-                {item.voteAverage.toFixed(1)}
+                {heroImdbRating != null ? (
+                  <span className="rounded-[2px] bg-yellow-400 px-1 text-[9px] font-extrabold text-black">
+                    IMDb
+                  </span>
+                ) : (
+                  <span className="text-yellow-400">★</span>
+                )}
+                {heroRating.toFixed(1)}
               </span>
             ) : null}
             {item.year ? <span>· {item.year}</span> : null}

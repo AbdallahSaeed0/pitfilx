@@ -7,6 +7,7 @@ import '../theme/app_theme.dart';
 import '../utils/time_ago.dart';
 import '../widgets/friend_avatar.dart';
 import '../widgets/widgets.dart';
+import '../widgets/pitflix_network_image.dart';
 
 /// Detail view for an activity feed entry — real activity card, like
 /// button, and comment thread, all backed by the social schema.
@@ -118,6 +119,7 @@ class _ActivityDetailScreenState extends State<ActivityDetailScreen> {
     SocialActivityAction.watched => 'watched',
     SocialActivityAction.rated => 'rated',
     SocialActivityAction.addedToWatchlist => 'added to Watch Later',
+    SocialActivityAction.addedToFavorites => 'added to Favorites',
   };
 
   @override
@@ -237,7 +239,7 @@ class _ActivityDetailScreenState extends State<ActivityDetailScreen> {
                                 ),
                                 if (TmdbService.posterUrl(item.posterPath) !=
                                     null)
-                                  Image.network(
+                                  PitflixNetworkImage(
                                     TmdbService.posterUrl(item.posterPath)!,
                                     fit: BoxFit.cover,
                                     errorBuilder: (context, err, st) =>

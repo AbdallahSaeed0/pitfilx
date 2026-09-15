@@ -3,12 +3,21 @@ import 'package:flutter/material.dart';
 import '../theme/app_theme.dart';
 
 /// "PITFLIX" wordmark that animates in letter-by-letter (slide up + fade),
-/// per the original design spec. Used on the Splash screen and Login.
+/// per the original design spec. Used on the Splash screen and Login. Pass
+/// [animated] = false to skip the reveal entirely and render the word fully
+/// visible right away (e.g. Splash, which is already brief enough without a
+/// multi-hundred-ms letter-by-letter intro on top).
 class AnimatedWordmark extends StatefulWidget {
   final double fontSize;
   final bool loop;
+  final bool animated;
 
-  const AnimatedWordmark({super.key, this.fontSize = 52, this.loop = false});
+  const AnimatedWordmark({
+    super.key,
+    this.fontSize = 52,
+    this.loop = false,
+    this.animated = true,
+  });
 
   @override
   State<AnimatedWordmark> createState() => _AnimatedWordmarkState();
@@ -18,19 +27,21 @@ class _AnimatedWordmarkState extends State<AnimatedWordmark>
     with SingleTickerProviderStateMixin {
   static const _word = 'PITFLIX';
 
-  late final AnimationController _controller;
+  AnimationController? _controller;
   Timer? _loopTimer;
 
   @override
   void initState() {
     super.initState();
-    _controller = AnimationController(
+    if (!widget.animated) return;
+    final controller = AnimationController(
       vsync: this,
       duration: Duration(milliseconds: 500 + _word.length * 90),
     );
-    _controller.forward();
+    _controller = controller;
+    controller.forward();
     if (widget.loop) {
-      _controller.addStatusListener(_onStatus);
+      controller.addStatusListener(_onStatus);
     }
   }
 
@@ -40,14 +51,14 @@ class _AnimatedWordmarkState extends State<AnimatedWordmark>
     // the animation having stopped (which a lingering static gap would, in
     // Splash's short on-screen window especially).
     _loopTimer = Timer(const Duration(milliseconds: 400), () {
-      if (mounted) _controller.forward(from: 0);
+      if (mounted) _controller?.forward(from: 0);
     });
   }
 
   @override
   void dispose() {
     _loopTimer?.cancel();
-    _controller.dispose();
+    _controller?.dispose();
     super.dispose();
   }
 
@@ -66,11 +77,20 @@ class _AnimatedWordmarkState extends State<AnimatedWordmark>
   }
 
   Widget _buildLetter(int index) {
+    final style = AppTextStyles.bebas(
+      fontSize: widget.fontSize,
+      color: AppColors.logoAccent,
+      letterSpacing: 0.1,
+    );
+    final controller = _controller;
+    if (controller == null) {
+      return Text(_word[index], style: style);
+    }
     final slotCount = _word.length + 2;
     final start = (index / slotCount).clamp(0.0, 1.0);
     final end = ((index + 3) / slotCount).clamp(0.0, 1.0);
     final animation = CurvedAnimation(
-      parent: _controller,
+      parent: controller,
       curve: Interval(start, end, curve: Curves.easeOutCubic),
     );
     return AnimatedBuilder(
@@ -82,14 +102,7 @@ class _AnimatedWordmarkState extends State<AnimatedWordmark>
           child: child,
         ),
       ),
-      child: Text(
-        _word[index],
-        style: AppTextStyles.bebas(
-          fontSize: widget.fontSize,
-          color: AppColors.logoAccent,
-          letterSpacing: 0.1,
-        ),
-      ),
+      child: Text(_word[index], style: style),
     );
   }
 }

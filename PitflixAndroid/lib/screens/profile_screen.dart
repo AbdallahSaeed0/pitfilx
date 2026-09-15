@@ -1,6 +1,5 @@
 import 'dart:typed_data';
 import 'package:flutter/material.dart';
-import 'package:image_picker/image_picker.dart';
 import '../models/social_profile.dart';
 import '../models/title_item.dart';
 import '../services/auth_service.dart';
@@ -12,6 +11,7 @@ import '../services/user_library_service.dart';
 import '../theme/app_theme.dart';
 import '../services/friends_store.dart';
 import '../utils/format_minutes.dart';
+import '../utils/title_actions_sheet.dart';
 import '../utils/watch_later.dart';
 import '../widgets/widgets.dart';
 import 'edit_profile_screen.dart';
@@ -20,6 +20,7 @@ import 'lists_screen.dart';
 import 'settings_screen.dart';
 import 'title_detail_movie_screen.dart';
 import 'title_detail_series_screen.dart';
+import '../widgets/pitflix_network_image.dart';
 
 class ProfileScreen extends StatefulWidget {
   final VoidCallback onOpenStats;
@@ -64,6 +65,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
   Future<void> _loadMyProfile() async {
     try {
       final profile = await SocialService.myProfile();
+      ProfilePhotoStore.avatarUrl.value = profile?.avatarUrl;
       if (!mounted) return;
       setState(() => _myProfile = profile);
     } catch (_) {
@@ -130,58 +132,6 @@ class _ProfileScreenState extends State<ProfileScreen> {
     _loadMyProfile();
   }
 
-  Future<void> _pickCover() async {
-    final source = await showModalBottomSheet<ImageSource>(
-      context: context,
-      backgroundColor: AppColors.bgCard,
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
-      ),
-      builder: (context) => SafeArea(
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            ListTile(
-              leading: const Icon(
-                Icons.photo_camera_outlined,
-                color: AppColors.textPrimary,
-              ),
-              title: Text(
-                'Take Photo',
-                style: AppTextStyles.dmSans(fontSize: 15),
-              ),
-              onTap: () => Navigator.of(context).pop(ImageSource.camera),
-            ),
-            ListTile(
-              leading: const Icon(
-                Icons.photo_library_outlined,
-                color: AppColors.textPrimary,
-              ),
-              title: Text(
-                'Choose from Gallery',
-                style: AppTextStyles.dmSans(fontSize: 15),
-              ),
-              onTap: () => Navigator.of(context).pop(ImageSource.gallery),
-            ),
-          ],
-        ),
-      ),
-    );
-    if (source == null) return;
-    try {
-      final picked = await ImagePicker().pickImage(
-        source: source,
-        maxWidth: 1080,
-        maxHeight: 400,
-      );
-      if (picked == null) return;
-      final bytes = await picked.readAsBytes();
-      CoverPhotoStore.photoBytes.value = bytes;
-    } catch (_) {
-      // Picker dismissed or permission denied — silently ignore.
-    }
-  }
-
   void _openFriends() {
     Navigator.of(
       context,
@@ -204,60 +154,55 @@ class _ProfileScreenState extends State<ProfileScreen> {
           padding: const EdgeInsets.only(bottom: 24),
           children: [
             SizedBox(
-              height: 146,
+              height: 206,
               child: Stack(
                 clipBehavior: Clip.none,
                 children: [
                   ValueListenableBuilder<Uint8List?>(
                     valueListenable: CoverPhotoStore.photoBytes,
-                    builder: (context, coverBytes, _) => GestureDetector(
-                      onTap: _pickCover,
-                      child: SizedBox(
-                        height: 104,
-                        width: double.infinity,
-                        child: Stack(
-                          fit: StackFit.expand,
-                          children: [
-                            if (coverBytes != null)
-                              Image.memory(coverBytes, fit: BoxFit.cover)
-                            else
-                              const DecoratedBox(
-                                decoration: BoxDecoration(
-                                  gradient: LinearGradient(
-                                    begin: Alignment.topLeft,
-                                    end: Alignment.bottomRight,
-                                    colors: [
-                                      AppColors.logoAccentDim,
-                                      Color(0xFF1A0D2E),
-                                    ],
+                    // No tap-to-edit here — cover (like the avatar) is only
+                    // editable via Edit Profile now, not by tapping it
+                    // directly on this screen.
+                    builder: (context, coverBytes, _) => SizedBox(
+                      height: 150,
+                      width: double.infinity,
+                      child: coverBytes != null
+                          ? Image.memory(coverBytes, fit: BoxFit.cover)
+                          : _myProfile?.coverUrl != null
+                          ? PitflixNetworkImage(
+                              _myProfile!.coverUrl!,
+                              fit: BoxFit.cover,
+                              errorBuilder: (context, error, stackTrace) =>
+                                  const DecoratedBox(
+                                    decoration: BoxDecoration(
+                                      gradient: LinearGradient(
+                                        begin: Alignment.topLeft,
+                                        end: Alignment.bottomRight,
+                                        colors: [
+                                          AppColors.logoAccentDim,
+                                          Color(0xFF1A0D2E),
+                                        ],
+                                      ),
+                                    ),
                                   ),
-                                ),
-                              ),
-                            Positioned(
-                              right: 12,
-                              bottom: 10,
-                              child: Container(
-                                width: 30,
-                                height: 30,
-                                decoration: const BoxDecoration(
-                                  color: Color(0xBB000000),
-                                  shape: BoxShape.circle,
-                                ),
-                                child: const Icon(
-                                  Icons.camera_alt_outlined,
-                                  size: 15,
-                                  color: AppColors.textPrimary,
+                            )
+                          : const DecoratedBox(
+                              decoration: BoxDecoration(
+                                gradient: LinearGradient(
+                                  begin: Alignment.topLeft,
+                                  end: Alignment.bottomRight,
+                                  colors: [
+                                    AppColors.logoAccentDim,
+                                    Color(0xFF1A0D2E),
+                                  ],
                                 ),
                               ),
                             ),
-                          ],
-                        ),
-                      ),
                     ),
                   ),
                   Positioned(
                     left: 20,
-                    top: 66,
+                    top: 106,
                     child: ValueListenableBuilder<Uint8List?>(
                       valueListenable: ProfilePhotoStore.photoBytes,
                       builder: (context, bytes, _) => Container(
@@ -267,8 +212,8 @@ class _ProfileScreenState extends State<ProfileScreen> {
                           color: AppColors.bgBase,
                         ),
                         child: Container(
-                          width: 64,
-                          height: 64,
+                          width: 88,
+                          height: 88,
                           clipBehavior: Clip.antiAlias,
                           decoration: const BoxDecoration(
                             color: AppColors.avatarBg,
@@ -279,13 +224,28 @@ class _ProfileScreenState extends State<ProfileScreen> {
                               ? Image.memory(
                                   bytes,
                                   fit: BoxFit.cover,
-                                  width: 64,
-                                  height: 64,
+                                  width: 88,
+                                  height: 88,
+                                )
+                              : _myProfile?.avatarUrl != null
+                              ? PitflixNetworkImage(
+                                  _myProfile!.avatarUrl!,
+                                  fit: BoxFit.cover,
+                                  width: 88,
+                                  height: 88,
+                                  errorBuilder: (context, error, stackTrace) =>
+                                      Text(
+                                        _myInitials,
+                                        style: AppTextStyles.bebas(
+                                          fontSize: 34,
+                                          color: AppColors.accent,
+                                        ),
+                                      ),
                                 )
                               : Text(
                                   _myInitials,
                                   style: AppTextStyles.bebas(
-                                    fontSize: 26,
+                                    fontSize: 34,
                                     color: AppColors.accent,
                                   ),
                                 ),
@@ -537,7 +497,10 @@ class _ProfileScreenState extends State<ProfileScreen> {
           title: t.name,
           gradientSeed: t.gradientSeed,
           imageUrl: TmdbService.posterUrl(t.posterPath),
+          tmdbId: t.tmdbId,
+          kind: t.kind,
           onTap: () => _openTitle(t),
+          onLongPress: () => showTitleActionsSheet(context, t, (_) {}),
         );
       },
     );

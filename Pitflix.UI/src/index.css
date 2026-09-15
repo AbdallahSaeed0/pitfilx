@@ -3,6 +3,22 @@
 @tailwind utilities;
 
 @layer base {
+  :root {
+    /* Tells Chromium/WebView2 to render native form-control chrome (select dropdown
+       popups, date pickers, scrollbars) in the dark UI variant instead of the OS
+       default light one — otherwise an unstyled <select>'s open option list renders
+       as a plain white box regardless of any Tailwind classes on the element itself. */
+    color-scheme: dark;
+  }
+
+  /* color-scheme: dark alone only gets the browser's generic dark UI (a dark gray, not
+     necessarily matching the app). Chromium/WebView2 does honor background-color/color set
+     directly on <option> for its native open-dropdown popup, so force it explicitly here. */
+  select option {
+    background-color: #000000;
+    color: #ffffff;
+  }
+
   body {
     @apply bg-pitflix-bg text-white;
     font-family: "Inter", "Segoe UI", sans-serif;
@@ -46,6 +62,16 @@
   to   { opacity: 1; transform: scale(1)    translateY(0);    }
 }
 
+/* My Device — active drag-drop target pulse (the primary "valid drop target" cue, since the native
+   OS drag cursor badge itself is a small fixed icon that can't be reshaped via CSS). */
+@keyframes deviceDropHoverPulse {
+  0%, 100% { box-shadow: 0 0 0 3px rgba(167,139,250,0.35), 0 0 24px rgba(124,58,237,0.6); }
+  50%      { box-shadow: 0 0 0 5px rgba(167,139,250,0.55), 0 0 32px rgba(124,58,237,0.85); }
+}
+.device-drop-hover-pulse {
+  animation: deviceDropHoverPulse 0.9s ease-in-out infinite;
+}
+
 /* My Device — thumbnail skeleton shimmer */
 @keyframes deviceThumbShimmer {
   0%   { transform: translateX(-100%); }
@@ -70,6 +96,36 @@
     transparent 100%
   );
   animation: deviceThumbShimmer 1.6s ease-in-out infinite;
+}
+
+/* Generic skeleton shimmer — placeholder blocks shaped like the content they stand in for.
+   A sweeping highlight reads as "content is coming" far better than a pulsing dark block, which
+   is easy to mistake for a broken or empty tile. */
+@keyframes pitflixSkeletonShimmer {
+  0%   { transform: translateX(-100%); }
+  100% { transform: translateX(200%);  }
+}
+.pitflix-skeleton {
+  position: relative;
+  overflow: hidden;
+  background: rgba(255, 255, 255, 0.05);
+}
+.pitflix-skeleton::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(
+    90deg,
+    transparent 0%,
+    rgba(255, 255, 255, 0.05) 40%,
+    rgba(139, 92, 246, 0.18) 50%,
+    rgba(255, 255, 255, 0.05) 60%,
+    transparent 100%
+  );
+  animation: pitflixSkeletonShimmer 1.6s ease-in-out infinite;
+}
+@media (prefers-reduced-motion: reduce) {
+  .pitflix-skeleton::after { animation: none; }
 }
 
 /* My Device — card hover effects for video play overlay and move-here hint */

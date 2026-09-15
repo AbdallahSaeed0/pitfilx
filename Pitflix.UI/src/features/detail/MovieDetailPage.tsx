@@ -2,7 +2,7 @@ import { isTauri } from "@tauri-apps/api/core";
 import { ArrowLeft, ArrowRight, Check, FolderOpen, ImageIcon, Play, RefreshCw, RotateCcw, Star, Subtitles } from "lucide-react";
 import { getRatingsAggregate, queueRatingsStaleSweep } from "../../api/ratings";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { getMovie, getMovieVideos, type MediaVideoItem } from "../../api/movies";
 import { getStreamImdbId } from "../../api/stream";
@@ -10,10 +10,14 @@ import { DetailToolbar } from "../../components/DetailToolbar";
 import { ParentsGuideSection } from "../../components/ParentsGuideSection";
 import { SubtitleDrawer } from "../../components/SubtitleDrawer";
 import { useResumeBeforePlay } from "../../hooks/useResumeBeforePlay";
+import { useLongPress } from "../../hooks/useLongPress";
 import { PosterPickerModal } from "../../components/PosterPickerModal";
 import { HorizontalDragScroll } from "../../components/ui/HorizontalDragScroll";
+import { Lightbox } from "../../components/ui/Lightbox";
 import { MediaImage } from "../../components/ui/MediaImage";
-import { Spinner } from "../../components/ui/Spinner";
+import { RewatchPopover } from "../../components/ui/RewatchPopover";
+import { DetailSkeleton } from "../../components/ui/Skeleton";
+import { setMovieRewatchCount } from "../../api/watch";
 import type { MediaCard } from "../../types/media";
 import { formatRating, formatYear } from "../../utils/format";
 import { toPosterSrc } from "../../utils/posterSrc";
@@ -40,10 +44,34 @@ export function MovieDetailPage() {
   const qc = useQueryClient();
   const { requestPlay, ResumePromptModal } = useResumeBeforePlay();
   const [showArtworkPicker, setShowArtworkPicker] = useState(false);
+  const [showPosterLightbox, setShowPosterLightbox] = useState(false);
   const [subtitlesOpen, setSubtitlesOpen] = useState(false);
+  const [showRewatchPopover, setShowRewatchPopover] = useState(false);
+  const watchAgainButtonRef = useRef<HTMLButtonElement>(null);
   const mid = Number(id);
   const [ratingRefreshing, setRatingRefreshing] = useState(false);
   const { menu, closeMenu, handleContextMenu, runAction } = useMediaContextMenu();
+  // Declared before any early return below (rules of hooks) — the callback
+  // guards on `data` internally since `movie`/`durationSeconds` aren't derived
+  // until after the loading check.
+  const watchAgainLongPress = useLongPress(
+    () => setShowRewatchPopover(true),
+    () => {
+      const m = data?.movie as
+        | (MediaCard & { runtime?: number })
+        | undefined;
+      if (!m) return;
+      const duration = (m.runtime ?? 0) > 0 ? (m.runtime as number) * 60 : 0;
+      void requestPlay({
+        filePath: m.mediaFilePath || m.filePath || "",
+        title: m.title,
+        posterPath: m.selectedPosterPath || m.posterLocalPath || null,
+        mediaType: "Movie",
+        durationSeconds: duration,
+        context: { libraryMovieId: m.id },
+      });
+    },
+  );
   const { data, isLoading } = useQuery({
     queryKey: ["movie", mid],
     queryFn: () => getMovie(mid),
@@ -69,9 +97,7 @@ export function MovieDetailPage() {
   if (!Number.isFinite(mid) || mid <= 0) return <p className="text-pitflix-muted">Invalid id</p>;
   if (isLoading || !data) {
     return (
-      <div className="flex justify-center py-24">
-        <Spinner />
-      </div>
+      <DetailSkeleton />
     );
   }
 
@@ -95,10 +121,15 @@ export function MovieDetailPage() {
     watchStatus?: string | null;
   }[];
   const collection = data.collection as { id: number; name: string } | null | undefined;
+  const companies = (data.companies ?? []) as {
+    id: number;
+    name: string;
+    logoUrl: string | null;
+    kind: "network" | "company";
+  }[];
   const contentRating = (data.contentRating ?? null) as string | null;
   const tvdbClearLogoUrl = (data.tvdbClearLogoUrl ?? null) as string | null;
   const extras = (videosQ.data?.videos ?? []) as MediaVideoItem[];
-  const durationSeconds = (movie.runtime ?? 0) > 0 ? (movie.runtime as number) * 60 : 0;
   const backdrop = toPosterSrc(movie.selectedBackdropPath || movie.backdropLocalPath || undefined);
   const poster = toPosterSrc(
     movie.selectedPosterPath || movie.posterLocalPath || movie.posterRemoteUrl || undefined,
@@ -141,12 +172,18 @@ export function MovieDetailPage() {
               watchStatus: movie.watchStatus,
             })}
           >
-            <MediaImage
-              src={poster}
-              alt={movie.title}
-              className={detailHeroPosterClass}
-              fallbackText={movie.title}
-            />
+            <button
+              type="button"
+              className="block cursor-pointer text-left"
+              onClick={() => poster && setShowPosterLightbox(true)}
+            >
+              <MediaImage
+                src={poster}
+                alt={movie.title}
+                className={detailHeroPosterClass}
+                fallbackText={movie.title}
+              />
+            </button>
             <div className="min-w-0 flex-1 pb-1">
               {movie.watchStatus === "Completed" ? (
                 <div className="mb-3">
@@ -202,32 +239,44 @@ export function MovieDetailPage() {
               </p>
               <div className="flex flex-wrap items-center gap-2.5">
                 {(movie.mediaFilePath || movie.filePath) ? (
-                  <button
-                    type="button"
-                    className="flex items-center gap-2.5 rounded-[9px] bg-[#7c3aed] px-[26px] py-[13px] text-sm font-semibold text-white shadow-[0_4px_24px_rgba(124,58,237,0.45)] transition hover:-translate-y-px hover:bg-[#6d28d9]"
-                    onClick={() =>
-                      void requestPlay({
-                        filePath: movie.mediaFilePath || movie.filePath || "",
-                        title: movie.title,
-                        posterPath: movie.selectedPosterPath || movie.posterLocalPath || null,
-                        mediaType: "Movie",
-                        durationSeconds,
-                        context: { libraryMovieId: movie.id },
-                      })
-                    }
-                  >
+                  <>
+                    <button
+                      ref={watchAgainButtonRef}
+                      type="button"
+                      className="flex items-center gap-2.5 rounded-[9px] bg-[#7c3aed] px-[26px] py-[13px] text-sm font-semibold text-white shadow-[0_4px_24px_rgba(124,58,237,0.45)] transition hover:-translate-y-px hover:bg-[#6d28d9]"
+                      title={
+                        movie.watchStatus === "Completed"
+                          ? "Click to watch again — hold to view/adjust rewatch count"
+                          : undefined
+                      }
+                      {...watchAgainLongPress}
+                    >
+                      {movie.watchStatus === "Completed" ? (
+                        <>
+                          <RotateCcw className="h-4 w-4" />
+                          Watch Again
+                        </>
+                      ) : (
+                        <>
+                          <Play className="h-4 w-4 fill-current" />
+                          Play
+                        </>
+                      )}
+                    </button>
                     {movie.watchStatus === "Completed" ? (
-                      <>
-                        <RotateCcw className="h-4 w-4" />
-                        Watch Again
-                      </>
-                    ) : (
-                      <>
-                        <Play className="h-4 w-4 fill-current" />
-                        Play
-                      </>
-                    )}
-                  </button>
+                      <RewatchPopover
+                        open={showRewatchPopover}
+                        onClose={() => setShowRewatchPopover(false)}
+                        anchorRef={watchAgainButtonRef}
+                        count={movie.rewatchCount ?? 0}
+                        onChange={(next) =>
+                          void setMovieRewatchCount(movie.id, next).then(() =>
+                            qc.invalidateQueries({ queryKey: ["movie", mid] }),
+                          )
+                        }
+                      />
+                    ) : null}
+                  </>
                 ) : null}
                 {movie.tmdbId > 0 ? (
                   <TrailerButton tmdbId={movie.tmdbId} mediaType="Movie" title={movie.title} posterUrl={poster} />
@@ -331,6 +380,10 @@ export function MovieDetailPage() {
         />
       ) : null}
 
+      {showPosterLightbox && poster ? (
+        <Lightbox url={poster} onClose={() => setShowPosterLightbox(false)} />
+      ) : null}
+
       <SubtitleDrawer
         open={subtitlesOpen}
         onClose={() => setSubtitlesOpen(false)}
@@ -414,13 +467,41 @@ export function MovieDetailPage() {
         </section>
       )}
 
+      {/* Studio */}
+      {companies.length > 0 && (
+        <section className="mt-8">
+          <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-pitflix-muted">Studio</h2>
+          <div className="flex flex-wrap gap-3">
+            {companies.map((c) => (
+              <button
+                key={`${c.kind}-${c.id}`}
+                type="button"
+                onClick={() =>
+                  navigate("/stream-studio", {
+                    state: { studioId: c.id, kind: c.kind, name: c.name, logoUrl: c.logoUrl },
+                  })
+                }
+                title={`See everything on ${c.name}`}
+                className="flex h-14 min-w-[96px] items-center justify-center rounded-lg border border-pitflix-card bg-white/95 px-4 py-2 shadow transition hover:border-pitflix-primary/60 hover:-translate-y-0.5"
+              >
+                {c.logoUrl ? (
+                  <img src={c.logoUrl} alt={c.name} className="max-h-9 max-w-[110px] object-contain" />
+                ) : (
+                  <span className="text-xs font-semibold text-pitflix-bg">{c.name}</span>
+                )}
+              </button>
+            ))}
+          </div>
+        </section>
+      )}
+
       <VideoExtrasSection videos={extras} />
+
       {menu ? (
         <MediaContextMenu
-          label={menu.target.title}
+          target={menu.target}
           x={menu.x}
           y={menu.y}
-          watchStatus={"watchStatus" in menu.target ? menu.target.watchStatus : undefined}
           showRescan={menu.target.kind !== "streaming"}
           onAction={(action) => void runAction(action)}
           onClose={closeMenu}

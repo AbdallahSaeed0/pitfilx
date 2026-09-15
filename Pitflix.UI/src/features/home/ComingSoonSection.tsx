@@ -14,6 +14,8 @@ import { Spinner } from "../../components/ui/Spinner";
 import { formatRating } from "../../utils/format";
 
 const DISMISSED_KEY = "coming-soon-dismissed";
+/** Must match Pitflix.API's HomeEndpoints.cs `comingSoonWindowDays`. */
+const COMING_SOON_WINDOW_DAYS = 90;
 
 function useDismissed() {
   const [dismissed, setDismissed] = useState<Set<string>>(() => {
@@ -207,11 +209,16 @@ export function ComingSoonSection({ embedded = false }: ComingSoonProps) {
     return m;
   }, [pinnedQ.data]);
 
-  /** Filter helper: only items releasing today → +30 days, sorted by date then title, excluding dismissed. */
+  /** Filter helper: only items releasing today → +COMING_SOON_WINDOW_DAYS, sorted by date then
+   * title, excluding dismissed. Must match the backend's own window (HomeEndpoints.cs
+   * comingSoonWindowDays) — this used to be a separate hardcoded 30 days here, silently
+   * discarding most of what the backend already widened to 90, which also made dismissing an
+   * item look like it emptied the section (nothing left in the narrow client-side window to
+   * backfill with). */
   function filterAndSort(list: ComingSoonItem[]) {
     const today = todayMidnight();
     const cutoff = new Date(today);
-    cutoff.setDate(cutoff.getDate() + 30);
+    cutoff.setDate(cutoff.getDate() + COMING_SOON_WINDOW_DAYS);
 
     return [...list]
       .filter((item) => {
@@ -270,7 +277,7 @@ export function ComingSoonSection({ embedded = false }: ComingSoonProps) {
             : "rounded-2xl border border-dashed border-pitflix-card/50 bg-pitflix-bg/40 p-6 text-sm text-pitflix-subtle"
         }
       >
-        Nothing releasing in the next 30 days.
+        Nothing releasing in the next {COMING_SOON_WINDOW_DAYS} days.
       </div>
     );
   }
@@ -281,7 +288,7 @@ export function ComingSoonSection({ embedded = false }: ComingSoonProps) {
         <div className="mb-4 flex items-center gap-2">
           <CalendarClock className="h-5 w-5 text-pitflix-primary" />
           <h2 className="text-lg font-bold text-white">Coming soon</h2>
-          <span className="text-xs text-pitflix-subtle">Next 30 days</span>
+          <span className="text-xs text-pitflix-subtle">Next {COMING_SOON_WINDOW_DAYS} days</span>
         </div>
       )}
       <div className="space-y-4">

@@ -18,8 +18,10 @@ import { useLibraryPosterCards } from "../features/library/useLibraryPosterCards
 import { PosterCard } from "../components/ui/PosterCard";
 import { LibraryListRow } from "../components/ui/LibraryListRow";
 import { Pagination } from "../components/ui/Pagination";
+import { BackButton } from "../components/ui/BackButton";
 import { LibraryGridSkeleton } from "../components/ui/LibraryGridSkeleton";
 import { LibraryPosterGrid } from "../components/ui/LibraryPosterGrid";
+import { LibraryFilterSelect } from "../components/ui/LibraryFilterSelect";
 import { LibrarySearchField } from "../components/ui/LibrarySearchField";
 import { ScrollReveal } from "../components/ui/ScrollReveal";
 import type { MediaCard } from "../types/media";
@@ -68,8 +70,17 @@ export function SeriesPage() {
   const lang = (searchParams.get("lang") === "ar" ? "ar" : "en") as "en" | "ar";
   const setLang = (v: "en" | "ar") => updateFilterParam("lang", v, "en");
   const search = searchParams.get("q") ?? "";
-  const setSearch = (v: string) => updateFilterParam("q", v, "");
-  const searchQ = useDebounce(search, 350);
+  // Typed into freely via local state — writing "q" to the URL on every keystroke changes
+  // location.search each time, which re-keys PageTransition's route-fade AnimatePresence and
+  // remounts the whole page mid-type (killing focus). Only the debounced value is written back.
+  const [searchInput, setSearchInput] = useState(search);
+  useEffect(() => {
+    setSearchInput(search);
+  }, [search]);
+  const searchQ = useDebounce(searchInput, 350);
+  useEffect(() => {
+    if (searchQ !== search) updateFilterParam("q", searchQ, "");
+  }, [searchQ, search, updateFilterParam]);
   const sort = searchParams.get("sort") ?? "title";
   const setSort = (v: string) => updateFilterParam("sort", v, "title");
   const genre = searchParams.get("genre") ?? "";
@@ -267,6 +278,7 @@ export function SeriesPage() {
 
   return (
     <div>
+      <BackButton />
       {bulkError ? (
         <div
           role="alert"
@@ -397,44 +409,32 @@ export function SeriesPage() {
 
       <div className="mb-6 flex flex-wrap gap-3">
         <LibrarySearchField
-          value={search}
-          onChange={(v) => setSearch(v)}
+          value={searchInput}
+          onChange={setSearchInput}
           placeholder="Search series…"
         />
-        <select
-          value={sort}
-          onChange={(e) => setSort(e.target.value)}
-          className="min-w-32 cursor-pointer rounded-xl border border-pitflix-card bg-pitflix-card px-4 py-2.5 text-sm text-white focus:border-pitflix-primary focus:outline-none"
-        >
+        <LibraryFilterSelect value={sort} onChange={setSort} className="min-w-32">
           <option value="title">Sort: A-Z</option>
           <option value="year">Sort: Year</option>
           <option value="rating">Sort: Rating</option>
           <option value="dateAdded">Sort: Added</option>
           <option value="imdbDesc">IMDb: High to Low</option>
           <option value="imdbAsc">IMDb: Low to High</option>
-        </select>
-        <select
-          value={genre}
-          onChange={(e) => setGenre(e.target.value)}
-          className="min-w-32 cursor-pointer rounded-xl border border-pitflix-card bg-pitflix-card px-4 py-2.5 text-sm text-white focus:border-pitflix-primary focus:outline-none"
-        >
+        </LibraryFilterSelect>
+        <LibraryFilterSelect value={genre} onChange={setGenre} className="min-w-32">
           <option value="">All Genres</option>
           {COMMON_GENRES.map((g) => (
             <option key={g} value={g}>
               {g}
             </option>
           ))}
-        </select>
-        <select
-          value={watch}
-          onChange={(e) => setWatch(e.target.value)}
-          className="min-w-36 cursor-pointer rounded-xl border border-pitflix-card bg-pitflix-card px-4 py-2.5 text-sm text-white focus:border-pitflix-primary focus:outline-none"
-        >
+        </LibraryFilterSelect>
+        <LibraryFilterSelect value={watch} onChange={setWatch} className="min-w-36">
           <option value="all">All</option>
           <option value="unwatched">Unwatched</option>
           <option value="watching">Watching</option>
           <option value="completed">Completed</option>
-        </select>
+        </LibraryFilterSelect>
       </div>
 
       {isPending && !isPlaceholderData ? (
@@ -455,7 +455,7 @@ export function SeriesPage() {
         </div>
       ) : (
         <>
-          <ScrollReveal>
+          <ScrollReveal className={cn("transition-opacity duration-150", isPlaceholderData && "opacity-50")}>
             {viewMode === "grid" ? (
               <LibraryPosterGrid>
                 {pageItems.map((s) => {
@@ -497,7 +497,10 @@ export function SeriesPage() {
           </ScrollReveal>
           <ScrollReveal className="mt-8">
             <Pagination
-              currentPage={data?.currentPage ?? page}
+              // See the matching comment in MoviesPage.tsx — `page` (URL state) is what was
+              // actually clicked; data.currentPage lags behind it while placeholderData keeps
+              // the previous page's response visible during the refetch.
+              currentPage={page}
               totalPages={data?.totalPages ?? 1}
               totalItems={data?.total ?? 0}
               pageSize={pageSize}

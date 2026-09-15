@@ -2,7 +2,7 @@ import { useNavigate, Link } from "react-router-dom";
 import { Check, ChevronRight, Play, X } from "lucide-react";
 import { MediaImage } from "../../../components/ui/MediaImage";
 import { HorizontalScrollRow } from "../../../components/ui/HorizontalScrollRow";
-import { toPosterSrc } from "../../../utils/posterSrc";
+import { POSTER_WIDTHS, toPosterSrc } from "../../../utils/posterSrc";
 import { trustedResumeHeadFromRow } from "../../../utils/trustedResume";
 import { continueLabel, continueWatchingHeadline, episodeInfoLine } from "../ContinueWatchingHero";
 import { upNextEpisodeBadge, upNextProgressPercent } from "./shared";
@@ -21,8 +21,8 @@ export function Direction1b({
 }: DirectionProps) {
   const navigate = useNavigate();
 
-  const backdropSrc = toPosterSrc(featured.backdropLocalPath ?? undefined);
-  const posterSrc = toPosterSrc(featured.posterLocalPath ?? featured.posterRemoteUrl ?? undefined);
+  const backdropSrc = toPosterSrc(featured.backdropLocalPath ?? undefined, POSTER_WIDTHS.hero);
+  const posterSrc = toPosterSrc(featured.posterLocalPath ?? featured.posterRemoteUrl ?? undefined, POSTER_WIDTHS.detail);
 
   const dur = featured.fileDurationSeconds ?? 0;
   const head = trustedResumeHeadFromRow(featured);
@@ -144,7 +144,7 @@ export function Direction1b({
           <HorizontalScrollRow hideHeader className="mb-0" contentClassName="gap-2.5">
             <>
               {upNext.map((card) => {
-                const poster = toPosterSrc(card.posterUrl ?? undefined);
+                const poster = toPosterSrc(card.posterUrl ?? undefined, POSTER_WIDTHS.thumb);
                 const pct = upNextProgressPercent(card);
                 return (
                   <div key={card.libraryShowId} className="group relative w-[138px] shrink-0">

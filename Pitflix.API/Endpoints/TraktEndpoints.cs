@@ -41,6 +41,7 @@ public static class TraktEndpoints
                         var bgRepo = scope.ServiceProvider.GetRequiredService<LibraryRepository>();
                         var bgSync = scope.ServiceProvider.GetRequiredService<TraktSyncService>();
                         await bgSync.ImportAllAsync(bgRepo, CancellationToken.None).ConfigureAwait(false);
+                        await bgRepo.MarkTraktSyncedAsync(CancellationToken.None).ConfigureAwait(false);
                     }
                     catch { /* best-effort */ }
                 });
@@ -75,6 +76,7 @@ public static class TraktEndpoints
                 autoSyncEnabled = settings.AutoSyncEnabled,
                 username,
                 appConfigured = auth.IsAppConfigured,
+                lastSyncedAt = settings.LastSyncedAtUtc,
             }, jsonSerializerOptions);
         });
 
@@ -106,6 +108,7 @@ public static class TraktEndpoints
                             var bgRepo = scope.ServiceProvider.GetRequiredService<LibraryRepository>();
                             var bgSync = scope.ServiceProvider.GetRequiredService<TraktSyncService>();
                             await bgSync.ImportAllAsync(bgRepo, CancellationToken.None).ConfigureAwait(false);
+                            await bgRepo.MarkTraktSyncedAsync(CancellationToken.None).ConfigureAwait(false);
                         }
                         catch { /* best-effort */ }
                     });
@@ -125,6 +128,7 @@ public static class TraktEndpoints
 
             var (matched, unmatched, playbackApplied, playbackSkipped) =
                 await sync.ImportAllAsync(repo, ct).ConfigureAwait(false);
+            await repo.MarkTraktSyncedAsync(ct).ConfigureAwait(false);
             return Results.Json(new
             {
                 success = true,

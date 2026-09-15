@@ -113,6 +113,7 @@ export type SubSourceSearchParams = {
   title?: string;
   mediaType?: string;
   season?: number;
+  episode?: number;
 };
 
 export const searchSubSource = (p: SubSourceSearchParams) =>
@@ -123,6 +124,7 @@ export const searchSubSource = (p: SubSourceSearchParams) =>
         title: p.title,
         mediaType: p.mediaType,
         season: p.season,
+        episode: p.episode,
       },
     })
     .then((r) => r.data);

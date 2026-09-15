@@ -1785,6 +1785,66 @@ public sealed class LibraryRepository
             .ConfigureAwait(false);
     }
 
+    /// <summary>
+    /// Composite indexes covering the catalog list queries' filter + sort in one shot. The single-column
+    /// IsMatched/IsArabic indexes from <see cref="LibraryContext.OnModelCreating"/> narrow the rows but
+    /// leave SQLite building a temp B-tree for every ORDER BY (confirmed via EXPLAIN QUERY PLAN), so each
+    /// page of /api/movies and /api/series re-sorts the matched set from scratch. Cheap at a few hundred
+    /// titles; the cost grows with the library, which is exactly when it stops being acceptable.
+    ///
+    /// EnsureCreated() only creates missing tables, never new indexes on existing ones, so these have to
+    /// be applied by hand like the ALTER TABLE migrations around them.
+    /// </summary>
+    public async Task EnsureCatalogSortIndexesAsync(CancellationToken cancellationToken = default)
+    {
+        var statements = new[]
+        {
+            "CREATE INDEX IF NOT EXISTS IX_Movies_IsMatched_IsArabic_Title ON Movies (IsMatched, IsArabic, Title)",
+            "CREATE INDEX IF NOT EXISTS IX_Movies_IsMatched_IsArabic_DateAdded ON Movies (IsMatched, IsArabic, DateAdded)",
+            "CREATE INDEX IF NOT EXISTS IX_Movies_IsMatched_IsArabic_Year ON Movies (IsMatched, IsArabic, Year)",
+            "CREATE INDEX IF NOT EXISTS IX_Movies_IsMatched_IsArabic_VoteAverage ON Movies (IsMatched, IsArabic, VoteAverage)",
+            "CREATE INDEX IF NOT EXISTS IX_Shows_IsMatched_IsArabic_Title ON Shows (IsMatched, IsArabic, Title)",
+            "CREATE INDEX IF NOT EXISTS IX_Shows_IsMatched_IsArabic_DateAdded ON Shows (IsMatched, IsArabic, DateAdded)",
+            "CREATE INDEX IF NOT EXISTS IX_Shows_IsMatched_IsArabic_Year ON Shows (IsMatched, IsArabic, Year)",
+            "CREATE INDEX IF NOT EXISTS IX_Shows_IsMatched_IsArabic_VoteAverage ON Shows (IsMatched, IsArabic, VoteAverage)",
+            // /api/home/next-episodes scans matched shows ordered by DateAdded, filtering on
+            // WatchStatus <> 'Unwatched'. DateAdded has to come before WatchStatus here: an inequality
+            // can't be satisfied from the index, so putting WatchStatus second would leave SQLite
+            // sorting into a temp B-tree again (verified with EXPLAIN QUERY PLAN both ways).
+            "CREATE INDEX IF NOT EXISTS IX_Shows_IsMatched_DateAdded_WatchStatus ON Shows (IsMatched, DateAdded, WatchStatus)",
+        };
+
+        foreach (var sql in statements)
+        {
+            try
+            {
+                await _db.Database.ExecuteSqlRawAsync(sql, cancellationToken).ConfigureAwait(false);
+            }
+            catch
+            {
+                // A missing column on an older schema (or a locked DB) must not block startup — the
+                // queries still work, just without the covering index.
+            }
+        }
+    }
+
+    public async Task EnsureRewatchCountColumnAsync(CancellationToken cancellationToken = default)
+    {
+        async Task AddIfMissingAsync(string table, string column, string sql)
+        {
+            if (await SqliteColumnExistsAsync(table, column, cancellationToken).ConfigureAwait(false))
+                return;
+            await _db.Database.ExecuteSqlRawAsync(sql, cancellationToken).ConfigureAwait(false);
+        }
+
+        await AddIfMissingAsync("Movies", "RewatchCount",
+                "ALTER TABLE Movies ADD COLUMN RewatchCount INTEGER NOT NULL DEFAULT 0")
+            .ConfigureAwait(false);
+        await AddIfMissingAsync("Episodes", "RewatchCount",
+                "ALTER TABLE Episodes ADD COLUMN RewatchCount INTEGER NOT NULL DEFAULT 0")
+            .ConfigureAwait(false);
+    }
+
     public async Task EnsureContentRatingColumnAsync(CancellationToken cancellationToken = default)
     {
         async Task AddIfMissingAsync(string table, string column, string sql)
@@ -2149,6 +2209,92 @@ public sealed class LibraryRepository
         CancellationToken cancellationToken = default) =>
         UpdateBackdropAsync(id, mediaType, path, cancellationToken);
 
+    /// <summary>
+    /// Caches a TMDB-resolved poster URL (and, if repaired, title) back onto the matching local
+    /// Movie/Show row, so future requests for the same title don't need to hit TMDB again — see
+    /// MediaCardPosterEnricher, which previously recomputed this on every single request forever
+    /// since nothing persisted it. Best-effort: a missing row (id &lt;= 0, or since deleted) is
+    /// silently skipped rather than throwing, since this is a cache warm, not a required write.
+    /// </summary>
+    public async Task PersistEnrichedMediaCardsAsync(
+        IReadOnlyList<(int Id, string MediaType, string? PosterRemoteUrl, string? Title)> updates,
+        CancellationToken cancellationToken = default)
+    {
+        foreach (var u in updates)
+        {
+            if (u.Id <= 0)
+                continue;
+
+            if (string.Equals(u.MediaType, "Series", StringComparison.OrdinalIgnoreCase))
+            {
+                var s = await _db.Shows.FirstOrDefaultAsync(x => x.Id == u.Id, cancellationToken)
+                    .ConfigureAwait(false);
+                if (s == null)
+                    continue;
+                s.PosterRemoteUrl = u.PosterRemoteUrl;
+                if (!string.IsNullOrWhiteSpace(u.Title))
+                    s.Title = u.Title;
+            }
+            else
+            {
+                var m = await _db.Movies.FirstOrDefaultAsync(x => x.Id == u.Id, cancellationToken)
+                    .ConfigureAwait(false);
+                if (m == null)
+                    continue;
+                m.PosterRemoteUrl = u.PosterRemoteUrl;
+                if (!string.IsNullOrWhiteSpace(u.Title))
+                    m.Title = u.Title;
+            }
+        }
+
+        await _db.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// Matched, non-dropped shows whose next-airing cache is missing or older than
+    /// <paramref name="staleBefore"/> — the candidate pool for NextAiringRefreshHostedService,
+    /// oldest/never-fetched first so a huge library catches up gradually across cycles instead of
+    /// one giant burst.
+    /// </summary>
+    public async Task<List<(int Id, int TmdbId)>> GetShowsForNextAiringRefreshAsync(
+        int batchSize, DateTime staleBefore, CancellationToken cancellationToken = default)
+    {
+        var raw = await _db.Shows.AsNoTracking()
+            .Where(s => s.IsMatched && s.TmdbId > 0 && !s.IsDropped &&
+                        (s.NextAiringFetchedAtUtc == null || s.NextAiringFetchedAtUtc < staleBefore))
+            .OrderBy(s => s.NextAiringFetchedAtUtc == null ? 0 : 1)
+            .ThenBy(s => s.NextAiringFetchedAtUtc)
+            .Take(batchSize)
+            .Select(s => new { s.Id, s.TmdbId })
+            .ToListAsync(cancellationToken)
+            .ConfigureAwait(false);
+        return raw.ConvertAll(s => (s.Id, s.TmdbId));
+    }
+
+    /// <summary>Persists a batch of next-airing lookups (see <see cref="GetShowsForNextAiringRefreshAsync"/>)
+    /// — always stamps <see cref="Models.Show.NextAiringFetchedAtUtc"/>, even for a show with no
+    /// upcoming episode found, so it isn't re-queried every cycle.</summary>
+    public async Task SaveNextAiringResultsAsync(
+        IReadOnlyList<(int ShowId, string? Name, int? Season, int? Number, string? AirDate)> results,
+        CancellationToken cancellationToken = default)
+    {
+        var now = DateTime.UtcNow;
+        foreach (var r in results)
+        {
+            var s = await _db.Shows.FirstOrDefaultAsync(x => x.Id == r.ShowId, cancellationToken)
+                .ConfigureAwait(false);
+            if (s == null)
+                continue;
+            s.NextEpisodeName = r.Name;
+            s.NextEpisodeSeason = r.Season;
+            s.NextEpisodeNumber = r.Number;
+            s.NextEpisodeAirDate = r.AirDate;
+            s.NextAiringFetchedAtUtc = now;
+        }
+
+        await _db.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
+    }
+
     public async Task UpdateMovieWatchStatusAsync(int movieId, string watchStatus,
         CancellationToken cancellationToken = default, bool fromPlayback = false)
     {
@@ -2159,9 +2305,15 @@ public sealed class LibraryRepository
         if (m == null)
             return;
 
+        var wasAlreadyCompleted = m.WatchStatus == WatchStatuses.Completed;
         m.WatchStatus = watchStatus;
         m.CompletedAt = watchStatus == WatchStatuses.Completed ? DateTime.UtcNow : null;
         m.CompletedFromPlayback = watchStatus == WatchStatuses.Completed && fromPlayback;
+        // Only a genuine auto-detected replay (playback ran to completion again on something
+        // already fully watched) counts as a rewatch — first-time completion and manual re-marks
+        // via the context menu (fromPlayback: false) don't bump this.
+        if (watchStatus == WatchStatuses.Completed && fromPlayback && wasAlreadyCompleted)
+            m.RewatchCount++;
         await _db.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
 
         // When a movie is marked Completed, clear it from Continue Watching in history too.
@@ -2225,19 +2377,80 @@ public sealed class LibraryRepository
         if (ep == null)
             return;
 
+        var wasAlreadyCompleted = ep.WatchStatus == WatchStatuses.Completed;
         ep.WatchStatus = watchStatus;
         ep.CompletedAt = watchStatus == WatchStatuses.Completed ? DateTime.UtcNow : null;
         ep.CompletedFromPlayback = watchStatus == WatchStatuses.Completed && fromPlayback;
+        // Only a genuine auto-detected replay (playback ran to completion again on something
+        // already fully watched) counts as a rewatch — first-time completion and manual re-marks
+        // via the context menu (fromPlayback: false) don't bump this.
+        if (watchStatus == WatchStatuses.Completed && fromPlayback && wasAlreadyCompleted)
+            ep.RewatchCount++;
         await _db.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
 
         // When an episode is marked Completed, clear it from Continue Watching in history too.
         if (watchStatus == WatchStatuses.Completed)
             await MarkHistoryRowsCompletedByFilePathAsync(ep.FilePath, cancellationToken).ConfigureAwait(false);
 
-        await SyncShowWatchStatusFromEpisodesAsync(ep.ShowId, cancellationToken).ConfigureAwait(false);
+        await SyncShowWatchStatusFromEpisodesAsync(ep.ShowId, cancellationToken, fromPlayback).ConfigureAwait(false);
     }
 
-    private async Task SyncShowWatchStatusFromEpisodesAsync(int showId, CancellationToken cancellationToken)
+    /// <summary>Manual correction for a movie's rewatch count (e.g. fixing a miscount) — bypasses the
+    /// auto-increment rule in <see cref="UpdateMovieWatchStatusAsync"/> entirely.</summary>
+    public async Task SetMovieRewatchCountAsync(int movieId, int count, CancellationToken cancellationToken = default)
+    {
+        var m = await _db.Movies.FirstOrDefaultAsync(x => x.Id == movieId, cancellationToken).ConfigureAwait(false);
+        if (m == null)
+            return;
+        m.RewatchCount = Math.Max(0, count);
+        await _db.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
+    }
+
+    /// <summary>Manual correction for an episode's rewatch count (e.g. fixing a miscount) — bypasses the
+    /// auto-increment rule in <see cref="UpdateEpisodeWatchStatusAsync"/> entirely.</summary>
+    public async Task SetEpisodeRewatchCountAsync(int episodeId, int count, CancellationToken cancellationToken = default)
+    {
+        var ep = await _db.Episodes.FirstOrDefaultAsync(e => e.Id == episodeId, cancellationToken)
+            .ConfigureAwait(false);
+        if (ep == null)
+            return;
+        ep.RewatchCount = Math.Max(0, count);
+        await _db.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
+    }
+
+    /// <summary>Raises a movie's local rewatch count up to <paramref name="atLeast"/> if it's currently
+    /// lower — used by MobileAccountSyncService to pull a mobile-side increment back into desktop's
+    /// SQLite without disturbing a higher local value. No-op if no movie matches this TMDB id.</summary>
+    public async Task RaiseMovieRewatchCountByTmdbIdAsync(int tmdbId, int atLeast, CancellationToken cancellationToken = default)
+    {
+        var m = await _db.Movies.FirstOrDefaultAsync(x => x.TmdbId == tmdbId, cancellationToken).ConfigureAwait(false);
+        if (m == null || m.RewatchCount >= atLeast)
+            return;
+        m.RewatchCount = atLeast;
+        await _db.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
+    }
+
+    /// <summary>Raises an episode's local rewatch count up to <paramref name="atLeast"/> if it's currently
+    /// lower — used by MobileAccountSyncService to pull a mobile-side increment back into desktop's
+    /// SQLite without disturbing a higher local value. No-op if no show/episode matches.</summary>
+    public async Task RaiseEpisodeRewatchCountByShowTmdbIdAsync(int showTmdbId, int season, int episode,
+        int atLeast, CancellationToken cancellationToken = default)
+    {
+        var show = await _db.Shows.FirstOrDefaultAsync(s => s.TmdbId == showTmdbId, cancellationToken)
+            .ConfigureAwait(false);
+        if (show == null)
+            return;
+        var ep = await _db.Episodes.FirstOrDefaultAsync(
+                e => e.ShowId == show.Id && e.Season == season && e.EpisodeNumber == episode, cancellationToken)
+            .ConfigureAwait(false);
+        if (ep == null || ep.RewatchCount >= atLeast)
+            return;
+        ep.RewatchCount = atLeast;
+        await _db.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
+    }
+
+    private async Task SyncShowWatchStatusFromEpisodesAsync(
+        int showId, CancellationToken cancellationToken, bool triggeringEpisodeFromPlayback = false)
     {
         var eps = await _db.Episodes.Where(e => e.ShowId == showId).ToListAsync(cancellationToken)
             .ConfigureAwait(false);
@@ -2255,10 +2468,23 @@ public sealed class LibraryRepository
 
         if (allCompleted)
         {
+            var wasAlreadyCompleted = show.WatchStatus == WatchStatuses.Completed;
             show.WatchStatus = WatchStatuses.Completed;
-            show.CompletedAt = DateTime.UtcNow;
-            // Only counts as a real-playback completion if every episode got there via playback too.
-            show.CompletedFromPlayback = eps.All(e => e.CompletedFromPlayback);
+            // Reflects whether the episode update that (re)confirmed completion was itself a real
+            // in-app playback completion — NOT an AND across every episode's own flag (the old
+            // `eps.All(e => e.CompletedFromPlayback)`). A show accumulated over time via mixed
+            // import/manual-mark/Trakt-sync/live-watching methods would almost never satisfy that:
+            // a single non-playback episode completion anywhere in its history permanently excluded
+            // the show from ever counting as playback-completed, even when the user genuinely
+            // finished the final episode live. Only touch CompletedAt/CompletedFromPlayback on an
+            // actual transition into Completed, or when this call is itself a real playback
+            // completion — a later non-playback touch (e.g. a Trakt resync re-affirming an
+            // already-completed episode) must not silently re-stamp the date or downgrade the flag.
+            if (!wasAlreadyCompleted || triggeringEpisodeFromPlayback)
+            {
+                show.CompletedAt = DateTime.UtcNow;
+                show.CompletedFromPlayback = triggeringEpisodeFromPlayback;
+            }
         }
         else if (anyProgress)
         {
@@ -2274,6 +2500,27 @@ public sealed class LibraryRepository
         }
 
         await _db.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// Recomputes every matched show's WatchStatus from its episodes' current WatchStatus — a
+    /// self-healing pass for drift between the two. Normally <see cref="SyncShowWatchStatusFromEpisodesAsync"/>
+    /// runs automatically right after any episode watch-status change, but that chain starts from
+    /// resolving a playback event's file path back to a specific Episode row
+    /// (<see cref="TryGetEpisodeByFilePathAsync"/>) — if a file was moved/renamed and that lookup
+    /// missed, the episode-level state could still end up right (e.g. fixed later via "Re-match")
+    /// while the show-level WatchStatus stayed stuck at whatever it was before, since nothing
+    /// re-triggers the sync after the fact. Mobile sync only exports shows with WatchStatus
+    /// Watching/Completed (see LibraryExportBuilder), so a stuck show silently never reaches the
+    /// phone's Currently Watching even though its episodes are genuinely watched. Run this before
+    /// building that export so it always reflects true current state.
+    /// </summary>
+    public async Task ReconcileAllShowWatchStatusesAsync(CancellationToken cancellationToken = default)
+    {
+        var showIds = await _db.Shows.Where(s => s.IsMatched).Select(s => s.Id)
+            .ToListAsync(cancellationToken).ConfigureAwait(false);
+        foreach (var id in showIds)
+            await SyncShowWatchStatusFromEpisodesAsync(id, cancellationToken).ConfigureAwait(false);
     }
 
     public async Task<string?> GetSettingAsync(string key, CancellationToken cancellationToken = default)
@@ -2293,6 +2540,35 @@ public sealed class LibraryRepository
             _db.Settings.Add(new Setting { Key = key, Value = value });
 
         await _db.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
+    }
+
+    private const string PersonProfileOverridePrefix = "PersonProfileOverride:";
+
+    /// <summary>
+    /// Bulk lookup of <c>PersonProfileOverride:{tmdbId}</c> settings for a batch of people — used to
+    /// swap in a manually-picked photo (set via the actor's own page) wherever that person shows up
+    /// as cast/crew, without a settings round-trip per person on a cast-heavy detail page.
+    /// </summary>
+    public async Task<Dictionary<int, string>> GetPersonProfileOverridesAsync(IEnumerable<int> personTmdbIds,
+        CancellationToken cancellationToken = default)
+    {
+        var keys = personTmdbIds.Where(id => id > 0).Distinct()
+            .Select(id => $"{PersonProfileOverridePrefix}{id}").ToList();
+        if (keys.Count == 0)
+            return new Dictionary<int, string>();
+
+        var rows = await _db.Settings.AsNoTracking()
+            .Where(s => keys.Contains(s.Key))
+            .ToListAsync(cancellationToken).ConfigureAwait(false);
+
+        var result = new Dictionary<int, string>();
+        foreach (var row in rows)
+        {
+            if (!string.IsNullOrWhiteSpace(row.Value) &&
+                int.TryParse(row.Key.AsSpan(PersonProfileOverridePrefix.Length), out var personTmdbId))
+                result[personTmdbId] = row.Value;
+        }
+        return result;
     }
 
     // ── Trakt.tv integration ────────────────────────────────────────────────
@@ -2343,6 +2619,13 @@ public sealed class LibraryRepository
     {
         var s = await GetOrCreateTraktSettingsAsync(cancellationToken).ConfigureAwait(false);
         s.AutoSyncEnabled = enabled;
+        await _db.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
+    }
+
+    public async Task MarkTraktSyncedAsync(CancellationToken cancellationToken = default)
+    {
+        var s = await GetOrCreateTraktSettingsAsync(cancellationToken).ConfigureAwait(false);
+        s.LastSyncedAtUtc = DateTime.UtcNow;
         await _db.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
     }
 
@@ -4744,40 +5027,56 @@ public sealed class LibraryRepository
         var seriesSecondsMonth = histories.Where(h => IsSeriesHistory(h) && h.OpenedAt >= monthStart)
             .Sum(h => Math.Max(0, h.EstimatedSeconds));
 
-        // Marathon: most episodes of the same show watched on the same calendar day.
+        // Strips a trailing " S01E05"-style episode tag (and any separator glyph before it) off a
+        // WatchHistory row's raw title, leaving just the show name — shared by the marathon-record
+        // computation and the binge-session list below, which group the same history rows the same way.
+        static string CleanShowTitle(string rawTitle)
+        {
+            var epTagMatch = Regex.Match(rawTitle, @"\sS\d+E\d+\s*$", RegexOptions.IgnoreCase);
+            var cutIdx = epTagMatch.Success ? epTagMatch.Index : -1;
+            if (cutIdx <= 0) return rawTitle;
+            var prefix = rawTitle[..cutIdx].TrimEnd();
+            var sepIdx = prefix.Length - 1;
+            while (sepIdx >= 0 && !char.IsLetterOrDigit(prefix[sepIdx]))
+                sepIdx--;
+            return prefix[..(sepIdx + 1)];
+        }
+
+        // Marathon record (single top day) + the full binge-session list (every day with 3+ distinct
+        // episodes of the same show) — same "same show, same calendar day" grouping powers both.
         var longestMarathonEpisodes = 0;
         var longestMarathonShowTitle = "";
+        var bingeSessions = new List<BingeSessionRow>();
+        const int BingeSessionMinEpisodes = 3;
         foreach (var grp in histories.Where(IsSeriesHistory)
                      .GroupBy(h => (ShowKey: h.TmdbId?.ToString() ?? h.Title, h.OpenedAt.Date)))
         {
             // Distinct episodes within the group — history rows can repeat per resume/heartbeat,
             // so count unique (season, episode) pairs (falling back to file path) rather than raw rows.
-            var count = grp.Select(h => h.SeasonNumber.HasValue && h.EpisodeNumber.HasValue
+            var distinctEpisodes = grp.Select(h => h.SeasonNumber.HasValue && h.EpisodeNumber.HasValue
                     ? $"{h.SeasonNumber}x{h.EpisodeNumber}"
                     : h.FilePath)
                 .Distinct(StringComparer.OrdinalIgnoreCase)
-                .Count();
+                .ToList();
+            var count = distinctEpisodes.Count;
             if (count > longestMarathonEpisodes)
             {
                 longestMarathonEpisodes = count;
-                var rawTitle = grp.First().Title;
-                var epTagMatch = Regex.Match(rawTitle, @"\sS\d+E\d+\s*$", RegexOptions.IgnoreCase);
-                var cutIdx = epTagMatch.Success ? epTagMatch.Index : -1;
-                if (cutIdx > 0)
-                {
-                    var prefix = rawTitle[..cutIdx].TrimEnd();
-                    // Trim a trailing separator glyph (em/en dash, middle dot, etc.) left over before the episode tag.
-                    var sepIdx = prefix.Length - 1;
-                    while (sepIdx >= 0 && !char.IsLetterOrDigit(prefix[sepIdx]))
-                        sepIdx--;
-                    longestMarathonShowTitle = prefix[..(sepIdx + 1)];
-                }
-                else
-                {
-                    longestMarathonShowTitle = rawTitle;
-                }
+                longestMarathonShowTitle = CleanShowTitle(grp.First().Title);
+            }
+
+            if (count >= BingeSessionMinEpisodes)
+            {
+                var sessionMinutes = (int)(grp.Sum(h => Math.Max(0, h.EstimatedSeconds)) / 60);
+                bingeSessions.Add(new BingeSessionRow(
+                    CleanShowTitle(grp.First().Title), grp.Key.Date.ToString("yyyy-MM-dd"), count, sessionMinutes));
             }
         }
+        bingeSessions = bingeSessions
+            .OrderByDescending(b => b.Date)
+            .ThenByDescending(b => b.EpisodeCount)
+            .Take(12)
+            .ToList();
 
         var moviesCompletedLibrary = await _db.Movies.AsNoTracking()
             .CountAsync(m => m.IsMatched && m.WatchStatus == WatchStatuses.Completed, cancellationToken)
@@ -4871,12 +5170,32 @@ public sealed class LibraryRepository
             .OrderByDescending(m => m.CompletedAt)
             .Take(5)
             .ToListAsync(cancellationToken).ConfigureAwait(false);
-        var recentShows = await _db.Shows.AsNoTracking()
-            .Where(s => s.IsMatched && s.WatchStatus == WatchStatuses.Completed && s.CompletedAt != null &&
-                        s.CompletedFromPlayback)
+        // Derive "was this show's completion a real in-app playback event" from its most-recently
+        // -completed EPISODE, rather than trusting the stored Show.CompletedFromPlayback column.
+        // That column used to be computed as `eps.All(e => e.CompletedFromPlayback)` — a single
+        // manually-marked/imported/Trakt-synced episode anywhere in a show's history permanently
+        // poisoned it to false, even once the user genuinely finished the final episode live (see
+        // SyncShowWatchStatusFromEpisodesAsync). SyncShowWatchStatusFromEpisodesAsync now computes
+        // this correctly going forward, but shows completed before that fix are stuck with a stale
+        // false — recomputing live here fixes both old and new data with no migration needed.
+        var completedShowCandidates = await _db.Shows.AsNoTracking()
+            .Where(s => s.IsMatched && s.WatchStatus == WatchStatuses.Completed && s.CompletedAt != null)
             .OrderByDescending(s => s.CompletedAt)
-            .Take(5)
+            .Take(30)
             .ToListAsync(cancellationToken).ConfigureAwait(false);
+
+        var recentShows = new List<Show>();
+        foreach (var candidate in completedShowCandidates)
+        {
+            if (recentShows.Count >= 5) break;
+            var latestEpisodeFromPlayback = await _db.Episodes.AsNoTracking()
+                .Where(e => e.ShowId == candidate.Id && e.WatchStatus == WatchStatuses.Completed && e.CompletedAt != null)
+                .OrderByDescending(e => e.CompletedAt)
+                .Select(e => (bool?)e.CompletedFromPlayback)
+                .FirstOrDefaultAsync(cancellationToken).ConfigureAwait(false);
+            if (latestEpisodeFromPlayback == true)
+                recentShows.Add(candidate);
+        }
 
         var recentCards = recentMovies.Select(m => (CompletedAt: m.CompletedAt!.Value, Kind: "movie", Id: m.Id))
             .Concat(recentShows.Select(s => (CompletedAt: s.CompletedAt!.Value, Kind: "series", Id: s.Id)))
@@ -4912,6 +5231,27 @@ public sealed class LibraryRepository
         foreach (var d in allEpCompletedDates) daySet.Add(d.Date);
 
         var streak = ComputeWatchStreak(daySet, now.Date);
+        var longestStreakEver = ComputeLongestStreakEver(daySet);
+
+        // Time-of-day / day-of-week viewing habits, from raw session start times (OpenedAt) — a
+        // different lens than the completion-day activity calendar above (Last7Days): this is about
+        // *when* you tend to watch, not what got finished.
+        var hourBuckets = new int[24];
+        var dayOfWeekBuckets = new int[7];
+        foreach (var h in histories)
+        {
+            hourBuckets[h.OpenedAt.Hour]++;
+            dayOfWeekBuckets[(int)h.OpenedAt.DayOfWeek]++;
+        }
+        var daypartCounts = new WatchDaypartCounts(
+            Morning: hourBuckets[5..12].Sum(),
+            Afternoon: hourBuckets[12..17].Sum(),
+            Evening: hourBuckets[17..21].Sum(),
+            Night: hourBuckets[21..24].Sum() + hourBuckets[0..5].Sum());
+        var dayOfWeekLabels = new[] { "Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat" };
+        var watchByDayOfWeek = dayOfWeekLabels
+            .Select((label, i) => new WatchDayOfWeekCount(label, dayOfWeekBuckets[i]))
+            .ToList();
 
         var mWeight = (double)Math.Max(0, moviesCompleted);
         var sWeight = (double)Math.Max(0, episodesWatched + seriesCompleted);
@@ -5083,7 +5423,11 @@ public sealed class LibraryRepository
             decadeTopSeries,
             recentMovies.Cast<object>().ToList(),
             recentShows.Cast<object>().ToList(),
-            last7Days);
+            last7Days,
+            longestStreakEver,
+            bingeSessions,
+            daypartCounts,
+            watchByDayOfWeek);
     }
 
     private static void AddDecade(Dictionary<string, int> map, int year)
@@ -5958,6 +6302,29 @@ public sealed class LibraryRepository
 
         return streak;
     }
+
+    /// <summary>Longest run of consecutive activity days ever recorded, not just the one still
+    /// running today — a "personal best" alongside the live WatchStreak.</summary>
+    private static int ComputeLongestStreakEver(HashSet<DateTime> days)
+    {
+        if (days.Count == 0) return 0;
+        var sorted = days.OrderBy(d => d).ToList();
+        var longest = 1;
+        var current = 1;
+        for (var i = 1; i < sorted.Count; i++)
+        {
+            if (sorted[i] == sorted[i - 1].AddDays(1))
+            {
+                current++;
+                if (current > longest) longest = current;
+            }
+            else
+            {
+                current = 1;
+            }
+        }
+        return longest;
+    }
 }
 
 public sealed record WatchGenreCount(string Genre, int Count);
@@ -6001,12 +6368,24 @@ public sealed record WatchStatisticsBundle(
     IReadOnlyList<WatchDecadeCount> DecadeTopSeries,
     IReadOnlyList<object> RecentlyCompletedMovies,
     IReadOnlyList<object> RecentlyCompletedSeries,
-    IReadOnlyList<DailyWatchActivity> Last7Days);
+    IReadOnlyList<DailyWatchActivity> Last7Days,
+    int LongestStreakEver,
+    IReadOnlyList<BingeSessionRow> BingeSessions,
+    WatchDaypartCounts WatchByDaypart,
+    IReadOnlyList<WatchDayOfWeekCount> WatchByDayOfWeek);
 
 public sealed record WatchNetworkCount(string Network, int Count);
 
 /// <summary>One calendar day's completions (movies + episodes) for the Stats page activity calendar.</summary>
 public sealed record DailyWatchActivity(string Date, int Count, IReadOnlyList<string> Titles);
+
+/// <summary>A day where 3+ distinct episodes of the same show were watched — a binge session.</summary>
+public sealed record BingeSessionRow(string ShowTitle, string Date, int EpisodeCount, int TotalMinutes);
+
+/// <summary>Session start times bucketed into four dayparts (5-11:59, 12-16:59, 17-20:59, 21-4:59).</summary>
+public sealed record WatchDaypartCounts(int Morning, int Afternoon, int Evening, int Night);
+
+public sealed record WatchDayOfWeekCount(string Day, int Count);
 
 public sealed record ListItemDisplayRow(int TmdbId, string MediaType, string Title, int? Year, string? PosterLocalPath,
     int? LibraryDatabaseId, string? PosterRemoteUrl = null, string? ImdbId = null);

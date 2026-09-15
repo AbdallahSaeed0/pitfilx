@@ -23,6 +23,7 @@ import { useDebounce } from "../../hooks/useDebounce";
 import { normalizePlayerEngine, type PlayerEngineId } from "../../playback/playerEngine";
 import type { RemoveTitlePick } from "../../components/RemoveTitleBrowseModal";
 import { getDesktopAutostartState } from "../../utils/autostart";
+import { setBrowseAdBlockEnabled as applyBrowseAdBlockEnabled } from "../../utils/browseAdBlock";
 import { useBackgroundTasks } from "../../context/BackgroundTasksContext";
 import { useAppPrefsStore } from "../../store/appPrefsStore";
 import {
@@ -141,16 +142,20 @@ export function useSettingsPageModel() {
   const [sdlKeyInput, setSdlKeyInput] = useState("");
   const [ssKeyInput, setSsKeyInput] = useState("");
   const [mdblistKeyInput, setMdblistKeyInput] = useState("");
+  const [omdbKeyInput, setOmdbKeyInput] = useState("");
   const [tvdbKeyInput, setTvdbKeyInput] = useState("");
+  const [fanartKeyInput, setFanartKeyInput] = useState("");
   const [showTmdbKey, setShowTmdbKey] = useState(false);
   const [showOsKey, setShowOsKey] = useState(false);
   const [showSdlKey, setShowSdlKey] = useState(false);
   const [showSsKey, setShowSsKey] = useState(false);
   const [apiKeyGuide, setApiKeyGuide] = useState<
-    "tmdb" | "opensubtitles" | "subdl" | "subsource" | "mdblist" | "tvdb" | null
+    "tmdb" | "opensubtitles" | "subdl" | "subsource" | "mdblist" | "omdb" | "tvdb" | "fanart" | null
   >(null);
   const [showMdblistKey, setShowMdblistKey] = useState(false);
+  const [showOmdbKey, setShowOmdbKey] = useState(false);
   const [showTvdbKey, setShowTvdbKey] = useState(false);
+  const [showFanartKey, setShowFanartKey] = useState(false);
   const [apiKeyMsg, setApiKeyMsg] = useState<string | null>(null);
   const [apiKeyBusy, setApiKeyBusy] = useState(false);
   const [tmdbVerifyBusy, setTmdbVerifyBusy] = useState(false);
@@ -158,7 +163,9 @@ export function useSettingsPageModel() {
   const [sdlVerifyBusy, setSdlVerifyBusy] = useState(false);
   const [ssVerifyBusy, setSsVerifyBusy] = useState(false);
   const [mdblistVerifyBusy, setMdblistVerifyBusy] = useState(false);
+  const [omdbVerifyBusy, setOmdbVerifyBusy] = useState(false);
   const [tvdbVerifyBusy, setTvdbVerifyBusy] = useState(false);
+  const [fanartVerifyBusy, setFanartVerifyBusy] = useState(false);
   const [addlSourcesMsg, setAddlSourcesMsg] = useState<string | null>(null);
   const [addlSourcesOpen, setAddlSourcesOpen] = useState(false);
   const [letterboxdBusy, setLetterboxdBusy] = useState(false);
@@ -176,6 +183,12 @@ export function useSettingsPageModel() {
   const setLiveTvEnabled = useAppPrefsStore((s) => s.setLiveTvEnabled);
   const defaultSpoilerProtection = useAppPrefsStore((s) => s.defaultSpoilerProtection);
   const setDefaultSpoilerProtection = useAppPrefsStore((s) => s.setDefaultSpoilerProtection);
+  const browseAdBlockEnabled = useAppPrefsStore((s) => s.browseAdBlockEnabled);
+  const setBrowseAdBlockEnabledPref = useAppPrefsStore((s) => s.setBrowseAdBlockEnabled);
+  const setBrowseAdBlockEnabled = (value: boolean) => {
+    setBrowseAdBlockEnabledPref(value);
+    void applyBrowseAdBlockEnabled(value).catch(() => {});
+  };
 
   const { data: autostartStatus } = useQuery({
     queryKey: ["autostart-status"],
@@ -650,14 +663,18 @@ export function useSettingsPageModel() {
     sdlKeyInput, setSdlKeyInput,
     ssKeyInput, setSsKeyInput,
     mdblistKeyInput, setMdblistKeyInput,
+    omdbKeyInput, setOmdbKeyInput,
     tvdbKeyInput, setTvdbKeyInput,
+    fanartKeyInput, setFanartKeyInput,
     showTmdbKey, setShowTmdbKey,
     showOsKey, setShowOsKey,
     showSdlKey, setShowSdlKey,
     showSsKey, setShowSsKey,
     apiKeyGuide, setApiKeyGuide,
     showMdblistKey, setShowMdblistKey,
+    showOmdbKey, setShowOmdbKey,
     showTvdbKey, setShowTvdbKey,
+    showFanartKey, setShowFanartKey,
     apiKeyMsg, setApiKeyMsg,
     apiKeyBusy, setApiKeyBusy,
     tmdbVerifyBusy, setTmdbVerifyBusy,
@@ -665,7 +682,9 @@ export function useSettingsPageModel() {
     sdlVerifyBusy, setSdlVerifyBusy,
     ssVerifyBusy, setSsVerifyBusy,
     mdblistVerifyBusy, setMdblistVerifyBusy,
+    omdbVerifyBusy, setOmdbVerifyBusy,
     tvdbVerifyBusy, setTvdbVerifyBusy,
+    fanartVerifyBusy, setFanartVerifyBusy,
     addlSourcesMsg, setAddlSourcesMsg,
     addlSourcesOpen, setAddlSourcesOpen,
     letterboxdBusy, setLetterboxdBusy,
@@ -686,6 +705,7 @@ export function useSettingsPageModel() {
     offlineMode, setOfflineMode,
     liveTvEnabled, setLiveTvEnabled,
     defaultSpoilerProtection, setDefaultSpoilerProtection,
+    browseAdBlockEnabled, setBrowseAdBlockEnabled,
     autostartStatus,
     combinedHits,
     refetchSettings,

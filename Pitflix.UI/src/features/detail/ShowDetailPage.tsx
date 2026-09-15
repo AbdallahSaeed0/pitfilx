@@ -15,8 +15,9 @@ import { useResumeBeforePlay } from "../../hooks/useResumeBeforePlay";
 import { PosterPickerModal } from "../../components/PosterPickerModal";
 import { HorizontalDragScroll } from "../../components/ui/HorizontalDragScroll";
 import { ImdbRatingBadge } from "../../components/ui/ImdbRatingBadge";
+import { Lightbox } from "../../components/ui/Lightbox";
 import { MediaImage } from "../../components/ui/MediaImage";
-import { Spinner } from "../../components/ui/Spinner";
+import { DetailSkeleton } from "../../components/ui/Skeleton";
 import type { MediaCard } from "../../types/media";
 import { formatRating, formatYear } from "../../utils/format";
 import { toPosterSrc } from "../../utils/posterSrc";
@@ -59,6 +60,7 @@ export function ShowDetailPage() {
   const qc = useQueryClient();
   const { requestPlay, ResumePromptModal } = useResumeBeforePlay();
   const [showArtworkPicker, setShowArtworkPicker] = useState(false);
+  const [showPosterLightbox, setShowPosterLightbox] = useState(false);
   const [ratingRefreshing, setRatingRefreshing] = useState(false);
   const [wsmSeasonDownload, setWsmSeasonDownload] = useState<number | null>(null);
   const [dropBusy, setDropBusy] = useState(false);
@@ -117,9 +119,7 @@ export function ShowDetailPage() {
   if (!Number.isFinite(sid) || sid <= 0) return <p className="text-pitflix-muted">Invalid id</p>;
   if (isLoading || !data) {
     return (
-      <div className="flex justify-center py-24">
-        <Spinner />
-      </div>
+      <DetailSkeleton />
     );
   }
 
@@ -148,6 +148,12 @@ export function ShowDetailPage() {
     year: string | null; voteAverage: number; mediaType: string;
     isInLibrary: boolean; libraryId: number | null;
     watchStatus?: string | null;
+  }[];
+  const companies = (data.companies ?? []) as {
+    id: number;
+    name: string;
+    logoUrl: string | null;
+    kind: "network" | "company";
   }[];
   const contentRatingShow = (data.contentRating ?? null) as string | null;
   const tvdbClearLogoUrl = (data.tvdbClearLogoUrl ?? null) as string | null;
@@ -195,12 +201,18 @@ export function ShowDetailPage() {
               watchStatus: show.watchStatus,
             })}
           >
-            <MediaImage
-              src={poster}
-              alt={show.title}
-              className={detailHeroPosterClass}
-              fallbackText={show.title}
-            />
+            <button
+              type="button"
+              className="block cursor-pointer text-left"
+              onClick={() => poster && setShowPosterLightbox(true)}
+            >
+              <MediaImage
+                src={poster}
+                alt={show.title}
+                className={detailHeroPosterClass}
+                fallbackText={show.title}
+              />
+            </button>
             <div className="min-w-0 flex-1 pb-1">
               {show.watchStatus === "Completed" ? (
                 <div className="mb-3">
@@ -254,7 +266,7 @@ export function ShowDetailPage() {
                     onClick={() =>
                       void requestPlay({
                         filePath: nextEpisode.filePath,
-                        title: `${show.title} \u00b7 S${nextEpisode.season}E${nextEpisode.episodeNumber}`,
+                        title: `${show.title} \u00b7 ${nextEpisode.title?.trim() || `S${nextEpisode.season}E${nextEpisode.episodeNumber}`}`,
                         posterPath: show.selectedPosterPath || show.posterLocalPath || null,
                         mediaType: "Series",
                         durationSeconds: 0,
@@ -278,7 +290,7 @@ export function ShowDetailPage() {
                     onClick={() =>
                       void requestPlay({
                         filePath: firstEpisode.episode.filePath,
-                        title: `${show.title} \u00b7 S${firstEpisode.season}E${firstEpisode.episode.episodeNumber}`,
+                        title: `${show.title} \u00b7 ${firstEpisode.episode.title?.trim() || `S${firstEpisode.season}E${firstEpisode.episode.episodeNumber}`}`,
                         posterPath: show.selectedPosterPath || show.posterLocalPath || null,
                         mediaType: "Series",
                         durationSeconds: 0,
@@ -407,11 +419,15 @@ export function ShowDetailPage() {
         />
       ) : null}
 
+      {showPosterLightbox && poster ? (
+        <Lightbox url={poster} onClose={() => setShowPosterLightbox(false)} />
+      ) : null}
+
       {seasonsSummary.length > 0 ? (
         <section className="mt-10">
           <h2 className="mb-3 text-xl font-bold">Seasons</h2>
-          <div className="grid grid-cols-3 gap-3 sm:grid-cols-4 md:grid-cols-5 lg:grid-cols-6 xl:grid-cols-8">
-            {seasonsSummary.map((s) => {
+          {(() => {
+            const tiles = seasonsSummary.map((s) => {
               const inLibrary = s.inLibrary !== false;
               const inner = (
                 <>
@@ -477,17 +493,23 @@ export function ShowDetailPage() {
                     watchStatus: show.watchStatus,
                   })}
                   className={cn(
-                    "group overflow-hidden rounded-xl border transition-all",
+                    "group w-40 shrink-0 overflow-hidden rounded-xl border transition-all duration-200 hover:-translate-y-1",
                     inLibrary
-                      ? "border-pitflix-card/70 bg-pitflix-surface/40 hover:border-pitflix-primary/50 hover:shadow-lg hover:shadow-pitflix-primary/10"
-                      : "border-amber-500/25 bg-pitflix-surface/30 hover:border-amber-400/50 hover:shadow-lg hover:shadow-amber-500/10",
+                      ? "border-pitflix-card/70 bg-pitflix-surface/40 hover:border-pitflix-primary/50 hover:shadow-xl hover:shadow-pitflix-primary/10"
+                      : "border-amber-500/25 bg-pitflix-surface/30 hover:border-amber-400/50 hover:shadow-xl hover:shadow-amber-500/10",
                   )}
                 >
                   {inner}
                 </Link>
               );
-            })}
-          </div>
+            });
+
+            // Always a single-row slider (never a wrapping grid) — HorizontalDragScroll never
+            // wraps to a second line by construction (flex row + horizontal overflow), and its
+            // scroll buttons auto-hide when everything already fits in one row, so a handful of
+            // seasons on a wide window just reads as a plain row with nothing to scroll.
+            return <HorizontalDragScroll className="pb-1">{tiles}</HorizontalDragScroll>;
+          })()}
         </section>
       ) : seasons.length === 0 ? (
         <section className="mt-10">
@@ -497,6 +519,36 @@ export function ShowDetailPage() {
       ) : null}
 
       <CastCrewSection cast={cast ?? []} crew={(data.crew ?? []) as CrewMember[]} navigate={navigate} />
+
+      {/* Studio */}
+      {companies.length > 0 && (
+        <section className="mt-8">
+          <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-pitflix-muted">
+            Network &amp; Studio
+          </h2>
+          <div className="flex flex-wrap gap-3">
+            {companies.map((c) => (
+              <button
+                key={`${c.kind}-${c.id}`}
+                type="button"
+                onClick={() =>
+                  navigate("/stream-studio", {
+                    state: { studioId: c.id, kind: c.kind, name: c.name, logoUrl: c.logoUrl },
+                  })
+                }
+                title={`See everything on ${c.name}`}
+                className="flex h-14 min-w-[96px] items-center justify-center rounded-lg border border-pitflix-card bg-white/95 px-4 py-2 shadow transition hover:border-pitflix-primary/60 hover:-translate-y-0.5"
+              >
+                {c.logoUrl ? (
+                  <img src={c.logoUrl} alt={c.name} className="max-h-9 max-w-[110px] object-contain" />
+                ) : (
+                  <span className="text-xs font-semibold text-pitflix-bg">{c.name}</span>
+                )}
+              </button>
+            ))}
+          </div>
+        </section>
+      )}
 
       {/* TMDB Similar */}
       {tmdbSimilarShow.length > 0 && (
@@ -559,10 +611,9 @@ export function ShowDetailPage() {
       />
       {menu ? (
         <MediaContextMenu
-          label={menu.target.title}
+          target={menu.target}
           x={menu.x}
           y={menu.y}
-          watchStatus={"watchStatus" in menu.target ? menu.target.watchStatus : undefined}
           showRescan={menu.target.kind !== "streaming"}
           onAction={(action) => void runAction(action)}
           onClose={closeMenu}

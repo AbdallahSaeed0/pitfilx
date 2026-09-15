@@ -78,14 +78,14 @@ public static class StatsEndpoints
             }
 
             var mapped = recent.Select(ImageUrls.MapMediaCard).ToList();
-            await MediaCardPosterEnricher.EnrichMissingRemotePostersAsync(mapped, tmdb, ct).ConfigureAwait(false);
+            await MediaCardPosterEnricher.EnrichMissingRemotePostersAsync(mapped, tmdb, ct, repo).ConfigureAwait(false);
 
             var recentMoviesMapped = b.RecentlyCompletedMovies.OfType<Movie>()
                 .Select(MediaCardMappers.ToCardFromMovie).Select(ImageUrls.MapMediaCard).ToList();
-            await MediaCardPosterEnricher.EnrichMissingRemotePostersAsync(recentMoviesMapped, tmdb, ct).ConfigureAwait(false);
+            await MediaCardPosterEnricher.EnrichMissingRemotePostersAsync(recentMoviesMapped, tmdb, ct, repo).ConfigureAwait(false);
             var recentSeriesMapped = b.RecentlyCompletedSeries.OfType<Show>()
                 .Select(MediaCardMappers.ToCardFromShow).Select(ImageUrls.MapMediaCard).ToList();
-            await MediaCardPosterEnricher.EnrichMissingRemotePostersAsync(recentSeriesMapped, tmdb, ct).ConfigureAwait(false);
+            await MediaCardPosterEnricher.EnrichMissingRemotePostersAsync(recentSeriesMapped, tmdb, ct, repo).ConfigureAwait(false);
 
             return Results.Json(new
             {
@@ -124,7 +124,23 @@ public static class StatsEndpoints
                 decadeTopSeries = b.DecadeTopSeries.Select(d => new { decade = d.DecadeLabel, count = d.Count }).ToList(),
                 recentlyCompletedMovies = recentMoviesMapped,
                 recentlyCompletedSeries = recentSeriesMapped,
-                last7Days = b.Last7Days.Select(d => new { date = d.Date, count = d.Count, titles = d.Titles }).ToList()
+                last7Days = b.Last7Days.Select(d => new { date = d.Date, count = d.Count, titles = d.Titles }).ToList(),
+                longestStreakEver = b.LongestStreakEver,
+                bingeSessions = b.BingeSessions.Select(s => new
+                {
+                    showTitle = s.ShowTitle,
+                    date = s.Date,
+                    episodeCount = s.EpisodeCount,
+                    totalMinutes = s.TotalMinutes,
+                }).ToList(),
+                watchByDaypart = new
+                {
+                    morning = b.WatchByDaypart.Morning,
+                    afternoon = b.WatchByDaypart.Afternoon,
+                    evening = b.WatchByDaypart.Evening,
+                    night = b.WatchByDaypart.Night,
+                },
+                watchByDayOfWeek = b.WatchByDayOfWeek.Select(d => new { day = d.Day, count = d.Count }).ToList(),
             }, jsonSerializerOptions);
         });
 
@@ -137,6 +153,12 @@ public static class StatsEndpoints
                 return Results.BadRequest();
 
             await repo.UpdateEpisodeWatchStatusAsync(id, status, ct).ConfigureAwait(false);
+            return Results.Json(new { success = true }, jsonSerializerOptions);
+        });
+
+        app.MapPost("/api/episodes/{id:int}/rewatch-count", async (int id, RewatchCountBody body, LibraryRepository repo, CancellationToken ct) =>
+        {
+            await repo.SetEpisodeRewatchCountAsync(id, body.Count, ct).ConfigureAwait(false);
             return Results.Json(new { success = true }, jsonSerializerOptions);
         });
 

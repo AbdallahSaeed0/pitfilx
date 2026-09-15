@@ -3,20 +3,27 @@ import '../models/title_item.dart';
 import '../services/tmdb_service.dart';
 import '../services/user_library_service.dart';
 import '../theme/app_theme.dart';
+import '../utils/title_actions_sheet.dart';
 import '../widgets/widgets.dart';
 import 'title_detail_movie_screen.dart';
 import 'title_detail_series_screen.dart';
 
 /// Poster grid for a single list's items — real, per-account data from
-/// Supabase's `user_list_items` (see UserLibraryService).
+/// Supabase's `user_list_items` (see UserLibraryService). [readOnly] is set
+/// when opened from a friend's profile (see FriendProfileScreen) — the
+/// friends-visibility RLS policies only grant read access to another
+/// account's lists, so swipe-to-remove would always fail there; disabling it
+/// avoids a dead gesture that just errors.
 class ListDetailScreen extends StatefulWidget {
   final String listId;
   final String listName;
+  final bool readOnly;
 
   const ListDetailScreen({
     super.key,
     required this.listId,
     required this.listName,
+    this.readOnly = false,
   });
 
   @override
@@ -146,8 +153,16 @@ class _ListDetailScreenState extends State<ListDetailScreen> {
           subtitle: '${t.year}',
           gradientSeed: t.gradientSeed,
           imageUrl: TmdbService.posterUrl(t.posterPath),
+          tmdbId: t.tmdbId,
+          kind: t.kind,
           onTap: () => _openTitle(t),
+          onLongPress: () => showTitleActionsSheet(
+            context,
+            t,
+            (updated) => setState(() => _items![i] = updated),
+          ),
         );
+        if (widget.readOnly) return poster;
         return Dismissible(
           key: ValueKey(t.id),
           direction: DismissDirection.horizontal,

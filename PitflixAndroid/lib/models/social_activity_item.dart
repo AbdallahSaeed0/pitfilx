@@ -1,11 +1,12 @@
 import 'social_profile.dart';
 
-enum SocialActivityAction { watched, rated, addedToWatchlist }
+enum SocialActivityAction { watched, rated, addedToWatchlist, addedToFavorites }
 
 SocialActivityAction _actionFromString(String value) => switch (value) {
   'watched' => SocialActivityAction.watched,
   'rated' => SocialActivityAction.rated,
   'added_to_watchlist' => SocialActivityAction.addedToWatchlist,
+  'added_to_favorites' => SocialActivityAction.addedToFavorites,
   _ => SocialActivityAction.watched,
 };
 
@@ -13,6 +14,7 @@ String actionToString(SocialActivityAction action) => switch (action) {
   SocialActivityAction.watched => 'watched',
   SocialActivityAction.rated => 'rated',
   SocialActivityAction.addedToWatchlist => 'added_to_watchlist',
+  SocialActivityAction.addedToFavorites => 'added_to_favorites',
 };
 
 /// A real `activity_events` row, joined with the author's profile. Unlike

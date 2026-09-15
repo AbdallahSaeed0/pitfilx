@@ -151,40 +151,62 @@ public sealed class LibraryAutoScanService : BackgroundService
             return;
         }
 
-        var notifyDesktop = await repo.GetLibraryScanDesktopToastsEnabledAsync(cancellationToken).ConfigureAwait(false);
-        var pipeline = new ScanPipeline(new FileScanner(), tmdb, repo);
-        var progress = new Progress<ScanProgress>(p =>
+        // Claim the shared scan mutex for real — the earlier "if (!_scanRuntime.IsRunning)" check in
+        // ExecuteAsync is only a cheap pre-filter. Without actually acquiring here, this background
+        // pass never marked itself as running, so a manual scan, "Rescan unmatched", or the pinned-
+        // folder scan's own timer could start concurrently and reprocess the same files — surfacing
+        // as the same title getting a fresh "Matched" notification minutes after it was already matched.
+        var jobId = await _scanRuntime.BeginJobAsync(cancellationToken).ConfigureAwait(false);
+        if (jobId == null)
+            return; // another scan is genuinely in progress — wait for the next tick
+
+        try
         {
-            if (!p.EmitLibraryNotification || string.IsNullOrWhiteSpace(p.LibraryNotificationTitle))
-                return;
-            _ = _scanRuntime.BroadcastAsync(new
+            _scanRuntime.ResetProgress(distinct.Count);
+
+            var notifyDesktop = await repo.GetLibraryScanDesktopToastsEnabledAsync(cancellationToken).ConfigureAwait(false);
+            var pipeline = new ScanPipeline(new FileScanner(), tmdb, repo);
+            var progress = new Progress<ScanProgress>(p =>
             {
-                type = "libraryNotification",
-                source = "libraryScan",
-                kind = p.LibraryNotificationKind ?? "",
-                title = p.LibraryNotificationTitle,
-                matched = p.LibraryNotificationMatched
-            }, CancellationToken.None);
-        });
-        var result = await pipeline.RunScanOnFilesAsync(distinct, progress, cancellationToken,
-                libraryNotifications: notifyDesktop, skipUnchangedUnmatchedScanLogs: true)
-            .ConfigureAwait(false);
+                _scanRuntime.Update(p.Current, p.CurrentFile, p.MatchedSoFar, p.UnmatchedSoFar, p.SkippedSoFar);
+                if (p.EmitLibraryNotification && !string.IsNullOrWhiteSpace(p.LibraryNotificationTitle))
+                {
+                    _ = _scanRuntime.BroadcastAsync(new
+                    {
+                        type = "libraryNotification",
+                        source = "libraryScan",
+                        kind = p.LibraryNotificationKind ?? "",
+                        title = p.LibraryNotificationTitle,
+                        matched = p.LibraryNotificationMatched,
+                        libraryId = p.LibraryNotificationLibraryId,
+                        season = p.LibraryNotificationSeason
+                    }, CancellationToken.None);
+                }
+            });
+            var result = await pipeline.RunScanOnFilesAsync(distinct, progress, cancellationToken,
+                    libraryNotifications: notifyDesktop, skipUnchangedUnmatchedScanLogs: true)
+                .ConfigureAwait(false);
 
-        // Stamp the successful completion time so the next auto-scan can skip unchanged files.
-        await repo.SetLastAutoScanAtAsync(DateTime.UtcNow, cancellationToken).ConfigureAwait(false);
+            // Stamp the successful completion time so the next auto-scan can skip unchanged files.
+            await repo.SetLastAutoScanAtAsync(DateTime.UtcNow, cancellationToken).ConfigureAwait(false);
 
-        _ratingsRefreshQueue.TryEnqueueStaleSweep();
+            _ratingsRefreshQueue.TryEnqueueStaleSweep();
 
-        // Always broadcast a lightweight "libraryUpdated" so the UI can refresh queries,
-        // even when desktop toasts are disabled and no libraryNotification events were emitted.
-        if (result.Matched > 0 || result.Unmatched > 0)
+            // Always broadcast a lightweight "libraryUpdated" so the UI can refresh queries,
+            // even when desktop toasts are disabled and no libraryNotification events were emitted.
+            if (result.Matched > 0 || result.Unmatched > 0)
+            {
+                _ = _scanRuntime.BroadcastAsync(new
+                {
+                    type = "libraryUpdated",
+                    matched = result.Matched,
+                    unmatched = result.Unmatched
+                }, CancellationToken.None);
+            }
+        }
+        finally
         {
-            _ = _scanRuntime.BroadcastAsync(new
-            {
-                type = "libraryUpdated",
-                matched = result.Matched,
-                unmatched = result.Unmatched
-            }, CancellationToken.None);
+            await _scanRuntime.EndJobAsync().ConfigureAwait(false);
         }
     }
 }

@@ -9,4 +9,5 @@ public class TraktSettings
     public DateTime? TokenExpiresAt { get; set; }
     public bool IsConnected { get; set; }
     public bool AutoSyncEnabled { get; set; }
+    public DateTime? LastSyncedAtUtc { get; set; }
 }

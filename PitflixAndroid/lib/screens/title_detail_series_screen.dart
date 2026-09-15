@@ -5,8 +5,7 @@ import '../models/episode.dart';
 import '../models/season.dart';
 import '../models/social_activity_item.dart';
 import '../models/title_item.dart';
-import '../services/app_settings.dart';
-import '../services/local_backend_service.dart';
+import '../services/ratings_service.dart';
 import '../services/session_stats_store.dart';
 import '../services/social_service.dart';
 import '../services/tmdb_service.dart';
@@ -16,6 +15,7 @@ import '../utils/favorites.dart';
 import '../utils/title_actions_sheet.dart';
 import '../widgets/widgets.dart';
 import 'actor_screen.dart';
+import '../widgets/pitflix_network_image.dart';
 
 class TitleDetailSeriesScreen extends StatefulWidget {
   final TitleItem title;
@@ -33,6 +33,16 @@ class _TitleDetailSeriesScreenState extends State<TitleDetailSeriesScreen> {
   TitleItem? _enriched;
   Map<String, dynamic>? _ratings;
 
+  /// True while the full TMDB detail lookup (episodes/cast/overview) is in
+  /// flight — drives the loading skeleton below so a first open (or any
+  /// open TMDB hasn't answered yet for) reads as "loading", not blank.
+  /// Mirrors initState's own `shouldEnrich` condition.
+  late bool _enriching =
+      widget.title.needsDetailEnrichment ||
+      (widget.title.seasons.isEmpty &&
+          widget.title.tmdbId != null &&
+          widget.title.tmdbId! > 0);
+
   /// Local overrides on top of the TMDB-sourced seasons (episode watch
   /// status/libraryId merged in, plus any in-session rating/rewatch/watched
   /// edits from the episode popup) — null until the first override happens,
@@ -41,6 +51,12 @@ class _TitleDetailSeriesScreenState extends State<TitleDetailSeriesScreen> {
 
   String? _favoritesListId;
   bool? _isFavorite;
+
+  // Per-account custom poster/backdrop — see the movie screen's identical
+  // fields for why these are re-applied on top of `_enriched` independently
+  // of whichever async fetch (TMDB enrichment vs. Supabase) resolves last.
+  String? _customPosterPath;
+  String? _customBackdropPath;
 
   @override
   void initState() {
@@ -61,9 +77,14 @@ class _TitleDetailSeriesScreenState extends State<TitleDetailSeriesScreen> {
       TmdbService.fetchDetails(widget.title.tmdbId!, TitleKind.show).then((
         full,
       ) {
-        if (!mounted || full == null) return;
+        if (!mounted) return;
+        if (full == null) {
+          setState(() => _enriching = false);
+          return;
+        }
         setState(() {
-          _enriched = full;
+          _enriched = _applyCustomArtwork(full);
+          _enriching = false;
           if (full.seasons.isNotEmpty) {
             _tab = 0;
             _expandedSeason ??= full.seasons.first.number;
@@ -76,15 +97,38 @@ class _TitleDetailSeriesScreenState extends State<TitleDetailSeriesScreen> {
     }
     if (widget.title.tmdbId != null) {
       _loadFavorite();
-      if (AppSettings.desktopSyncActive) {
-        LocalBackendService.fetchRatings(widget.title.tmdbId!, 'tv').then((
-          data,
-        ) {
-          if (mounted && data != null) setState(() => _ratings = data);
-        });
-      }
+      _loadCustomArtwork();
+      RatingsService.fetch(
+        widget.title.tmdbId!,
+        TitleKind.show,
+        widget.title.rating,
+      ).then((data) {
+        if (mounted) setState(() => _ratings = data);
+      });
     }
   }
+
+  Future<void> _loadCustomArtwork() async {
+    try {
+      final row = await UserLibraryService.fetchCustomArtwork(
+        widget.title.tmdbId!,
+        'series',
+      );
+      if (!mounted || row == null) return;
+      _customPosterPath = row['custom_poster_path'] as String?;
+      _customBackdropPath = row['custom_backdrop_path'] as String?;
+      setState(
+        () => _enriched = _applyCustomArtwork(_enriched ?? widget.title),
+      );
+    } catch (_) {
+      // Custom artwork is decorative — falls back to the TMDB default.
+    }
+  }
+
+  TitleItem _applyCustomArtwork(TitleItem t) => t.copyWith(
+    posterPath: _customPosterPath,
+    backdropPath: _customBackdropPath,
+  );
 
   Future<void> _loadFavorite() async {
     try {
@@ -122,7 +166,7 @@ class _TitleDetailSeriesScreenState extends State<TitleDetailSeriesScreen> {
           posterPath: t.posterPath,
         );
         SocialService.logActivity(
-          action: SocialActivityAction.addedToWatchlist,
+          action: SocialActivityAction.addedToFavorites,
           tmdbId: tmdbId,
           mediaType: 'series',
           title: t.name,
@@ -239,6 +283,27 @@ class _TitleDetailSeriesScreenState extends State<TitleDetailSeriesScreen> {
     });
   }
 
+  /// Upserts this show's `watch_records` row with `status: 'watching'` —
+  /// without this, shows progressed via the quick mark-watched controls
+  /// (rather than the episode rating sheet, which already does this via
+  /// [_logEpisodeActivity]) never get a `watch_records` row at all, so they
+  /// can never appear in Home's Currently Watching list even though the
+  /// account has clearly started them.
+  void _markShowWatching() {
+    final tmdbId = widget.title.tmdbId;
+    if (tmdbId == null) return;
+    final t = _enriched ?? widget.title;
+    UserLibraryService.logWatched(
+      tmdbId: tmdbId,
+      mediaType: 'series',
+      title: t.name,
+      posterPath: t.posterPath,
+      genres: t.genres,
+      releaseYear: t.year > 0 ? t.year : null,
+      status: 'watching',
+    );
+  }
+
   /// Marks a single episode watched — persists to this account.
   Future<void> _markEpisodeWatched(Season season, Episode episode) async {
     final tmdbId = widget.title.tmdbId;
@@ -250,6 +315,7 @@ class _TitleDetailSeriesScreenState extends State<TitleDetailSeriesScreen> {
           episode.number,
           watched: true,
         );
+        _markShowWatching();
       } catch (_) {
         // Best-effort — still reflect the change locally below.
       }
@@ -275,6 +341,7 @@ class _TitleDetailSeriesScreenState extends State<TitleDetailSeriesScreen> {
             ),
           ),
         );
+        _markShowWatching();
       } catch (_) {
         // Best-effort — still reflect the change locally below.
       }
@@ -326,6 +393,7 @@ class _TitleDetailSeriesScreenState extends State<TitleDetailSeriesScreen> {
               rating: t.rating,
               gradientSeed: t.gradientSeed,
               imageUrl: TmdbService.backdropUrl(t.backdropPath),
+              posterUrl: TmdbService.posterUrl(t.posterPath),
               isFavorite: _isFavorite,
               onFavoriteToggled: _toggleFavorite,
               onMorePressed: () => showTitleActionsSheet(
@@ -345,20 +413,37 @@ class _TitleDetailSeriesScreenState extends State<TitleDetailSeriesScreen> {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    if (_ratings != null) ...[
-                      RatingsRow(ratings: _ratings!),
-                      const SizedBox(height: 18),
-                    ],
+                    // Ratings land from their own MDBList fetch after the
+                    // page is already up; revealing them via [_RevealSection]
+                    // animates the layout open instead of hard-popping the row
+                    // in and shoving the tab content down.
+                    _RevealSection(
+                      visible: _ratings != null,
+                      child: _ratings == null
+                          ? const SizedBox.shrink()
+                          : Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                RatingsRow(ratings: _ratings!),
+                                const SizedBox(height: 18),
+                              ],
+                            ),
+                    ),
                     AnimatedSwitcher(
                       duration: const Duration(milliseconds: 200),
                       transitionBuilder: (child, anim) =>
                           FadeTransition(opacity: anim, child: child),
-                      child: KeyedSubtree(
-                        key: ValueKey(_tab),
-                        child: _tab == 0
-                            ? _buildEpisodesTab(t, seasons)
-                            : _buildAboutTab(t),
-                      ),
+                      child: _enriching
+                          ? const KeyedSubtree(
+                              key: ValueKey('loading'),
+                              child: _DetailLoadingSkeleton(),
+                            )
+                          : KeyedSubtree(
+                              key: ValueKey(_tab),
+                              child: _tab == 0
+                                  ? _buildEpisodesTab(t, seasons)
+                                  : _buildAboutTab(t),
+                            ),
                     ),
                   ],
                 ),
@@ -372,10 +457,31 @@ class _TitleDetailSeriesScreenState extends State<TitleDetailSeriesScreen> {
   }
 
   Widget _buildEpisodesTab(TitleItem t, List<Season> seasons) {
-    final next = _findNextUnwatched(seasons);
+    final unreleased = t.isUnreleased;
+    final next = unreleased ? null : _findNextUnwatched(seasons);
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
+        if (unreleased) ...[
+          Container(
+            width: double.infinity,
+            padding: const EdgeInsets.all(14),
+            decoration: BoxDecoration(
+              color: AppColors.bgCard,
+              borderRadius: BorderRadius.circular(AppSpacing.cardRadiusMin),
+            ),
+            child: Text(
+              'COMING SOON',
+              textAlign: TextAlign.center,
+              style: AppTextStyles.bebas(
+                fontSize: 18,
+                letterSpacing: 0.1,
+                color: AppColors.textSecondary,
+              ),
+            ),
+          ),
+          const SizedBox(height: 18),
+        ],
         if (next != null) ...[
           _ContinueTrackingCard(
             episodeLabel:
@@ -389,8 +495,8 @@ class _TitleDetailSeriesScreenState extends State<TitleDetailSeriesScreen> {
                 cast: t.cast,
               );
               if (updated != null) {
-                SessionStatsStore.logRating(updated.rating, null);
-                SessionStatsStore.logReaction(updated.reaction);
+                SessionStatsStore.logRating(updated.rating, null, isShow: true);
+                SessionStatsStore.logReaction(updated.reaction, isShow: true);
                 _logEpisodeActivity(updated);
                 _onEpisodeUpdated(next.season, updated);
               }
@@ -410,21 +516,30 @@ class _TitleDetailSeriesScreenState extends State<TitleDetailSeriesScreen> {
                     ? null
                     : season.number;
               }),
-              onEpisodeTap: (ep) async {
-                final updated = await showEpisodeActionsSheet(
-                  context,
-                  episode: ep,
-                  label: 'S${season.number} · E${ep.number}',
-                  cast: t.cast,
-                );
-                if (updated != null) {
-                  SessionStatsStore.logRating(updated.rating, null);
-                  SessionStatsStore.logReaction(updated.reaction);
-                  _logEpisodeActivity(updated);
-                  _onEpisodeUpdated(season, updated);
-                }
-              },
-              onMarkAllWatched: season.isComplete
+              onEpisodeTap: unreleased
+                  ? null
+                  : (ep) async {
+                      final updated = await showEpisodeActionsSheet(
+                        context,
+                        episode: ep,
+                        label: 'S${season.number} · E${ep.number}',
+                        cast: t.cast,
+                      );
+                      if (updated != null) {
+                        SessionStatsStore.logRating(
+                          updated.rating,
+                          null,
+                          isShow: true,
+                        );
+                        SessionStatsStore.logReaction(
+                          updated.reaction,
+                          isShow: true,
+                        );
+                        _logEpisodeActivity(updated);
+                        _onEpisodeUpdated(season, updated);
+                      }
+                    },
+              onMarkAllWatched: unreleased || season.isComplete
                   ? null
                   : () => _markSeasonWatched(season),
             ),
@@ -442,8 +557,63 @@ class _TitleDetailSeriesScreenState extends State<TitleDetailSeriesScreen> {
                 .map(MockData.actorById)
                 .map(CastMember.fromMockActor)
                 .toList(),
+      crew: t.crew,
       genres: t.genres,
       onCastTap: (member) => _openActor(context, member),
+      onCrewTap: (member) => _openActor(context, member),
+    );
+  }
+}
+
+/// Smoothly reveals a section that arrives asynchronously (the ratings row)
+/// rather than hard-popping it into the layout and shoving the tab content
+/// down. Height animates from zero and the content fades in together; while
+/// [visible] is false it occupies no vertical space.
+class _RevealSection extends StatelessWidget {
+  final bool visible;
+  final Widget child;
+
+  const _RevealSection({required this.visible, required this.child});
+
+  @override
+  Widget build(BuildContext context) {
+    return AnimatedSize(
+      duration: const Duration(milliseconds: 240),
+      curve: Curves.easeOutCubic,
+      alignment: Alignment.topCenter,
+      child: AnimatedOpacity(
+        duration: const Duration(milliseconds: 240),
+        opacity: visible ? 1 : 0,
+        child: visible
+            ? child
+            : const SizedBox(width: double.infinity, height: 0),
+      ),
+    );
+  }
+}
+
+/// Shown in place of the Episodes/About tab content while TMDB's full
+/// detail lookup (seasons/cast/overview) is still in flight — makes a slow
+/// first open read as "loading" instead of an empty-looking page.
+class _DetailLoadingSkeleton extends StatelessWidget {
+  const _DetailLoadingSkeleton();
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          'Loading details…',
+          style: AppTextStyles.dmSans(fontSize: 12, color: AppColors.textMuted),
+        ),
+        const SizedBox(height: 12),
+        const ListRowsSkeleton(
+          count: 4,
+          rowHeight: 64,
+          padding: EdgeInsets.zero,
+        ),
+      ],
     );
   }
 }
@@ -582,7 +752,7 @@ class _SeasonCard extends StatelessWidget {
   final Season season;
   final bool expanded;
   final VoidCallback onToggle;
-  final ValueChanged<Episode> onEpisodeTap;
+  final ValueChanged<Episode>? onEpisodeTap;
 
   /// Null hides the "Mark All" action (season is already complete).
   final VoidCallback? onMarkAllWatched;
@@ -652,7 +822,10 @@ class _SeasonCard extends StatelessWidget {
             ),
             if (expanded)
               for (final ep in season.episodes)
-                _EpisodeRow(episode: ep, onTap: () => onEpisodeTap(ep)),
+                _EpisodeRow(
+                  episode: ep,
+                  onTap: onEpisodeTap == null ? null : () => onEpisodeTap!(ep),
+                ),
           ],
         ),
       ),
@@ -754,7 +927,7 @@ class _SeasonStatusIcon extends StatelessWidget {
 
 class _EpisodeRow extends StatelessWidget {
   final Episode episode;
-  final VoidCallback onTap;
+  final VoidCallback? onTap;
 
   const _EpisodeRow({required this.episode, required this.onTap});
 
@@ -786,7 +959,7 @@ class _EpisodeRow extends StatelessWidget {
                       ),
                     ),
                     if (stillUrl != null)
-                      Image.network(
+                      PitflixNetworkImage(
                         stillUrl,
                         fit: BoxFit.cover,
                         errorBuilder: (context, error, stackTrace) =>

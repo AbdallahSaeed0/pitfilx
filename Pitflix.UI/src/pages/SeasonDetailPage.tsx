@@ -1,9 +1,12 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { useCallback, useMemo, useState } from "react";
-import { AlertCircle, Eye, EyeOff, FolderInput, LayoutGrid, List, Subtitles } from "lucide-react";
+import { RowListSkeleton } from "../components/ui/Skeleton";
+import { useCallback, useMemo, useRef, useState } from "react";
+import { isTauri } from "@tauri-apps/api/core";
+import { revealItemInDir } from "@tauri-apps/plugin-opener";
+import { AlertCircle, ArrowLeft, Eye, EyeOff, FolderInput, FolderOpen, Info, LayoutGrid, List, Subtitles, Tv } from "lucide-react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import { useAppPrefsStore } from "../store/appPrefsStore";
-import { setEpisodeWatchStatus } from "../api/episodes";
+import { setEpisodeWatchStatus, setEpisodeRewatchCount } from "../api/episodes";
 import { rematchEpisodeFromFile, wrapSeasonEpisodes } from "../api/library";
 import { getShowSeason, getShow } from "../api/series";
 import { getStreamImdbId } from "../api/stream";
@@ -11,7 +14,9 @@ import { PickTmdbTitleModal } from "../components/PickTmdbTitleModal";
 import { SubtitleDrawer } from "../components/SubtitleDrawer";
 import { WsmDownloadModal } from "../components/WsmDownloadModal";
 import { EpisodeRuntimeBadge } from "../components/episodes/EpisodeRuntimeBadge";
+import { EpisodeCreditsModal } from "../components/episodes/EpisodeCreditsModal";
 import { useResumeBeforePlay } from "../hooks/useResumeBeforePlay";
+import { useLongPress } from "../hooks/useLongPress";
 import { markStreamingWatched, unmarkStreamingWatched } from "../hooks/markStreamingWatched";
 import {
   EpisodeExternalListIcon,
@@ -29,8 +34,8 @@ import {
 } from "../components/episodes/EpisodeAvailabilityUi";
 import { MediaImage } from "../components/ui/MediaImage";
 import { ImdbRatingBadge } from "../components/ui/ImdbRatingBadge";
+import { RewatchPopover } from "../components/ui/RewatchPopover";
 import { cn } from "../utils/cn";
-import { Spinner } from "../components/ui/Spinner";
 import { toPosterSrc } from "../utils/posterSrc";
 import { pitflixConfirm } from "../utils/pitflixDialog";
 import { episodeIsWatched, episodeTitleVisible } from "../utils/episodeSpoiler";
@@ -44,6 +49,7 @@ type EpisodeRow = {
   filePath?: string | null;
   subtitlePath?: string | null;
   watchStatus?: string;
+  rewatchCount?: number;
   stillLocalPath?: string | null;
   stillUrl?: string | null;
   tmdbVoteAverage?: number | null;
@@ -55,6 +61,58 @@ type EpisodeRow = {
 };
 
 const VIEW_KEY = "pitflix.season.viewMode";
+
+/** Shared watched-toggle button for both the grid and list episode-row layouts —
+ * clicking toggles watched status, holding (when already watched) reveals the
+ * rewatch-count stepper instead, so the count isn't a separate always-visible pill. */
+function EpisodeWatchToggleButton({
+  isWatched,
+  rewatchCount,
+  labelWatched,
+  labelUnwatched,
+  className,
+  onToggleWatched,
+  onChangeRewatchCount,
+}: {
+  isWatched: boolean;
+  rewatchCount: number;
+  labelWatched: string;
+  labelUnwatched: string;
+  className: string;
+  onToggleWatched: () => void;
+  onChangeRewatchCount: (next: number) => void;
+}) {
+  const [showPopover, setShowPopover] = useState(false);
+  const buttonRef = useRef<HTMLButtonElement>(null);
+  const longPress = useLongPress(() => {
+    if (isWatched) setShowPopover(true);
+  }, onToggleWatched);
+
+  return (
+    <>
+      <button
+        ref={buttonRef}
+        type="button"
+        role="switch"
+        aria-checked={isWatched}
+        className={className}
+        title={isWatched ? "Click to unmark — hold to view/adjust rewatch count" : undefined}
+        {...longPress}
+      >
+        {isWatched ? labelWatched : labelUnwatched}
+      </button>
+      {isWatched ? (
+        <RewatchPopover
+          open={showPopover}
+          onClose={() => setShowPopover(false)}
+          anchorRef={buttonRef}
+          count={rewatchCount}
+          onChange={onChangeRewatchCount}
+        />
+      ) : null}
+    </>
+  );
+}
 
 export function SeasonDetailPage() {
   const { id, seasonNumber: seasonStr } = useParams();
@@ -79,6 +137,7 @@ export function SeasonDetailPage() {
   const [wrapBusy, setWrapBusy] = useState(false);
   const [wrapResult, setWrapResult] = useState<{ message: string; ok: boolean } | null>(null);
   const [markWatchedBusyEpisode, setMarkWatchedBusyEpisode] = useState<number | null>(null);
+  const [creditsEpisode, setCreditsEpisode] = useState<{ episodeNumber: number; title: string } | null>(null);
   const [viewMode, setViewMode] = useState<"list" | "grid">(() => {
     try { return (localStorage.getItem(VIEW_KEY) as "list" | "grid") || "list"; } catch { return "list"; }
   });
@@ -170,6 +229,7 @@ export function SeasonDetailPage() {
         else await markStreamingWatched(input, qc);
         void qc.invalidateQueries({ queryKey: ["show-season", libraryId, season] });
         void qc.invalidateQueries({ queryKey: ["show", libraryId] });
+        void qc.invalidateQueries({ queryKey: ["home-watching-currently"] });
       } catch {
         setEpisodeActionMsg(
           currentlyWatched ? "Could not unmark that episode." : "Could not mark that episode as watched.",
@@ -202,6 +262,7 @@ export function SeasonDetailPage() {
       await Promise.all(ids.map((id) => setEpisodeWatchStatus(id, "Completed")));
       void qc.invalidateQueries({ queryKey: ["show-season", libraryId, season] });
       void qc.invalidateQueries({ queryKey: ["show", libraryId] });
+      void qc.invalidateQueries({ queryKey: ["home-watching-currently"] });
       clearSelection();
     } catch {
       setEpisodeActionMsg("Could not update watch status for all selected.");
@@ -218,6 +279,7 @@ export function SeasonDetailPage() {
       await Promise.all(ids.map((id) => setEpisodeWatchStatus(id, "Unwatched")));
       void qc.invalidateQueries({ queryKey: ["show-season", libraryId, season] });
       void qc.invalidateQueries({ queryKey: ["show", libraryId] });
+      void qc.invalidateQueries({ queryKey: ["home-watching-currently"] });
       clearSelection();
     } catch {
       setEpisodeActionMsg("Could not update watch status for all selected.");
@@ -253,6 +315,7 @@ export function SeasonDetailPage() {
       }
       void qc.invalidateQueries({ queryKey: ["show-season", libraryId, season] });
       void qc.invalidateQueries({ queryKey: ["show", libraryId] });
+      void qc.invalidateQueries({ queryKey: ["home-watching-currently"] });
       clearSelection();
       setEpisodeActionMsg("Re-match finished for selected files.");
       window.setTimeout(() => setEpisodeActionMsg(null), 4500);
@@ -287,6 +350,7 @@ export function SeasonDetailPage() {
       if (r.movedCount > 0) {
         void qc.invalidateQueries({ queryKey: ["show-season", libraryId, season] });
         void qc.invalidateQueries({ queryKey: ["show", libraryId] });
+        void qc.invalidateQueries({ queryKey: ["home-watching-currently"] });
       }
     } catch (e) {
       setWrapResult({ message: e instanceof Error ? e.message : "Could not wrap this season's files.", ok: false });
@@ -311,9 +375,7 @@ export function SeasonDetailPage() {
 
   if (isLoading || !data || !show)
     return (
-      <div className="flex justify-center py-24">
-        <Spinner />
-      </div>
+      <RowListSkeleton />
     );
 
   const seasonName = (data.seasonName as string) ?? `Season ${season}`;
@@ -322,18 +384,20 @@ export function SeasonDetailPage() {
   return (
     <div>
       {ResumePromptModal}
-      <div className="mb-4 flex flex-wrap items-center gap-3">
+      <div className="mb-4 flex flex-wrap items-center gap-2">
         <button
           type="button"
           onClick={() => navigate(-1)}
-          className="text-sm text-pitflix-muted hover:text-white"
+          className="inline-flex items-center gap-1.5 rounded-lg border border-white/10 bg-pitflix-surface/60 px-3 py-1.5 text-sm font-medium text-pitflix-muted transition hover:border-white/20 hover:text-white"
         >
-          ← Back
+          <ArrowLeft className="h-3.5 w-3.5" />
+          Back
         </button>
         <Link
           to={`/series/${libraryId}`}
-          className="text-sm text-pitflix-primary hover:underline"
+          className="inline-flex items-center gap-1.5 rounded-lg border border-pitflix-primary/30 bg-pitflix-primary/10 px-3 py-1.5 text-sm font-medium text-pitflix-primary transition hover:border-pitflix-primary/50 hover:bg-pitflix-primary/15"
         >
+          <Tv className="h-3.5 w-3.5" />
           Series overview
         </Link>
       </div>
@@ -518,6 +582,7 @@ export function SeasonDetailPage() {
               const isWatched = episodeIsWatched(ep, inLibrary);
               const revealTitle = episodeTitleVisible(spoilerProtection, inLibrary, ep);
               const isNextUp = inLibrary && nextEpisode != null && ep.id === nextEpisode.id;
+              const isSelected = inLibrary && ep.id != null && selectedIds.has(ep.id);
               const epThumb = episodeThumb(ep);
               const missingReleased = !inLibrary && ep.isAired;
               const upcoming = !inLibrary && !ep.isAired;
@@ -538,14 +603,29 @@ export function SeasonDetailPage() {
                       : undefined
                   }
                   className={cn(
-                    "group relative flex flex-col overflow-hidden rounded-2xl border transition-all duration-300",
+                    "group relative flex flex-col overflow-hidden rounded-2xl border transition-all duration-300 hover:-translate-y-1 hover:shadow-2xl hover:shadow-black/55",
                     inLibrary && (isNextUp ? "border-pitflix-primary/60 bg-pitflix-surface hover:border-pitflix-primary/40" : "border-pitflix-card/60 bg-pitflix-surface hover:border-pitflix-primary/40"),
+                    isSelected && "ring-2 ring-pitflix-primary/60 border-pitflix-primary/50",
                     missingReleased && episodeExternalCardClass("missing", "cursor-pointer rounded-2xl border"),
                     upcoming && episodeExternalCardClass("upcoming", "rounded-2xl border"),
                   )}
                 >
                   {/* Thumbnail */}
                   <div className="relative aspect-video w-full overflow-hidden bg-pitflix-card">
+                    {inLibrary && selectedIds.size > 0 ? (
+                      <label
+                        className="absolute left-2 top-2 z-[2] flex h-6 w-6 cursor-pointer items-center justify-center rounded-full bg-black/70 backdrop-blur-sm"
+                        onClick={(e) => e.stopPropagation()}
+                      >
+                        <input
+                          type="checkbox"
+                          className="h-4 w-4 rounded border-pitflix-card bg-pitflix-bg text-pitflix-primary focus:ring-pitflix-primary"
+                          checked={isSelected}
+                          onChange={() => ep.id != null && toggleSelect(ep.id)}
+                          aria-label={`Select episode ${ep.episodeNumber}`}
+                        />
+                      </label>
+                    ) : null}
                     <MediaImage
                       src={epThumb}
                       alt=""
@@ -591,7 +671,7 @@ export function SeasonDetailPage() {
                         onClick={() =>
                           void requestPlay({
                             filePath: ep.filePath!,
-                            title: `${show.title} · S${season}E${ep.episodeNumber}`,
+                            title: `${show.title} · ${ep.title?.trim() || `S${season}E${ep.episodeNumber}`}`,
                             posterPath: show.selectedPosterPath || show.posterLocalPath || null,
                             mediaType: "Series",
                             durationSeconds: 0,
@@ -645,19 +725,49 @@ export function SeasonDetailPage() {
                     <div className="mt-auto flex flex-col gap-2 pt-2">
                       {inLibrary ? (
                         <div className="flex flex-wrap items-center gap-1.5">
-                          <button
-                            type="button"
-                            onClick={() => {
+                          <EpisodeWatchToggleButton
+                            isWatched={isWatched}
+                            rewatchCount={ep.rewatchCount ?? 0}
+                            labelWatched="✓ Watched"
+                            labelUnwatched="Mark watched"
+                            className={`rounded-full border px-2.5 py-1 text-[10px] font-semibold transition-all ${isWatched ? "border-green-500/90 bg-green-600/85 text-white" : "border-pitflix-subtle/50 text-pitflix-muted hover:border-pitflix-primary/60 hover:text-white"}`}
+                            onToggleWatched={() => {
                               const next = isWatched ? "Unwatched" : "Completed";
                               void setEpisodeWatchStatus(ep.id!, next).then(() => {
                                 void qc.invalidateQueries({ queryKey: ["show-season", libraryId, season] });
                                 void qc.invalidateQueries({ queryKey: ["show", libraryId] });
+                                void qc.invalidateQueries({ queryKey: ["home-watching-currently"] });
                               });
                             }}
-                            className={`rounded-full border px-2.5 py-1 text-[10px] font-semibold transition-all ${isWatched ? "border-green-500/90 bg-green-600/85 text-white" : "border-pitflix-subtle/50 text-pitflix-muted hover:border-pitflix-primary/60 hover:text-white"}`}
+                            onChangeRewatchCount={(next) =>
+                              void setEpisodeRewatchCount(ep.id!, next).then(() => {
+                                void qc.invalidateQueries({ queryKey: ["show-season", libraryId, season] });
+                              })
+                            }
+                          />
+                          <button
+                            type="button"
+                            onClick={() =>
+                              setCreditsEpisode({
+                                episodeNumber: ep.episodeNumber,
+                                title: revealTitle ? (ep.title?.trim() ? ep.title : `Episode ${ep.episodeNumber}`) : `Episode ${ep.episodeNumber}`,
+                              })
+                            }
+                            className="flex items-center justify-center rounded-full border border-pitflix-card/60 p-1.5 text-pitflix-muted hover:border-pitflix-primary/50 hover:text-pitflix-primary"
+                            title="Cast & crew for this episode"
                           >
-                            {isWatched ? "✓ Watched" : "Mark watched"}
+                            <Info className="h-3.5 w-3.5" />
                           </button>
+                          {ep.filePath && isTauri() ? (
+                            <button
+                              type="button"
+                              onClick={() => void revealItemInDir(ep.filePath!).catch(() => {})}
+                              className="flex items-center justify-center rounded-full border border-pitflix-card/60 p-1.5 text-pitflix-muted hover:border-pitflix-primary/50 hover:text-pitflix-primary"
+                              title="Open file in folder"
+                            >
+                              <FolderOpen className="h-3.5 w-3.5" />
+                            </button>
+                          ) : null}
                           {ep.filePath ? (
                             <>
                               <button
@@ -688,6 +798,7 @@ export function SeasonDetailPage() {
                                       if (!r.success) { setEpisodeActionMsg(r.error ?? "Re-match failed."); return; }
                                       void qc.invalidateQueries({ queryKey: ["show-season", libraryId, season] });
                                       void qc.invalidateQueries({ queryKey: ["show", libraryId] });
+                                      void qc.invalidateQueries({ queryKey: ["home-watching-currently"] });
                                     } catch { setEpisodeActionMsg("Could not reach the API."); }
                                     finally { setEpisodeRematchBusyId(null); }
                                   })()
@@ -753,7 +864,9 @@ export function SeasonDetailPage() {
                   upcoming && episodeExternalListClass("upcoming", "rounded-2xl border"),
                 )}
               >
-                {inLibrary ? (
+                {!inLibrary ? (
+                  <EpisodeExternalListIcon kind={missingReleased ? "missing" : "upcoming"} />
+                ) : selectedIds.size > 0 ? (
                   <label className="flex shrink-0 cursor-pointer items-center justify-center p-1">
                     <input
                       type="checkbox"
@@ -764,7 +877,7 @@ export function SeasonDetailPage() {
                     />
                   </label>
                 ) : (
-                  <EpisodeExternalListIcon kind={missingReleased ? "missing" : "upcoming"} />
+                  <div className="w-6 shrink-0" aria-hidden="true" />
                 )}
                 <MediaImage
                   src={epThumb}
@@ -830,25 +943,53 @@ export function SeasonDetailPage() {
                 </div>
                 {inLibrary ? (
                   <>
-                    <button
-                      type="button"
-                      role="switch"
-                      aria-checked={isWatched}
-                      onClick={() => {
-                        const next = isWatched ? "Unwatched" : "Completed";
-                        void setEpisodeWatchStatus(ep.id!, next).then(() => {
-                          void qc.invalidateQueries({ queryKey: ["show-season", libraryId, season] });
-                          void qc.invalidateQueries({ queryKey: ["show", libraryId] });
-                        });
-                      }}
+                    <EpisodeWatchToggleButton
+                      isWatched={isWatched}
+                      rewatchCount={ep.rewatchCount ?? 0}
+                      labelWatched="Watched"
+                      labelUnwatched="Mark watched"
                       className={`shrink-0 select-none rounded-full border-2 px-3 py-2 text-xs font-semibold transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-pitflix-primary ${
                         isWatched
                           ? "border-green-500/90 bg-green-600/85 text-white shadow-[0_0_14px_rgba(34,197,94,0.25)]"
                           : "border-pitflix-subtle/70 bg-pitflix-surface text-pitflix-muted hover:border-pitflix-primary/60 hover:text-white"
                       }`}
+                      onToggleWatched={() => {
+                        const next = isWatched ? "Unwatched" : "Completed";
+                        void setEpisodeWatchStatus(ep.id!, next).then(() => {
+                          void qc.invalidateQueries({ queryKey: ["show-season", libraryId, season] });
+                          void qc.invalidateQueries({ queryKey: ["show", libraryId] });
+                          void qc.invalidateQueries({ queryKey: ["home-watching-currently"] });
+                        });
+                      }}
+                      onChangeRewatchCount={(next) =>
+                        void setEpisodeRewatchCount(ep.id!, next).then(() => {
+                          void qc.invalidateQueries({ queryKey: ["show-season", libraryId, season] });
+                        })
+                      }
+                    />
+                    <button
+                      type="button"
+                      onClick={() =>
+                        setCreditsEpisode({
+                          episodeNumber: ep.episodeNumber,
+                          title: revealTitle ? (ep.title?.trim() ? ep.title : `Episode ${ep.episodeNumber}`) : `Episode ${ep.episodeNumber}`,
+                        })
+                      }
+                      className="flex shrink-0 items-center justify-center rounded-full border border-pitflix-card/60 p-2 text-pitflix-muted hover:border-pitflix-primary/50 hover:text-pitflix-primary"
+                      title="Cast & crew for this episode"
                     >
-                      {isWatched ? "Watched" : "Mark watched"}
+                      <Info className="h-4 w-4" />
                     </button>
+                    {ep.filePath && isTauri() ? (
+                      <button
+                        type="button"
+                        onClick={() => void revealItemInDir(ep.filePath!).catch(() => {})}
+                        className="flex shrink-0 items-center justify-center rounded-full border border-pitflix-card/60 p-2 text-pitflix-muted hover:border-pitflix-primary/50 hover:text-pitflix-primary"
+                        title="Open file in folder"
+                      >
+                        <FolderOpen className="h-4 w-4" />
+                      </button>
+                    ) : null}
                     {ep.filePath ? (
                       <div className="flex shrink-0 flex-wrap justify-end gap-2 opacity-100 transition-all sm:opacity-0 sm:group-hover:opacity-100">
                         <button
@@ -871,6 +1012,7 @@ export function SeasonDetailPage() {
                                 setEpisodeActionMsg("Episode matched again from the file.");
                                 void qc.invalidateQueries({ queryKey: ["show-season", libraryId, season] });
                                 void qc.invalidateQueries({ queryKey: ["show", libraryId] });
+                                void qc.invalidateQueries({ queryKey: ["home-watching-currently"] });
                                 if (r.showId != null && r.showId !== libraryId) {
                                   navigate(`/series/${r.showId}/season/${season}`, { replace: true });
                                 }
@@ -914,7 +1056,7 @@ export function SeasonDetailPage() {
                           onClick={() =>
                             void requestPlay({
                               filePath: ep.filePath!,
-                              title: `${show.title} · S${season}E${ep.episodeNumber}`,
+                              title: `${show.title} · ${ep.title?.trim() || `S${season}E${ep.episodeNumber}`}`,
                               posterPath: show.selectedPosterPath || show.posterLocalPath || null,
                               mediaType: "Series",
                               durationSeconds: 0,
@@ -1009,6 +1151,7 @@ export function SeasonDetailPage() {
           window.setTimeout(() => setEpisodeActionMsg(null), 4500);
           void qc.invalidateQueries({ queryKey: ["show-season", libraryId, season] });
           void qc.invalidateQueries({ queryKey: ["show", libraryId] });
+          void qc.invalidateQueries({ queryKey: ["home-watching-currently"] });
           if (r.showId != null && r.showId !== libraryId) {
             navigate(`/series/${r.showId}/season/${season}`, { replace: true });
           }
@@ -1066,6 +1209,15 @@ export function SeasonDetailPage() {
             </div>
           </div>
         </div>
+      ) : null}
+      {creditsEpisode ? (
+        <EpisodeCreditsModal
+          libraryShowId={libraryId}
+          season={season}
+          episodeNumber={creditsEpisode.episodeNumber}
+          episodeTitle={creditsEpisode.title}
+          onClose={() => setCreditsEpisode(null)}
+        />
       ) : null}
     </div>
   );

@@ -448,6 +448,7 @@ class _ActivityRow extends StatelessWidget {
     SocialActivityAction.watched => 'watched',
     SocialActivityAction.rated => 'rated',
     SocialActivityAction.addedToWatchlist => 'added to Watch Later',
+    SocialActivityAction.addedToFavorites => 'added to Favorites',
   };
 
   @override

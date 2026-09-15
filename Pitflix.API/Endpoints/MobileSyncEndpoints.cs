@@ -32,9 +32,29 @@ public static class MobileSyncEndpoints
             if (!ok)
                 return Results.Json(new { success = false, error }, jsonSerializerOptions, statusCode: 400);
 
-            // Push right away so the link "does something" immediately instead of waiting
-            // up to 5 minutes for the background timer's first tick.
-            var (pushOk, pushError) = await sync.PushAsync(ct).ConfigureAwait(false);
+            // Push right away so the link "does something" immediately instead of waiting up to
+            // 5 minutes for the background timer's first tick — but bounded to a short timeout.
+            // A large library's poster enrichment (live per-title TMDB lookups —
+            // MediaCardPosterEnricher, never cached back to the DB) can take longer than the
+            // frontend's request timeout, which previously made a successful link look like a
+            // failed "Couldn't reach the desktop backend" even though it had already saved. If
+            // this push doesn't finish in time, the background hosted service retries it within 5
+            // minutes, so bailing out here just means "not synced *yet*", not "failed".
+            bool pushOk;
+            string? pushError;
+            using (var pushCts = CancellationTokenSource.CreateLinkedTokenSource(ct))
+            {
+                pushCts.CancelAfter(TimeSpan.FromSeconds(10));
+                try
+                {
+                    (pushOk, pushError) = await sync.PushAsync(pushCts.Token).ConfigureAwait(false);
+                }
+                catch (OperationCanceledException) when (!ct.IsCancellationRequested)
+                {
+                    pushOk = false;
+                    pushError = "First sync is still running (large library) — it'll finish automatically within 5 minutes.";
+                }
+            }
             return Results.Json(
                 new { success = true, email, pushed = pushOk, pushError },
                 jsonSerializerOptions);

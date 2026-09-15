@@ -1,17 +1,6 @@
-import {
-  AlignCenter,
-  AlignLeft,
-  AlignRight,
-  ArrowDown,
-  ArrowUp,
-  ChevronLeft,
-  ChevronRight,
-  Eye,
-  EyeOff,
-  Gauge,
-} from "lucide-react";
+import { AlignCenter, AlignLeft, AlignRight, Eye, EyeOff, Gauge } from "lucide-react";
 import { cn } from "../../../utils/cn";
-import { getControlIndexInZone, getControlsInZone } from "../../player/playerLayoutOrder";
+import { getControlsInZone } from "../../player/playerLayoutOrder";
 import {
   CONTROL_SCALE_MAX,
   CONTROL_SCALE_MIN,
@@ -22,7 +11,6 @@ import {
 } from "../../player/playerLayoutSizes";
 import type {
   PlayerControlSize,
-  PlayerLayoutControlId,
   PlayerLayoutEditorSelectionId,
   PlayerLayoutPrefs,
   PlayerLayoutZone,
@@ -42,9 +30,7 @@ type Props = {
   onVisibleChange: (visible: boolean) => void;
   onGlobalControlSizeChange: (size: PlayerControlSize) => void;
   onControlScaleChange: (scale: number | null) => void;
-  onMoveInZone: (direction: "earlier" | "later") => void;
   onSelect: (id: PlayerLayoutEditorSelectionId) => void;
-  onReorderInZone: (id: PlayerLayoutControlId, direction: "earlier" | "later") => void;
   onSeekBarChange: (patch: Partial<PlayerSeekBarPrefs>) => void;
 };
 
@@ -179,9 +165,7 @@ export function PlayerLayoutEditorInspector({
   onVisibleChange,
   onGlobalControlSizeChange,
   onControlScaleChange,
-  onMoveInZone,
   onSelect,
-  onReorderInZone,
   onSeekBarChange,
 }: Props) {
   const isControl = isLayoutControlId(selectedId);
@@ -298,7 +282,6 @@ export function PlayerLayoutEditorInspector({
   const zone = prefs.zones[selectedId];
   const visible = prefs.visible[selectedId];
   const zoneControls = getControlsInZone(prefs, zone, { visibleOnly: false });
-  const indexInZone = getControlIndexInZone(prefs, selectedId);
   const resolvedScale = resolveControlScale(prefs, selectedId);
   const hasScaleOverride = hasControlScaleOverride(prefs, selectedId);
   const globalScalePct = Math.round(controlSizeScale(prefs.controlSize) * 100);
@@ -357,85 +340,39 @@ export function PlayerLayoutEditorInspector({
           </div>
         </div>
 
-        <div className="col-span-1 lg:col-span-3">
+        <div className="col-span-2 lg:col-span-5">
           <SectionLabel>Row position</SectionLabel>
           <div className="flex gap-1">
             <ZoneChip active={zone === "left"} onClick={() => onZoneChange("left")} icon={AlignLeft} label="Left" />
             <ZoneChip active={zone === "center"} onClick={() => onZoneChange("center")} icon={AlignCenter} label="Center" />
             <ZoneChip active={zone === "right"} onClick={() => onZoneChange("right")} icon={AlignRight} label="Right" />
           </div>
-        </div>
-
-        <div className="col-span-1 lg:col-span-3">
-          <SectionLabel>Order in row</SectionLabel>
-          <div className="flex items-center gap-1">
-            <button
-              type="button"
-              disabled={indexInZone <= 0}
-              onClick={() => onMoveInZone("earlier")}
-              className="flex h-8 flex-1 items-center justify-center gap-0.5 rounded-lg border border-white/[0.1] bg-white/[0.04] text-[10px] text-white disabled:opacity-35"
-            >
-              <ChevronLeft className="h-3.5 w-3.5" />
-              Earlier
-            </button>
-            <span className="shrink-0 px-1 text-[10px] tabular-nums text-white/45">
-              {indexInZone >= 0 ? `${indexInZone + 1}/${zoneControls.length}` : "—"}
-            </span>
-            <button
-              type="button"
-              disabled={indexInZone < 0 || indexInZone >= zoneControls.length - 1}
-              onClick={() => onMoveInZone("later")}
-              className="flex h-8 flex-1 items-center justify-center gap-0.5 rounded-lg border border-white/[0.1] bg-white/[0.04] text-[10px] text-white disabled:opacity-35"
-            >
-              Later
-              <ChevronRight className="h-3.5 w-3.5" />
-            </button>
-          </div>
+          <p className="mt-1.5 text-[10px] text-white/35">
+            Drag it in the preview above to reorder within the row.
+          </p>
         </div>
 
         <div className="col-span-2 lg:col-span-12">
-          <SectionLabel>{ZONE_LABELS[zone]} — tap to select, arrows to reorder</SectionLabel>
+          <SectionLabel>{ZONE_LABELS[zone]}</SectionLabel>
           <div className="flex flex-wrap gap-2">
-            {zoneControls.map((id, i) => {
+            {zoneControls.map((id) => {
               const isSelected = id === selectedId;
               const isHidden = !prefs.visible[id];
               return (
-                <div
+                <button
                   key={id}
+                  type="button"
+                  onClick={() => onSelect(id)}
                   className={cn(
-                    "inline-flex items-center gap-0.5 rounded-full border pl-2.5 pr-0.5",
+                    "max-w-[9rem] truncate rounded-full border px-3 py-1.5 text-left text-[10px]",
                     isSelected
-                      ? "border-emerald-400/50 bg-emerald-500/10"
-                      : "border-white/[0.1] bg-white/[0.03]",
+                      ? "border-emerald-400/50 bg-emerald-500/10 font-semibold text-emerald-100"
+                      : "border-white/[0.1] bg-white/[0.03] text-white/75 hover:border-white/25",
+                    isHidden && "text-white/35 line-through",
                   )}
                 >
-                  <button
-                    type="button"
-                    onClick={() => onSelect(id)}
-                    className={cn(
-                      "max-w-[9rem] truncate py-1.5 text-left text-[10px]",
-                      isHidden ? "text-white/35 line-through" : isSelected ? "font-semibold text-emerald-100" : "text-white/75",
-                    )}
-                  >
-                    {PLAYER_LAYOUT_CONTROL_LABELS[id]}
-                  </button>
-                  <button
-                    type="button"
-                    disabled={i === 0}
-                    onClick={() => onReorderInZone(id, "earlier")}
-                    className="flex h-7 w-7 items-center justify-center rounded-full text-white/50 hover:bg-white/10 disabled:opacity-25"
-                  >
-                    <ArrowUp className="h-3 w-3" />
-                  </button>
-                  <button
-                    type="button"
-                    disabled={i === zoneControls.length - 1}
-                    onClick={() => onReorderInZone(id, "later")}
-                    className="flex h-7 w-7 items-center justify-center rounded-full text-white/50 hover:bg-white/10 disabled:opacity-25"
-                  >
-                    <ArrowDown className="h-3 w-3" />
-                  </button>
-                </div>
+                  {PLAYER_LAYOUT_CONTROL_LABELS[id]}
+                </button>
               );
             })}
           </div>

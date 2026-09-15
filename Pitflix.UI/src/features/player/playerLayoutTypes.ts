@@ -34,7 +34,11 @@ export type PlayerLayoutEditorSelectionId =
   | PlayerLayoutControlId
   | "seekBar"
   | "timeCurrent"
-  | "timeRemaining";
+  | "timeRemaining"
+  | "pipCorner";
+
+/** Which screen corner the Picture-in-Picture mini player docks to on entry. */
+export type PlayerPipCorner = "top-left" | "top-right" | "bottom-left" | "bottom-right";
 
 export type PlayerLayoutPrefs = {
   controlSize: PlayerControlSize;
@@ -45,6 +49,7 @@ export type PlayerLayoutPrefs = {
   visible: Record<PlayerLayoutControlId, boolean>;
   order: PlayerLayoutControlId[];
   seekBar: PlayerSeekBarPrefs;
+  pipCorner: PlayerPipCorner;
 };
 
 export const PLAYER_LAYOUT_CONTROL_ORDER: PlayerLayoutControlId[] = [
@@ -80,6 +85,14 @@ export const PLAYER_LAYOUT_SELECTION_LABELS: Record<PlayerLayoutEditorSelectionI
   seekBar: "Seek bar",
   timeCurrent: "Current time",
   timeRemaining: "Remaining time",
+  pipCorner: "Mini player position",
+};
+
+export const PLAYER_PIP_CORNER_LABELS: Record<PlayerPipCorner, string> = {
+  "top-left": "Top left",
+  "top-right": "Top right",
+  "bottom-left": "Bottom left",
+  "bottom-right": "Bottom right",
 };
 
 export const DEFAULT_SEEK_BAR_PREFS: PlayerSeekBarPrefs = {
@@ -125,10 +138,11 @@ export const DEFAULT_PLAYER_LAYOUT_PREFS: PlayerLayoutPrefs = {
   },
   order: [...PLAYER_LAYOUT_CONTROL_ORDER],
   seekBar: { ...DEFAULT_SEEK_BAR_PREFS },
+  pipCorner: "bottom-right",
 };
 
 export function isLayoutControlId(id: PlayerLayoutEditorSelectionId): id is PlayerLayoutControlId {
-  return id !== "seekBar" && id !== "timeCurrent" && id !== "timeRemaining";
+  return id !== "seekBar" && id !== "timeCurrent" && id !== "timeRemaining" && id !== "pipCorner";
 }
 
 /** @deprecated Legacy group alignment — used only when migrating saved prefs. */

@@ -1,29 +1,53 @@
 import { useQuery } from "@tanstack/react-query";
-import { Info, Play, Search, Settings } from "lucide-react";
-import { useEffect, useRef, useState } from "react";
-import { Link, useLocation, useNavigate } from "react-router-dom";
-import { getStreamDiscover } from "../api/stream";
+import { Search } from "lucide-react";
+import { useEffect, useState } from "react";
+import { useLocation, useNavigate } from "react-router-dom";
+import { getStreamDiscover, getStreamGenrePreviews, STREAM_MOVIE_GENRES } from "../api/stream";
 import { searchUnmatched } from "../api/unmatched";
 import { ContentSection } from "../components/streaming/ContentSection";
 import { HeroSection } from "../components/streaming/HeroSection";
-import { MediaImage } from "../components/ui/MediaImage";
-import { Spinner } from "../components/ui/Spinner";
+import { HorizontalScrollRow } from "../components/ui/HorizontalScrollRow";
 import { useDebounce } from "../hooks/useDebounce";
+import {
+  StreamSearchOverlay,
+  type StreamRecentSearch,
+  type StreamSearchKind,
+  type StreamSearchRowLike,
+} from "../features/streaming/StreamSearchOverlay";
 import { cn } from "../utils/cn";
 import type { StreamingDetailsLocationState } from "./StreamingDetailsPage";
 
-type SearchKind = "Both" | "Movie" | "Series";
+const RECENT_SEARCHES_KEY = "pitflix.stream.recent_searches";
 
-type StreamSearchRow = {
-  id: number;
-  title: string;
-  year?: string;
-  posterUrl: string | null;
-  mediaType: "Movie" | "Series";
-  voteAverage: number;
-};
+function loadRecentSearches(): StreamRecentSearch[] {
+  try {
+    const raw = localStorage.getItem(RECENT_SEARCHES_KEY);
+    if (!raw) return [];
+    return JSON.parse(raw) as StreamRecentSearch[];
+  } catch {
+    return [];
+  }
+}
 
-function mapSearchRows(data: unknown, fallback: SearchKind): StreamSearchRow[] {
+function saveRecentSearches(items: StreamRecentSearch[]) {
+  try {
+    localStorage.setItem(RECENT_SEARCHES_KEY, JSON.stringify(items.slice(0, 8)));
+  } catch {
+    /* ignore */
+  }
+}
+
+function addToRecentSearches(item: StreamSearchRowLike | StreamRecentSearch) {
+  const prev = loadRecentSearches().filter(
+    (r) => !(r.id === item.id && r.mediaType === item.mediaType),
+  );
+  saveRecentSearches([
+    { id: item.id, mediaType: item.mediaType, title: item.title, year: item.year ?? null, posterUrl: item.posterUrl },
+    ...prev,
+  ]);
+}
+
+function mapSearchRows(data: unknown, fallback: StreamSearchKind): StreamSearchRowLike[] {
   const rows = (Array.isArray(data) ? data : []).map((raw) => {
     const r = raw as Record<string, unknown>;
     const id = Number(r.id ?? r.Id ?? 0);
@@ -59,28 +83,50 @@ function posterDisplay(url: string | null): string | null {
 const CONTENT_SECTIONS = [
   { title: "TRENDING MOVIES", category: "trending-movie" as const },
   { title: "TRENDING TV SHOWS", category: "trending-tv" as const },
+  { title: "TOP 100 MOVIES ON IMDB", category: "top-imdb-movie" as const },
+  { title: "TOP 100 TV SHOWS ON IMDB", category: "top-imdb-tv" as const },
   { title: "POPULAR MOVIES", category: "popular-movie" as const },
   { title: "POPULAR TV SHOWS", category: "popular-tv" as const },
-  { title: "TOP RATED MOVIES", category: "top-rated-movie" as const },
-  { title: "TOP RATED TV SHOWS", category: "top-rated-tv" as const },
+  { title: "NOW PLAYING IN THEATERS", category: "now-playing-movie" as const },
+  { title: "UPCOMING MOVIES", category: "upcoming" as const },
+  { title: "TV ON THE AIR", category: "on-the-air-tv" as const },
 ] as const;
+
+const GENRE_TILE_ACCENTS: readonly [string, string][] = [
+  ["from-red-600/30", "to-red-950/80"],
+  ["from-blue-600/30", "to-blue-950/80"],
+  ["from-emerald-600/30", "to-emerald-950/80"],
+  ["from-yellow-500/30", "to-yellow-950/80"],
+  ["from-purple-600/30", "to-purple-950/80"],
+  ["from-orange-600/30", "to-orange-950/80"],
+  ["from-pink-600/30", "to-pink-950/80"],
+  ["from-sky-600/30", "to-sky-950/80"],
+  ["from-teal-600/30", "to-teal-950/80"],
+  ["from-rose-600/30", "to-rose-950/80"],
+  ["from-indigo-600/30", "to-indigo-950/80"],
+  ["from-cyan-600/30", "to-cyan-950/80"],
+  ["from-lime-500/30", "to-lime-950/80"],
+  ["from-fuchsia-600/30", "to-fuchsia-950/80"],
+];
 
 export function OnlineStreamPage() {
   const navigate = useNavigate();
   const location = useLocation();
-  const searchRef = useRef<HTMLInputElement>(null);
 
   const [query, setQuery] = useState("");
-  const [kind, setKind] = useState<SearchKind>("Both");
+  const [kind, setKind] = useState<StreamSearchKind>("Both");
   const debounced = useDebounce(query, 280);
+  const [searchOverlayOpen, setSearchOverlayOpen] = useState(false);
+  const [recentSearches, setRecentSearches] = useState<StreamRecentSearch[]>(() => loadRecentSearches());
 
   useEffect(() => {
-    const st = location.state as { seedQuery?: string; seedKind?: SearchKind } | null;
+    const st = location.state as { seedQuery?: string; seedKind?: StreamSearchKind } | null;
     if (!st?.seedQuery?.trim()) return;
     setQuery(st.seedQuery.trim());
     if (st.seedKind === "Movie" || st.seedKind === "Series" || st.seedKind === "Both") {
       setKind(st.seedKind);
     }
+    setSearchOverlayOpen(true);
     navigate(location.pathname, { replace: true, state: {} });
   }, [location.pathname, location.state, navigate]);
 
@@ -90,6 +136,15 @@ export function OnlineStreamPage() {
     queryFn: () => getStreamDiscover("trending-movie"),
     staleTime: 10 * 60 * 1000,
   });
+
+  const genrePreviewsQuery = useQuery({
+    queryKey: ["stream-genre-previews"],
+    queryFn: () => getStreamGenrePreviews(STREAM_MOVIE_GENRES.map((g) => g.id)),
+    staleTime: 24 * 60 * 60 * 1000,
+  });
+  const genrePosterById = new Map(
+    (genrePreviewsQuery.data ?? []).map((g) => [g.id, g.posterUrl] as const),
+  );
 
   // Search
   const searchQuery = useQuery({
@@ -101,182 +156,114 @@ export function OnlineStreamPage() {
     enabled: debounced.trim().length >= 2,
   });
 
-  const isSearching = debounced.trim().length >= 2;
   const searchRows = searchQuery.data ?? [];
 
-  const openDetails = (row: StreamSearchRow, autoPlay = false) => {
+  function openDetails(row: StreamSearchRowLike | StreamRecentSearch, autoPlay = false) {
     const state: StreamingDetailsLocationState = {
       tmdbId: row.id,
       mediaType: row.mediaType,
       title: row.title,
-      posterUrl: posterDisplay(row.posterUrl),
+      posterUrl: posterDisplay(row.posterUrl ?? null),
       year: row.year ?? null,
       ...(autoPlay ? { autoPlay: true as const } : {}),
       returnSeedQuery: query,
       returnSeedKind: kind,
     };
     navigate("/stream-details", { state });
-  };
-
-  const kindTabs: { id: SearchKind; label: string }[] = [
-    { id: "Both", label: "All" },
-    { id: "Movie", label: "Movies" },
-    { id: "Series", label: "TV" },
-  ];
+  }
 
   return (
     <div className="min-h-full pb-12">
-      {/* ── Search bar ── */}
+      {/* ── Search bar (opens the search overlay) ── */}
       <div className="sticky top-0 z-20 -mx-4 mb-6 bg-pitflix-bg/95 px-4 pb-4 pt-4 backdrop-blur-sm">
-        <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
-          <div className="relative flex-1">
-            <Search className="pointer-events-none absolute left-3.5 top-1/2 h-4 w-4 -translate-y-1/2 text-pitflix-muted" />
-            <input
-              ref={searchRef}
-              type="search"
-              value={query}
-              onChange={(e) => setQuery(e.target.value)}
-              placeholder="Search movies and TV shows..."
-              className="w-full rounded-xl border border-pitflix-card bg-pitflix-surface py-2.5 pl-10 pr-4 text-sm text-white placeholder:text-pitflix-muted/60 focus:border-pitflix-primary focus:outline-none focus:ring-1 focus:ring-pitflix-primary/50 transition-colors"
-              autoComplete="off"
-            />
-          </div>
-          <div className="flex gap-1 rounded-xl border border-pitflix-card bg-pitflix-bg p-1 shrink-0">
-            {kindTabs.map((t) => (
-              <button
-                key={t.id}
-                type="button"
-                onClick={() => setKind(t.id)}
-                className={cn(
-                  "rounded-lg px-3 py-1.5 text-xs font-semibold transition-colors",
-                  kind === t.id
-                    ? "bg-pitflix-primary text-white"
-                    : "text-pitflix-muted hover:text-white",
-                )}
-              >
-                {t.label}
-              </button>
-            ))}
-          </div>
-        </div>
+        <button
+          type="button"
+          onClick={() => setSearchOverlayOpen(true)}
+          className="flex w-full items-center gap-2 rounded-xl border border-pitflix-card bg-pitflix-surface px-3.5 py-2.5 text-left text-sm text-pitflix-muted transition-colors hover:border-white/20 hover:bg-pitflix-surface/80"
+        >
+          <Search className="h-4 w-4 shrink-0" />
+          <span className={cn("truncate", query && "text-white")}>
+            {query || "Search movies and TV shows…"}
+          </span>
+        </button>
       </div>
 
-      {/* ── Browse mode (no active search) ── */}
-      {!isSearching ? (
-        <>
-          {/* Hero */}
-          {heroQuery.isLoading ? (
-            <div className="mb-8 h-[420px] w-full animate-pulse rounded-2xl bg-pitflix-card" />
-          ) : heroQuery.data?.length ? (
-            <div className="mb-8">
-              <HeroSection items={heroQuery.data} />
-            </div>
-          ) : null}
+      {/* Hero */}
+      {heroQuery.isLoading ? (
+        <div className="mb-8 h-[420px] w-full animate-pulse rounded-2xl bg-pitflix-card" />
+      ) : heroQuery.data?.length ? (
+        <div className="mb-8">
+          <HeroSection items={heroQuery.data} />
+        </div>
+      ) : null}
 
-          {/* Content sections */}
-          {CONTENT_SECTIONS.map((s) => (
-            <ContentSection key={s.category} title={s.title} category={s.category} />
-          ))}
-        </>
-      ) : (
-        /* ── Search results ── */
-        <>
-          {debounced.trim().length > 0 && debounced.trim().length < 2 ? (
-            <p className="text-sm text-pitflix-muted">Type at least 2 characters to search.</p>
-          ) : null}
-
-          {searchQuery.isFetching ? (
-            <div className="flex justify-center py-20">
-              <Spinner />
-            </div>
-          ) : searchQuery.isError ? (
-            <div className="flex flex-col items-center gap-4 py-20 text-center">
-              <p className="text-4xl">🔑</p>
-              <p className="text-base font-semibold text-white">Search failed</p>
-              <p className="max-w-sm text-sm text-pitflix-subtle">
-                Make sure your TMDB API key is saved in Settings and the API is running.
-              </p>
-              <Link
-                to="/settings"
-                className="mt-2 inline-flex items-center gap-2 rounded-lg bg-pitflix-primary px-5 py-2.5 text-sm font-semibold text-white hover:bg-pitflix-light"
+      {/* Categories */}
+      <section className="mb-8">
+        <h2 className="mb-3 text-xl font-bold text-white">Browse by Category</h2>
+        <HorizontalScrollRow hideHeader className="mb-0" contentClassName="gap-3 pb-2">
+          {STREAM_MOVIE_GENRES.map((g, i) => {
+            const poster = genrePosterById.get(g.id);
+            const accent = GENRE_TILE_ACCENTS[i % GENRE_TILE_ACCENTS.length]!;
+            return (
+              <button
+                key={g.id}
+                type="button"
+                onClick={() =>
+                  navigate("/stream-genre", { state: { genreId: g.id, genreName: g.name } })
+                }
+                className="group relative shrink-0 w-[140px] overflow-hidden rounded-2xl focus:outline-none focus-visible:ring-2 focus-visible:ring-pitflix-primary"
+                style={{ aspectRatio: "2/3" }}
               >
-                <Settings className="h-4 w-4" />
-                Open Settings
-              </Link>
-            </div>
-          ) : searchRows.length === 0 && isSearching ? (
-            <div className="flex flex-col items-center gap-3 py-20 text-center">
-              <Search className="h-12 w-12 text-pitflix-card" />
-              <p className="text-base font-semibold text-white">No results found</p>
-              <p className="text-sm text-pitflix-subtle">
-                Try a different title or check your spelling.
-              </p>
-            </div>
-          ) : (
-            <>
-              <p className="mb-4 text-xs font-semibold uppercase tracking-widest text-white/50">
-                Search results · {searchRows.length} found
-              </p>
-              <div className="grid grid-cols-3 gap-4 sm:grid-cols-4 md:grid-cols-5 lg:grid-cols-6 xl:grid-cols-7">
-                {searchRows.map((row) => {
-                  const poster = posterDisplay(row.posterUrl);
-                  return (
-                    <article
-                      key={`${row.mediaType}-${row.id}`}
-                      className="group flex flex-col overflow-hidden rounded-xl border border-pitflix-card/50 bg-pitflix-surface/80 shadow-lg shadow-black/30 transition-transform duration-200 hover:scale-[1.03]"
-                    >
-                      <button
-                        type="button"
-                        onClick={() => openDetails(row)}
-                        className="relative aspect-[2/3] w-full bg-pitflix-card/40"
-                      >
-                        <MediaImage
-                          src={poster}
-                          alt=""
-                          className="h-full w-full object-cover"
-                          fallbackText={row.mediaType === "Movie" ? "Movie" : "TV"}
-                        />
-                        <span className="absolute left-1.5 top-1.5 rounded bg-black/65 px-1.5 py-0.5 text-[9px] font-bold uppercase text-white">
-                          {row.mediaType === "Movie" ? "Movie" : "TV"}
-                        </span>
-                        {row.voteAverage > 0 && (
-                          <span className="absolute right-1.5 top-1.5 rounded bg-black/70 px-1.5 py-0.5 text-[9px] font-semibold text-yellow-400">
-                            ★ {row.voteAverage.toFixed(1)}
-                          </span>
-                        )}
-                      </button>
+                {poster ? (
+                  <img
+                    src={poster}
+                    alt=""
+                    aria-hidden
+                    className="absolute inset-0 h-full w-full object-cover transition-transform duration-500 group-hover:scale-110"
+                  />
+                ) : (
+                  <div className="absolute inset-0 animate-pulse bg-pitflix-card" />
+                )}
+                <div className={cn("absolute inset-0 bg-gradient-to-b", accent[0], accent[1])} />
+                <div className="absolute inset-0 flex items-end p-3">
+                  <p className="text-sm font-bold leading-tight text-white drop-shadow-lg">
+                    {g.name}
+                  </p>
+                </div>
+              </button>
+            );
+          })}
+        </HorizontalScrollRow>
+      </section>
 
-                      <div className="flex flex-1 flex-col gap-1.5 p-2.5">
-                        <h3 className="line-clamp-2 text-xs font-semibold leading-snug text-white">
-                          {row.title}
-                        </h3>
-                        <p className="text-[10px] text-pitflix-muted">{row.year ?? "—"}</p>
-                        <div className="mt-auto flex flex-col gap-1">
-                          <button
-                            type="button"
-                            onClick={() => openDetails(row, true)}
-                            className="inline-flex items-center justify-center gap-1.5 rounded-lg bg-pitflix-primary py-1.5 text-[11px] font-semibold text-white hover:bg-pitflix-light transition-colors"
-                          >
-                            <Play className="h-3 w-3" />
-                            Play
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => openDetails(row)}
-                            className="inline-flex items-center justify-center gap-1.5 rounded-lg border border-pitflix-card bg-pitflix-card/60 py-1.5 text-[11px] font-semibold text-white hover:border-pitflix-primary/50 hover:bg-pitflix-primary/20 transition-colors"
-                          >
-                            <Info className="h-3 w-3" />
-                            Details
-                          </button>
-                        </div>
-                      </div>
-                    </article>
-                  );
-                })}
-              </div>
-            </>
-          )}
-        </>
+      {/* Content sections */}
+      {CONTENT_SECTIONS.map((s) => (
+        <ContentSection key={s.category} title={s.title} category={s.category} />
+      ))}
+
+      {searchOverlayOpen && (
+        <StreamSearchOverlay
+          query={query}
+          onQueryChange={setQuery}
+          kind={kind}
+          onKindChange={setKind}
+          debouncedSearch={debounced}
+          searchRows={searchRows}
+          isLoading={searchQuery.isFetching}
+          isError={searchQuery.isError}
+          recentSearches={recentSearches}
+          onClearRecents={() => {
+            saveRecentSearches([]);
+            setRecentSearches([]);
+          }}
+          onPick={(item) => {
+            addToRecentSearches(item);
+            setRecentSearches(loadRecentSearches());
+            setSearchOverlayOpen(false);
+            openDetails(item);
+          }}
+          onClose={() => setSearchOverlayOpen(false)}
+        />
       )}
     </div>
   );

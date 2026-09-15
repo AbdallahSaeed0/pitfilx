@@ -1,7 +1,25 @@
 import { Pause, Play, Square } from "lucide-react";
 import { useEffect } from "react";
-import { openPlayerWindow, sendCommand, stopPlayer } from "../api/player";
+import { openPlayerWindow, sendCommand, stopPlayer, taskbarSetPlaying } from "../api/player";
 import { usePlayerSession } from "../hooks/usePlayerSession";
+
+// Listen for taskbar-thumb-click events emitted by the Rust side when the
+// user clicks Previous / Play-Pause / Next on the taskbar thumbnail toolbar.
+async function subscribeTaskbarThumbClicks(
+  onAction: (action: "prev" | "pause" | "next") => void,
+): Promise<(() => void) | undefined> {
+  try {
+    const { listen } = await import("@tauri-apps/api/event");
+    const unlisten = await listen<{ action: "prev" | "pause" | "next" }>(
+      "taskbar-thumb-click",
+      (event) => onAction(event.payload.action),
+    );
+    return unlisten;
+  } catch {
+    // Not in a Tauri context — ignore silently.
+    return undefined;
+  }
+}
 
 // Listen for player3_error events emitted by Tauri when PitflixPlayer.exe
 // cannot be found or launched. Imported lazily so the component still mounts
@@ -43,6 +61,22 @@ export function NowPlayingBar() {
     void subscribePlayer3Error().then((fn) => { unlisten = fn; });
     return () => { unlisten?.(); };
   }, []);
+
+  // Subscribe once on mount; always send the click straight to the backend
+  // session (same IPC path PitflixPlayer itself uses), independent of which
+  // playback surface currently owns the video.
+  useEffect(() => {
+    let unlisten: (() => void) | undefined;
+    void subscribeTaskbarThumbClicks((action) => {
+      void sendCommand(action);
+    }).then((fn) => { unlisten = fn; });
+    return () => { unlisten?.(); };
+  }, []);
+
+  // Keep the taskbar thumbnail's play/pause icon in sync with the session.
+  useEffect(() => {
+    void taskbarSetPlaying(isVisible, isVisible && !session?.isPaused);
+  }, [isVisible, session?.isPaused]);
 
   // Push the main scroll container down so content isn't hidden behind the bar.
   // Done via direct style rather than modifying MainLayout, keeping this change

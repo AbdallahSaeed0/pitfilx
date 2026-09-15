@@ -1,0 +1,15 @@
+{
+  "default": null,
+  "permission": [
+    {
+      "identifier": "allow-folder-action",
+      "description": "Pull a cold-start Explorer folder right-click action (scan/add-device-folder)",
+      "commands": {
+        "allow": [
+          "take_pending_folder_action"
+        ],
+        "deny": []
+      }
+    }
+  ]
+}

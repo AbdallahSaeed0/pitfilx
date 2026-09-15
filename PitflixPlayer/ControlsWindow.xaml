@@ -283,6 +283,48 @@
 
     <Grid>
 
+        <!-- ══ PAUSE INFO OVERLAY (Netflix-style "You're watching" screen) ════
+             Shown while playback is paused (see ControlsWindow.SyncPauseInfoOverlay,
+             driven from UpdateFromSession / OptimisticTogglePause). Declared first so
+             it paints behind the titlebar/controls bar — those stay on top and usable.
+             IsHitTestVisible="False": purely decorative, never eats clicks meant for
+             the seek bar/buttons/video underneath. -->
+        <Border x:Name="PauseInfoOverlay"
+                Visibility="Collapsed" Opacity="0"
+                IsHitTestVisible="False">
+            <Border.Background>
+                <LinearGradientBrush StartPoint="0,0" EndPoint="1,0">
+                    <GradientStop Color="#CC000000" Offset="0.0"/>
+                    <GradientStop Color="#99000000" Offset="0.45"/>
+                    <GradientStop Color="Transparent" Offset="0.85"/>
+                </LinearGradientBrush>
+            </Border.Background>
+            <StackPanel HorizontalAlignment="Left" VerticalAlignment="Center"
+                        MaxWidth="620" Margin="64,0,0,0">
+                <TextBlock Text="You're watching"
+                           Foreground="#AAAAAA" FontFamily="Segoe UI" FontSize="14"/>
+                <TextBlock x:Name="PauseInfoTitleText"
+                           Foreground="White" FontFamily="Segoe UI"
+                           FontSize="34" FontWeight="Bold"
+                           Margin="0,6,0,2" TextTrimming="CharacterEllipsis"/>
+                <TextBlock x:Name="PauseInfoSeasonEpText"
+                           Foreground="#CCCCCC" FontFamily="Segoe UI"
+                           FontSize="16" FontWeight="SemiBold"
+                           Visibility="Collapsed"/>
+                <TextBlock x:Name="PauseInfoEpisodeTitleText"
+                           Foreground="White" FontFamily="Segoe UI"
+                           FontSize="18" FontWeight="SemiBold"
+                           Margin="0,14,0,4" TextTrimming="CharacterEllipsis"
+                           Visibility="Collapsed"/>
+                <TextBlock x:Name="PauseInfoOverviewText"
+                           Foreground="#BBBBBB" FontFamily="Segoe UI"
+                           FontSize="13" TextWrapping="Wrap"
+                           MaxWidth="560" MaxHeight="66"
+                           Margin="0,4,0,0"
+                           Visibility="Collapsed"/>
+            </StackPanel>
+        </Border>
+
         <!-- ══ TITLEBAR (top 40 px) ═════════════════════════════════════════
              Background="Transparent" (non-null) keeps the grid hit-testable
              in an AllowsTransparency window but leaves no visible dark strip
@@ -973,7 +1015,7 @@
              seek-feedback toast. -->
         <Border x:Name="IntroOutroSkipButton"
                 HorizontalAlignment="Right" VerticalAlignment="Bottom"
-                Margin="0,0,24,96"
+                Margin="0,0,24,144"
                 Background="#E6141414" CornerRadius="8"
                 BorderBrush="#33FFFFFF" BorderThickness="1"
                 Visibility="Collapsed" Opacity="0"
@@ -1083,7 +1125,7 @@
             <Border Background="#F0141014"
                     BorderBrush="#7C3AED" BorderThickness="1"
                     CornerRadius="10" Padding="6"
-                    MinWidth="440" MaxWidth="640">
+                    MinWidth="440" MaxWidth="720">
                 <Border.Effect>
                     <DropShadowEffect Color="#7C3AED" BlurRadius="20"
                                       ShadowDepth="0" Opacity="0.45"/>

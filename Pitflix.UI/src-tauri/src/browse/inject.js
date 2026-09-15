@@ -195,18 +195,52 @@
     return null;
   }
 
-  /** Returns `{ url, type: 'video' | 'hls' }` or null. Safe to call
+  // ---- network-detected manifest fallback (Phase 2) ---------------------
+  // Rust observes every sub-resource request the page makes (WebView2's
+  // `WebResourceRequested`) and remembers the most recent HLS/DASH manifest
+  // URLs it saw — this catches players that build their manifest URL in a
+  // way that never shows up in any inline `<script>` (so `mediaDefinitions`
+  // scraping above finds nothing). This page has no `invoke()`/Tauri-command
+  // access (see the module doc on the `pitflix-browse` scheme), so the only
+  // way to read that cache is the same GET-able custom-scheme endpoint the
+  // download button already POSTs to.
+  //
+  // Only `hls` entries are offered here, even though the cache may also
+  // hold `dash` ones — the download backend doesn't have a DASH remux path
+  // yet, and offering it would just ship a download request guaranteed to
+  // fail.
+  function fetchDetectedManifest() {
+    return fetch('https://pitflix-browse.localhost/detected-media')
+      .then(function (r) { return r.ok ? r.json() : []; })
+      .then(function (list) {
+        if (!Array.isArray(list)) return null;
+        for (var i = 0; i < list.length; i++) {
+          if (list[i] && list[i].type === 'hls' && list[i].url) {
+            return { url: list[i].url, type: 'hls' };
+          }
+        }
+        return null;
+      })
+      .catch(function () { return null; });
+  }
+
+  /** Resolves to `{ url, type: 'video' | 'hls' }` or `null`. Safe to call
    * repeatedly (attach-time pre-check, delayed retry, and the authoritative
-   * check right before actually sending the download request). */
+   * check right before actually sending the download request).
+   *
+   * Resolution order: (1) a direct http(s) URL on the element/its <source>
+   * children, (2) a direct-mp4 entry from an embedded player-config script,
+   * (3) an hls entry from that same script, (4) the most recently
+   * network-detected hls manifest for this tab. */
   function resolveVideoSource(el) {
     var direct = directVideoUrl(el);
-    if (direct) return { url: direct, type: 'video' };
+    if (direct) return Promise.resolve({ url: direct, type: 'video' });
     var defs = scanMediaDefinitionsFromPage();
     if (defs) {
       var picked = pickFromMediaDefinitions(defs);
-      if (picked) return picked;
+      if (picked) return Promise.resolve(picked);
     }
-    return null;
+    return fetchDetectedManifest();
   }
 
   function isQualifying(el) {
@@ -243,23 +277,25 @@
   // after the <video> element itself already exists in the DOM — a single
   // retry, not a poll loop.
   function refreshVideoButtonState(el, btn, allowRetry) {
-    var resolved = resolveVideoSource(el);
-    if (resolved) {
-      btn.disabled = false;
-      btn.style.opacity = '';
-      btn.style.cursor = 'pointer';
-      btn.title = 'Download';
-      return;
-    }
-    btn.disabled = true;
-    btn.style.opacity = '0.35';
-    btn.style.cursor = 'not-allowed';
-    btn.title = 'No downloadable source found';
-    if (allowRetry) {
-      setTimeout(function () {
-        if (btn.isConnected) refreshVideoButtonState(el, btn, false);
-      }, 1500);
-    }
+    resolveVideoSource(el).then(function (resolved) {
+      if (!btn.isConnected) return;
+      if (resolved) {
+        btn.disabled = false;
+        btn.style.opacity = '';
+        btn.style.cursor = 'pointer';
+        btn.title = 'Download';
+        return;
+      }
+      btn.disabled = true;
+      btn.style.opacity = '0.35';
+      btn.style.cursor = 'not-allowed';
+      btn.title = 'No downloadable source found';
+      if (allowRetry) {
+        setTimeout(function () {
+          if (btn.isConnected) refreshVideoButtonState(el, btn, false);
+        }, 1500);
+      }
+    });
   }
 
   function attachButton(el, type) {
@@ -291,8 +327,9 @@
       }
       // Re-resolve right before sending — the authoritative, final check —
       // rather than trusting a possibly-stale greyed-out/enabled UI state.
-      var resolved = resolveVideoSource(el);
-      if (resolved) sendDownloadRequest(resolved.url, resolved.type);
+      resolveVideoSource(el).then(function (resolved) {
+        if (resolved) sendDownloadRequest(resolved.url, resolved.type);
+      });
     });
 
     wrapper.appendChild(btn);

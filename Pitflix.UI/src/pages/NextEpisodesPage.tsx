@@ -163,7 +163,7 @@ export function NextEpisodesPage() {
   }, [rows, searchHits]);
 
   return (
-    <div className="mx-auto max-w-4xl space-y-8 pb-14">
+    <div className="w-full space-y-8 pb-14">
       <header className="relative overflow-hidden rounded-3xl border border-white/[0.08] bg-gradient-to-br from-pitflix-primary/15 via-pitflix-surface/40 to-pitflix-bg/60 px-5 py-6 sm:px-8 sm:py-8">
         <div className="pointer-events-none absolute -right-16 -top-16 h-48 w-48 rounded-full bg-pitflix-primary/20 blur-3xl" aria-hidden />
         <div className="relative flex flex-col gap-5 sm:flex-row sm:items-start sm:justify-between">

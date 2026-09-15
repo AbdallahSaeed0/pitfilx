@@ -1,25 +1,27 @@
 import 'package:flutter/material.dart';
-import '../services/local_backend_service.dart';
+import '../models/title_item.dart';
 import '../services/tmdb_service.dart';
+import '../services/user_library_service.dart';
 import '../theme/app_theme.dart';
 import '../widgets/widgets.dart';
+import '../widgets/pitflix_network_image.dart';
 
-/// Grid of TMDB poster/backdrop candidates for a library title — reached
-/// from the Title Detail "..." menu's "Change Poster"/"Change Backdrop"
-/// actions. Selecting one calls the backend's `/api/images/{id}/select`
-/// (which downloads and persists it locally as the title's artwork), then
-/// pops with the chosen relative path so the caller can update its UI.
+/// Grid of TMDB poster/backdrop candidates for a title — reached from the
+/// Title Detail "..." menu's "Change Poster"/"Change Backdrop" actions.
+/// Candidates come straight from TMDB (no desktop backend involved), so this
+/// works for any title with a tmdbId, not just ones matched in the desktop's
+/// local scanned-media library. Selecting one saves it to this account's
+/// `user_title_customizations` row in Supabase, then pops with the chosen
+/// relative path so the caller can update its UI.
 class ImagePickerScreen extends StatefulWidget {
-  final int libraryId;
   final int tmdbId;
-  final String mediaType; // "Movie" | "Series"
+  final TitleKind kind;
   final bool isBackdrop;
 
   const ImagePickerScreen({
     super.key,
-    required this.libraryId,
     required this.tmdbId,
-    required this.mediaType,
+    required this.kind,
     required this.isBackdrop,
   });
 
@@ -32,6 +34,8 @@ class _ImagePickerScreenState extends State<ImagePickerScreen> {
   String? _error;
   String? _savingPath;
 
+  String get _mediaType => widget.kind == TitleKind.movie ? 'movie' : 'series';
+
   @override
   void initState() {
     super.initState();
@@ -41,15 +45,11 @@ class _ImagePickerScreenState extends State<ImagePickerScreen> {
   Future<void> _load() async {
     setState(() => _error = null);
     try {
-      final images = widget.isBackdrop
-          ? await LocalBackendService.fetchBackdropOptions(
-              widget.tmdbId,
-              widget.mediaType,
-            )
-          : await LocalBackendService.fetchPosterOptions(
-              widget.tmdbId,
-              widget.mediaType,
-            );
+      final images = await TmdbService.fetchImages(
+        widget.tmdbId,
+        widget.kind,
+        backdrops: widget.isBackdrop,
+      );
       if (!mounted) return;
       setState(() => _images = images);
     } catch (e) {
@@ -62,18 +62,16 @@ class _ImagePickerScreenState extends State<ImagePickerScreen> {
     setState(() => _savingPath = filePath);
     try {
       if (widget.isBackdrop) {
-        await LocalBackendService.selectBackdrop(
-          widget.libraryId,
-          tmdbId: widget.tmdbId,
-          mediaType: widget.mediaType,
-          backdropPath: filePath,
+        await UserLibraryService.setCustomBackdrop(
+          widget.tmdbId,
+          _mediaType,
+          filePath,
         );
       } else {
-        await LocalBackendService.selectPoster(
-          widget.libraryId,
-          tmdbId: widget.tmdbId,
-          mediaType: widget.mediaType,
-          posterPath: filePath,
+        await UserLibraryService.setCustomPoster(
+          widget.tmdbId,
+          _mediaType,
+          filePath,
         );
       }
       if (!mounted) return;
@@ -204,7 +202,7 @@ class _ImagePickerScreenState extends State<ImagePickerScreen> {
           fit: StackFit.expand,
           children: [
             const ColoredBox(color: AppColors.bgCard),
-            Image.network(
+            PitflixNetworkImage(
               TmdbService.posterUrl(path) ?? '',
               fit: BoxFit.cover,
               errorBuilder: (context, error, stackTrace) =>
@@ -239,7 +237,7 @@ class _ImagePickerScreenState extends State<ImagePickerScreen> {
             fit: StackFit.expand,
             children: [
               const ColoredBox(color: AppColors.bgCard),
-              Image.network(
+              PitflixNetworkImage(
                 TmdbService.backdropUrl(path) ?? '',
                 fit: BoxFit.cover,
                 errorBuilder: (context, error, stackTrace) =>

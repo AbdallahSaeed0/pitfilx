@@ -51,6 +51,17 @@ public class Show
     /// "New episodes available" and other suggestion sections. Doesn't touch per-episode watch state or history.</summary>
     public bool IsDropped { get; set; }
 
+    // ── Next-airing cache (see AddNextAiringCacheMigration / NextAiringRefreshHostedService) ──
+    // Kept warm by a background service so /api/home/next-episodes reads instantly instead of
+    // doing a live TMDB lookup per show on every request. Null NextEpisodeAirDate legitimately
+    // means "no upcoming episode known" (ended/cancelled show), not "not checked yet" — check
+    // NextAiringFetchedAtUtc for that.
+    public string? NextEpisodeName { get; set; }
+    public int? NextEpisodeSeason { get; set; }
+    public int? NextEpisodeNumber { get; set; }
+    public string? NextEpisodeAirDate { get; set; }
+    public DateTime? NextAiringFetchedAtUtc { get; set; }
+
     public ICollection<Episode> Episodes { get; set; } = new List<Episode>();
 
     /// <summary>API-only JSON: TMDB poster when cache paths are empty.</summary>

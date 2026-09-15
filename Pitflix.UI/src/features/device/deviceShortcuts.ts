@@ -37,4 +37,11 @@ export const DEVICE_SHORTCUT_SECTIONS: DeviceShortcutSection[] = [
       { label: "Show keyboard shortcuts", keys: "?" },
     ],
   },
+  {
+    title: "Private Mode",
+    rows: [
+      { label: "Toggle Private Mode", keys: "Hold Ctrl + P for 3s" },
+      { label: "Exit Private Mode", keys: "Esc, or the X next to the title" },
+    ],
+  },
 ];

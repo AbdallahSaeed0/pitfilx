@@ -1,5 +1,6 @@
-import { Copy, Play, Trash2 } from "lucide-react";
+import { Copy, FolderOpen, Play, Trash2 } from "lucide-react";
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { revealItemInDir } from "@tauri-apps/plugin-opener";
 import { formatBytes } from "./playerFormat";
 import type { DeviceFsEntry } from "./playerTypes";
 
@@ -79,6 +80,17 @@ export function PlaylistTileContextMenu({ entry, x, y, onPlay, onDelete, onClose
         <Copy className="h-4 w-4 shrink-0 text-white/65" strokeWidth={2} />
         <span className="min-w-0 flex-1 truncate">Copy path</span>
       </button>
+      {entry.logoUrl === undefined ? (
+        <button
+          type="button"
+          role="menuitem"
+          onClick={() => run(() => void revealItemInDir(entry.path).catch(() => {}))}
+          className="flex w-full items-center gap-2.5 px-3 py-2 text-left text-[13px] text-white/90 transition hover:bg-white/10"
+        >
+          <FolderOpen className="h-4 w-4 shrink-0 text-white/65" strokeWidth={2} />
+          <span className="min-w-0 flex-1 truncate">Show in folder</span>
+        </button>
+      ) : null}
       <div className="my-1 h-px bg-white/8" />
       <button
         type="button"

@@ -16,11 +16,15 @@ export type PitflixSettings = {
   subDlApiKey?: string;
   subSourceApiKey?: string;
   mdblistApiKey?: string;
+  omdbApiKey?: string;
   tvdbApiKey?: string;
+  fanartApiKey?: string;
   letterboxdUsername?: string;
   qbittorrentBaseUrl?: string;
   qbittorrentUsername?: string;
   qbittorrentPassword?: string;
+  stremioAddonManifestUrl?: string;
+  cometAddonManifestUrl?: string;
   libraryPaths: string[];
   /** Folders scanned automatically every ~2 minutes (in addition to the hourly full library pass). */
   pinnedScanPaths?: string[];
@@ -46,6 +50,13 @@ export type PitflixSettings = {
 };
 
 export const getSettings = () => api.get<PitflixSettings>("/settings").then((r) => r.data);
+
+export const verifyStremioAddonManifest = (manifestUrl: string) =>
+  api
+    .get<{ valid: boolean; name?: string | null; error?: string | null }>("/stremio-addon/verify", {
+      params: { manifestUrl },
+    })
+    .then((r) => r.data);
 
 export type MediaPlayerCandidate = { label: string; path: string };
 
@@ -73,11 +84,15 @@ export const saveSettings = (body: {
   subDlApiKey?: string;
   subSourceApiKey?: string;
   mdblistApiKey?: string;
+  omdbApiKey?: string;
   tvdbApiKey?: string;
+  fanartApiKey?: string;
   letterboxdUsername?: string;
   qbittorrentBaseUrl?: string;
   qbittorrentUsername?: string;
   qbittorrentPassword?: string;
+  stremioAddonManifestUrl?: string;
+  cometAddonManifestUrl?: string;
   libraryPaths?: string[];
   mediaPlayerPath?: string;
   useBuiltinPlayer?: boolean;
@@ -136,9 +151,21 @@ export const verifyMdblistKey = (key: string) =>
       return r.data;
     });
 
+export const verifyOmdbKey = (key: string) =>
+  api
+    .get<{ valid: boolean; imdbRating?: string | null; error?: string | null }>("/settings/verify-omdb", {
+      params: { key },
+    })
+    .then((r) => r.data);
+
 export const verifyTvdbKey = (key: string) =>
   api
     .get<{ valid: boolean; error?: string | null }>("/settings/verify-tvdb", { params: { key } })
+    .then((r) => r.data);
+
+export const verifyFanartKey = (key: string) =>
+  api
+    .get<{ valid: boolean; error?: string | null }>("/settings/verify-fanart", { params: { key } })
     .then((r) => r.data);
 
 export const pathExistsOnServer = (path: string) =>

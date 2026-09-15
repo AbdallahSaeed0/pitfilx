@@ -1,0 +1,14 @@
+# If you connect the repo directly (instead of deploying the build/web
+# output manually), set this site's "Base directory" to "PitflixAndroid" in
+# the Netlify dashboard — this repo has the C#/Rust desktop app alongside
+# this Flutter app, and Netlify needs to run from here. The build command
+# below fetches the Flutter SDK itself since Netlify's build image doesn't
+# ship it.
+[build]
+  command = "git clone https://github.com/flutter/flutter.git -b stable --depth 1 _flutter_sdk && export PATH=\"$PATH:$PWD/_flutter_sdk/bin\" && flutter build web --release"
+  publish = "build/web"
+
+[[redirects]]
+  from = "/*"
+  to = "/index.html"
+  status = 200

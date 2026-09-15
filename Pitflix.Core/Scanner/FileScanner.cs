@@ -112,25 +112,50 @@ public sealed class FileScanner
     }
 
     /// <summary>
-    /// True if any parent folder name contains Arabic script, or the filename does.
-    /// Parent folders take precedence for library paths like <c>...\عربي\...</c>.
+    /// Organiser/sort folders that are written in Arabic but denote <b>non-Arabic</b> content
+    /// (<c>اجنبي</c>/<c>أجنبي</c> = "foreign", <c>عالمية</c> = "international"). A file under one of
+    /// these must not be flagged as Arabic just because the bucket label happens to be Arabic script —
+    /// that used to misclassify English movies (e.g. under <c>Movies\اجنبي\…</c>) and doubled TMDB
+    /// search calls.
+    /// </summary>
+    private static readonly HashSet<string> ForeignBucketSegments = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "اجنبي", "اجنبى", "أجنبي", "أجنبى", "عالمية",
+        "Foreign", "Foreign Films", "Western", "International",
+    };
+
+    /// <summary>
+    /// True when the media is Arabic-language. The <b>filename</b> (the real title) is the strongest
+    /// signal; otherwise a parent folder written in Arabic script counts — except explicit "foreign"
+    /// buckets (see <see cref="ForeignBucketSegments"/>), which mean the opposite.
     /// </summary>
     public static bool IsArabicForMediaPath(string filePath)
     {
         if (string.IsNullOrEmpty(filePath))
             return false;
 
+        // The title itself being Arabic is decisive, regardless of how the library is organised.
+        var name = Path.GetFileNameWithoutExtension(filePath);
+        if (!string.IsNullOrEmpty(name) && ArabicCharRegex.IsMatch(name))
+            return true;
+
         for (var dir = Path.GetDirectoryName(filePath);
              !string.IsNullOrEmpty(dir);
              dir = Path.GetDirectoryName(dir))
         {
             var segment = Path.GetFileName(dir.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar));
-            if (!string.IsNullOrEmpty(segment) && ArabicCharRegex.IsMatch(segment))
+            if (string.IsNullOrEmpty(segment))
+                continue;
+
+            // A "foreign / international" bucket explicitly marks its contents as non-Arabic.
+            if (ForeignBucketSegments.Contains(segment))
+                return false;
+
+            if (ArabicCharRegex.IsMatch(segment))
                 return true;
         }
 
-        var name = Path.GetFileNameWithoutExtension(filePath);
-        return !string.IsNullOrEmpty(name) && ArabicCharRegex.IsMatch(name);
+        return false;
     }
 
     /// <summary>

@@ -647,6 +647,7 @@ public partial class ControlsWindow : Window
             _hideTimer.Stop();
             if (!_controlsVisible) ShowControls();
         }
+        SyncPauseInfoOverlay();
     }
 
     public void SetTitle(string title)
@@ -672,6 +673,67 @@ public partial class ControlsWindow : Window
             composed = string.IsNullOrWhiteSpace(composed) ? meta : $"{composed}   ·   {meta}";
         _quickInfoMeta = string.IsNullOrWhiteSpace(composed) ? null : composed;
         _quickInfoOverview = overview;
+
+        // For episodes, subtitle arrives as "S{n} E{n} · Episode Title" (see
+        // PlayerApiClient.GetEpisodeInfoAsync) — split so the pause overlay can show the
+        // season/episode line and the episode's own title on separate lines, Netflix-style.
+        // Movies have no " · " in their subtitle, so _pauseInfoEpisodeTitle stays null for them.
+        _pauseInfoSeasonEp = subtitle;
+        _pauseInfoEpisodeTitle = null;
+        if (!string.IsNullOrWhiteSpace(subtitle) && subtitle.Contains('·'))
+        {
+            var parts = subtitle.Split('·', 2, StringSplitOptions.TrimEntries);
+            _pauseInfoSeasonEp = parts[0];
+            _pauseInfoEpisodeTitle = parts.Length > 1 && parts[1].Length > 0 ? parts[1] : null;
+        }
+        UpdatePauseInfoOverlayContent();
+    }
+
+    // ── Pause info overlay (Netflix-style "You're watching" screen) ──────────────
+    private string? _pauseInfoSeasonEp;
+    private string? _pauseInfoEpisodeTitle;
+    private bool    _pauseOverlayShown;
+
+    private void UpdatePauseInfoOverlayContent()
+    {
+        PauseInfoTitleText.Text = string.IsNullOrWhiteSpace(_quickInfoTitle)
+            ? TitlebarTitleLabel.Text : _quickInfoTitle;
+
+        PauseInfoSeasonEpText.Text = _pauseInfoSeasonEp ?? "";
+        PauseInfoSeasonEpText.Visibility = string.IsNullOrWhiteSpace(_pauseInfoSeasonEp)
+            ? Visibility.Collapsed : Visibility.Visible;
+
+        PauseInfoEpisodeTitleText.Text = _pauseInfoEpisodeTitle ?? "";
+        PauseInfoEpisodeTitleText.Visibility = string.IsNullOrWhiteSpace(_pauseInfoEpisodeTitle)
+            ? Visibility.Collapsed : Visibility.Visible;
+
+        PauseInfoOverviewText.Text = _quickInfoOverview ?? "";
+        PauseInfoOverviewText.Visibility = string.IsNullOrWhiteSpace(_quickInfoOverview)
+            ? Visibility.Collapsed : Visibility.Visible;
+    }
+
+    /// <summary>Call whenever <see cref="_isPaused"/> (or the resume-overlay's visibility) might
+    /// have changed — shows/hides the pause info overlay to match, no-op if already in sync. Never
+    /// shows while the resume-prompt overlay is up, so the two never stack.</summary>
+    private void SyncPauseInfoOverlay()
+    {
+        bool shouldShow = _isPaused && ResumeOverlay.Visibility != Visibility.Visible;
+        if (shouldShow == _pauseOverlayShown) return;
+        _pauseOverlayShown = shouldShow;
+
+        if (shouldShow)
+        {
+            UpdatePauseInfoOverlayContent();
+            PauseInfoOverlay.Visibility = Visibility.Visible;
+            PauseInfoOverlay.BeginAnimation(OpacityProperty,
+                new DoubleAnimation(1.0, TimeSpan.FromMilliseconds(350)));
+        }
+        else
+        {
+            var fade = new DoubleAnimation(0.0, TimeSpan.FromMilliseconds(200));
+            fade.Completed += (_, _) => PauseInfoOverlay.Visibility = Visibility.Collapsed;
+            PauseInfoOverlay.BeginAnimation(OpacityProperty, fade);
+        }
     }
 
     private void OnTitleInfoClick(object sender, RoutedEventArgs e)
@@ -729,9 +791,14 @@ public partial class ControlsWindow : Window
         ResumeProgressEmptyCol.Width  = new GridLength(1.0 - pct, GridUnitType.Star);
 
         ResumeOverlay.Visibility = Visibility.Visible;
+        SyncPauseInfoOverlay(); // resume prompt takes priority — hide the pause info screen if up
     }
 
-    public void HideResumeOverlay() => ResumeOverlay.Visibility = Visibility.Collapsed;
+    public void HideResumeOverlay()
+    {
+        ResumeOverlay.Visibility = Visibility.Collapsed;
+        SyncPauseInfoOverlay(); // in case playback was already paused while the prompt was up
+    }
 
     private void OnResumeClick(object sender, RoutedEventArgs e)
     {
@@ -775,17 +842,25 @@ public partial class ControlsWindow : Window
     // way, click row N → set_property playlist-pos N just works.
     private List<string> _playlistFiles = new();
     private string?      _currentPlaylistFile;
+    private IReadOnlyDictionary<string, PlayerApiClient.PlaylistEpisodeInfo>? _playlistEpisodeMeta;
 
     /// <summary>
     /// Called by MainWindow once mpv's playlist is fully built.  files MUST
     /// be in the same order as mpv's playlist (folder-sorted with current
     /// at currentIdx).  After this returns, the Playlist popup is wired and
     /// the ⋮ menu's "Playlist" row is functional.
+    ///
+    /// <paramref name="episodeMeta"/> is an optional path→episode lookup
+    /// (title, IMDb rating, runtime, overview) for series playlists — when
+    /// present, rows render as episode cards instead of bare filenames.
     /// </summary>
-    public void SetPlaylist(List<string> files, string currentFile)
+    internal void SetPlaylist(
+        List<string> files, string currentFile,
+        IReadOnlyDictionary<string, PlayerApiClient.PlaylistEpisodeInfo>? episodeMeta = null)
     {
-        _playlistFiles       = files;
-        _currentPlaylistFile = currentFile;
+        _playlistFiles        = files;
+        _currentPlaylistFile  = currentFile;
+        _playlistEpisodeMeta  = episodeMeta;
     }
 
     /// <summary>
@@ -839,31 +914,202 @@ public partial class ControlsWindow : Window
             int capturedIdx  = i;                                  // for click closure
             bool isActive    = i == activeIdx;
             string fullPath  = _playlistFiles[i];
-            string filename  = System.IO.Path.GetFileName(fullPath);
 
-            // ── Thumbnail (96×54, 16:9) — Shell-extracted off the UI thread.
-            // First-time files take ~100 ms; subsequent renders hit the
-            // Windows thumbcache and return effectively instantly.
-            var thumbImage = new System.Windows.Controls.Image
+            PlayerApiClient.PlaylistEpisodeInfo? meta = null;
+            if (_playlistEpisodeMeta != null)
             {
-                Width             = 96,
-                Height            = 54,
-                Stretch           = System.Windows.Media.Stretch.UniformToFill,
-                VerticalAlignment = VerticalAlignment.Center,
-            };
-            var thumbBorder = new Border
+                string normPath;
+                try { normPath = System.IO.Path.GetFullPath(fullPath); }
+                catch { normPath = fullPath; }
+                _playlistEpisodeMeta.TryGetValue(normPath, out meta);
+            }
+
+            var row = meta != null
+                ? BuildEpisodeRow(fullPath, meta, i, isActive, capturedIdx)
+                : BuildFileNameRow(fullPath, i, isActive, capturedIdx);
+
+            PlaylistItems.Children.Add(row);
+        }
+    }
+
+    /// <summary>Shared click handler: jumps mpv to the given playlist index.</summary>
+    private async void JumpToPlaylistIndex(int index)
+    {
+        if (!_playlistPinned) PlaylistPopup.IsOpen = false;
+
+        App.Log($"Playlist: jumping to index {index} (ipc={(_ipc != null)})");
+        // Free the disk: tear down ALL thumbnail work (warm mpv + ffmpeg) so
+        // mpv can load the target file without HDD contention.  It re-creates
+        // itself once the file settles.
+        SuspendThumbServer();
+        var ipc = _ipc;
+        if (ipc is null) return;
+        // Send the three commands SEQUENTIALLY (awaited) so they reach mpv in
+        // a deterministic order.  Fire-and-forget previously let them race for
+        // the IPC write-lock, so `pause false` / `start none` could land
+        // before or after the jump unpredictably.  Order: clear `start` (so
+        // the new file begins at 0, not the previous file's resume offset) →
+        // jump → unpause.
+        await ipc.SendAsync("set_property", "start", "none").ConfigureAwait(true);
+        await ipc.SendAsync("playlist-play-index", index).ConfigureAwait(true);
+        await ipc.SendAsync("set_property", "pause", false).ConfigureAwait(true);
+    }
+
+    /// <summary>Plain filename row — used for movies / files with no library episode match.</summary>
+    private Border BuildFileNameRow(string fullPath, int index, bool isActive, int capturedIdx)
+    {
+        string filename = System.IO.Path.GetFileName(fullPath);
+
+        // ── Thumbnail (96×54, 16:9) — Shell-extracted off the UI thread.
+        // First-time files take ~100 ms; subsequent renders hit the
+        // Windows thumbcache and return effectively instantly.
+        var thumbImage = new System.Windows.Controls.Image
+        {
+            Width             = 96,
+            Height            = 54,
+            Stretch           = System.Windows.Media.Stretch.UniformToFill,
+            VerticalAlignment = VerticalAlignment.Center,
+        };
+        var thumbBorder = new Border
+        {
+            Child           = thumbImage,
+            Background      = BrushThumbBg,
+            BorderBrush     = BrushBorderGray,
+            BorderThickness = new Thickness(1),
+            CornerRadius    = new CornerRadius(3),
+            Width           = 98,
+            Height          = 56,
+            ClipToBounds    = true,
+            VerticalAlignment = VerticalAlignment.Center,
+            Margin          = new Thickness(0, 0, 10, 0),
+        };
+        string pathForLoader = fullPath;
+        _ = System.Threading.Tasks.Task.Run(() =>
+        {
+            var img = ShellThumbnail.Get(pathForLoader, 256);
+            if (img is null) return;
+            _ = Dispatcher.InvokeAsync(() => thumbImage.Source = img);
+        });
+
+        var indexLabel = new TextBlock
+        {
+            Text              = $"{index + 1}",
+            Foreground        = BrushTextGray,
+            FontFamily        = new FontFamily("Segoe UI"),
+            FontSize          = 11,
+            VerticalAlignment = VerticalAlignment.Center,
+            Width             = 24,
+            TextAlignment     = TextAlignment.Right,
+            Margin            = new Thickness(0, 0, 8, 0),
+        };
+        var nameLabel = new TextBlock
+        {
+            Text              = filename,
+            Foreground        = isActive
+                ? BrushPurple   // purple = current
+                : Brushes.White,
+            FontFamily        = new FontFamily("Segoe UI"),
+            FontSize          = 13,
+            FontWeight        = isActive ? FontWeights.SemiBold : FontWeights.Normal,
+            VerticalAlignment = VerticalAlignment.Center,
+            TextTrimming      = TextTrimming.CharacterEllipsis,
+        };
+        var marker = new TextBlock
+        {
+            Text              = isActive ? "▶" : "",
+            Foreground        = BrushPurple,
+            FontSize          = 10,
+            VerticalAlignment = VerticalAlignment.Center,
+            Width             = 14,
+            Margin            = new Thickness(0, 0, 4, 0),
+        };
+
+        var stack = new StackPanel { Orientation = Orientation.Horizontal };
+        stack.Children.Add(marker);
+        stack.Children.Add(indexLabel);
+        stack.Children.Add(thumbBorder);
+        stack.Children.Add(nameLabel);
+
+        var row = new Border
+        {
+            Child      = stack,
+            Background = isActive
+                ? BrushPurpleWash   // subtle purple wash
+                : Brushes.Transparent,
+            Cursor     = Cursors.Hand,
+            Padding    = new Thickness(8, 6, 8, 6),
+            CornerRadius = new CornerRadius(4),
+            Margin     = new Thickness(0, 1, 0, 1),
+        };
+        row.MouseEnter += (_, _) =>
+        {
+            if (!isActive) row.Background = BrushHoverGray;
+        };
+        row.MouseLeave += (_, _) =>
+        {
+            row.Background = isActive
+                ? BrushPurpleWash
+                : Brushes.Transparent;
+        };
+        row.MouseLeftButtonDown += (_, e) =>
+        {
+            // Use MouseLeftButtonDown rather than Up so the click fires even
+            // if WPF's popup focus-management eats the matching Up event.
+            e.Handled = true;
+            JumpToPlaylistIndex(capturedIdx);
+        };
+
+        return row;
+    }
+
+    /// <summary>
+    /// Episode-styled row — used when the file resolved to a library episode:
+    /// still/thumbnail, title, IMDb rating + runtime badges, and a one-line
+    /// synopsis, mirroring the "Episodes" list on the show detail page.
+    /// </summary>
+    private Border BuildEpisodeRow(string fullPath, PlayerApiClient.PlaylistEpisodeInfo meta, int index, bool isActive, int capturedIdx)
+    {
+        string title = !string.IsNullOrWhiteSpace(meta.Title) ? meta.Title! : $"Episode {meta.EpisodeNumber}";
+
+        // ── Thumbnail — prefer the show's episode still (local or TMDB URL);
+        // fall back to a Shell thumbnail off the file itself.
+        var thumbImage = new System.Windows.Controls.Image
+        {
+            Width             = 112,
+            Height            = 63,
+            Stretch           = System.Windows.Media.Stretch.UniformToFill,
+            VerticalAlignment = VerticalAlignment.Center,
+        };
+        var thumbBorder = new Border
+        {
+            Child             = thumbImage,
+            Background        = BrushThumbBg,
+            BorderBrush       = BrushBorderGray,
+            BorderThickness   = new Thickness(1),
+            CornerRadius      = new CornerRadius(4),
+            Width             = 114,
+            Height            = 65,
+            ClipToBounds      = true,
+            VerticalAlignment = VerticalAlignment.Top,
+            Margin            = new Thickness(0, 0, 12, 0),
+        };
+
+        string? stillUrl = !string.IsNullOrWhiteSpace(meta.StillLocalPath) ? meta.StillLocalPath : meta.StillUrl;
+        if (!string.IsNullOrWhiteSpace(stillUrl) && Uri.TryCreate(stillUrl, UriKind.Absolute, out var stillUri))
+        {
+            try
             {
-                Child           = thumbImage,
-                Background      = BrushThumbBg,
-                BorderBrush     = BrushBorderGray,
-                BorderThickness = new Thickness(1),
-                CornerRadius    = new CornerRadius(3),
-                Width           = 98,
-                Height          = 56,
-                ClipToBounds    = true,
-                VerticalAlignment = VerticalAlignment.Center,
-                Margin          = new Thickness(0, 0, 10, 0),
-            };
+                var bmp = new System.Windows.Media.Imaging.BitmapImage();
+                bmp.BeginInit();
+                bmp.CacheOption   = System.Windows.Media.Imaging.BitmapCacheOption.OnLoad;
+                bmp.UriSource     = stillUri;
+                bmp.EndInit();
+                thumbImage.Source = bmp;
+            }
+            catch { /* fall through to shell thumbnail below */ }
+        }
+        if (thumbImage.Source is null)
+        {
             string pathForLoader = fullPath;
             _ = System.Threading.Tasks.Task.Run(() =>
             {
@@ -871,96 +1117,122 @@ public partial class ControlsWindow : Window
                 if (img is null) return;
                 _ = Dispatcher.InvokeAsync(() => thumbImage.Source = img);
             });
-
-            var indexLabel = new TextBlock
-            {
-                Text              = $"{i + 1}",
-                Foreground        = BrushTextGray,
-                FontFamily        = new FontFamily("Segoe UI"),
-                FontSize          = 11,
-                VerticalAlignment = VerticalAlignment.Center,
-                Width             = 24,
-                TextAlignment     = TextAlignment.Right,
-                Margin            = new Thickness(0, 0, 8, 0),
-            };
-            var nameLabel = new TextBlock
-            {
-                Text              = filename,
-                Foreground        = isActive
-                    ? BrushPurple   // purple = current
-                    : Brushes.White,
-                FontFamily        = new FontFamily("Segoe UI"),
-                FontSize          = 13,
-                FontWeight        = isActive ? FontWeights.SemiBold : FontWeights.Normal,
-                VerticalAlignment = VerticalAlignment.Center,
-                TextTrimming      = TextTrimming.CharacterEllipsis,
-            };
-            var marker = new TextBlock
-            {
-                Text              = isActive ? "▶" : "",
-                Foreground        = BrushPurple,
-                FontSize          = 10,
-                VerticalAlignment = VerticalAlignment.Center,
-                Width             = 14,
-                Margin            = new Thickness(0, 0, 4, 0),
-            };
-
-            var stack = new StackPanel { Orientation = Orientation.Horizontal };
-            stack.Children.Add(marker);
-            stack.Children.Add(indexLabel);
-            stack.Children.Add(thumbBorder);
-            stack.Children.Add(nameLabel);
-
-            var row = new Border
-            {
-                Child      = stack,
-                Background = isActive
-                    ? BrushPurpleWash   // subtle purple wash
-                    : Brushes.Transparent,
-                Cursor     = Cursors.Hand,
-                Padding    = new Thickness(8, 6, 8, 6),
-                CornerRadius = new CornerRadius(4),
-                Margin     = new Thickness(0, 1, 0, 1),
-            };
-            row.MouseEnter += (_, _) =>
-            {
-                if (!isActive) row.Background = BrushHoverGray;
-            };
-            row.MouseLeave += (_, _) =>
-            {
-                row.Background = isActive
-                    ? BrushPurpleWash
-                    : Brushes.Transparent;
-            };
-            row.MouseLeftButtonDown += async (_, e) =>
-            {
-                // Use MouseLeftButtonDown rather than Up so the click fires
-                // even if WPF's popup focus-management eats the matching Up
-                // event (that was likely what kept "click doesn't start" from
-                // working — Up never reached this handler).
-                e.Handled = true;
-                if (!_playlistPinned) PlaylistPopup.IsOpen = false;
-
-                App.Log($"Playlist: jumping to index {capturedIdx} (ipc={(_ipc != null)})");
-                // Free the disk: tear down ALL thumbnail work (warm mpv +
-                // ffmpeg) so mpv can load the target file without HDD
-                // contention.  It re-creates itself once the file settles.
-                SuspendThumbServer();
-                var ipc = _ipc;
-                if (ipc is null) return;
-                // Send the three commands SEQUENTIALLY (awaited) so they reach
-                // mpv in a deterministic order.  Fire-and-forget previously let
-                // them race for the IPC write-lock, so `pause false` /
-                // `start none` could land before or after the jump
-                // unpredictably.  Order: clear `start` (so the new file begins
-                // at 0, not the previous file's resume offset) → jump → unpause.
-                await ipc.SendAsync("set_property", "start", "none").ConfigureAwait(true);
-                await ipc.SendAsync("playlist-play-index", capturedIdx).ConfigureAwait(true);
-                await ipc.SendAsync("set_property", "pause", false).ConfigureAwait(true);
-            };
-
-            PlaylistItems.Children.Add(row);
         }
+
+        var indexLabel = new TextBlock
+        {
+            Text              = $"{index + 1}",
+            Foreground        = BrushTextGray,
+            FontFamily        = new FontFamily("Segoe UI"),
+            FontSize          = 11,
+            VerticalAlignment = VerticalAlignment.Top,
+            Width             = 20,
+            TextAlignment     = TextAlignment.Right,
+            Margin            = new Thickness(0, 2, 6, 0),
+        };
+
+        var titleLabel = new TextBlock
+        {
+            Text              = title,
+            Foreground        = isActive ? BrushPurple : Brushes.White,
+            FontFamily        = new FontFamily("Segoe UI"),
+            FontSize          = 13,
+            FontWeight        = isActive ? FontWeights.SemiBold : FontWeights.Medium,
+            TextTrimming      = TextTrimming.CharacterEllipsis,
+        };
+
+        var badgesPanel = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(0, 3, 0, 0) };
+        if (meta.ImdbVoteAverage is double imdb && imdb > 0)
+        {
+            badgesPanel.Children.Add(new Border
+            {
+                Background   = MakeFrozen(0x2A, 0x22, 0x08),
+                CornerRadius = new CornerRadius(3),
+                Padding      = new Thickness(5, 1, 5, 1),
+                Margin       = new Thickness(0, 0, 6, 0),
+                Child        = new TextBlock
+                {
+                    Text       = $"IMDb {imdb:0.0}",
+                    FontSize   = 10,
+                    FontWeight = FontWeights.SemiBold,
+                    Foreground = MakeFrozen(0xF5, 0xC5, 0x18),
+                },
+            });
+        }
+        if (meta.RuntimeMinutes is int rt && rt > 0)
+        {
+            badgesPanel.Children.Add(new Border
+            {
+                Background   = MakeFrozen(0x2A, 0x2A, 0x2A),
+                CornerRadius = new CornerRadius(3),
+                Padding      = new Thickness(5, 1, 5, 1),
+                Child        = new TextBlock
+                {
+                    Text       = $"{rt}m",
+                    FontSize   = 10,
+                    Foreground = BrushPanelGray,
+                },
+            });
+        }
+
+        var textStack = new StackPanel { VerticalAlignment = VerticalAlignment.Top };
+        textStack.Children.Add(titleLabel);
+        textStack.Children.Add(badgesPanel);
+        if (!string.IsNullOrWhiteSpace(meta.Overview))
+        {
+            textStack.Children.Add(new TextBlock
+            {
+                Text          = meta.Overview,
+                Foreground    = BrushTextGray,
+                FontFamily    = new FontFamily("Segoe UI"),
+                FontSize      = 11,
+                TextTrimming  = TextTrimming.CharacterEllipsis,
+                TextWrapping  = TextWrapping.Wrap,
+                MaxHeight     = 30,
+                Margin        = new Thickness(0, 4, 0, 0),
+            });
+        }
+
+        var marker = new TextBlock
+        {
+            Text              = isActive ? "▶" : "",
+            Foreground        = BrushPurple,
+            FontSize          = 10,
+            VerticalAlignment = VerticalAlignment.Top,
+            Width             = 14,
+            Margin            = new Thickness(0, 2, 2, 0),
+        };
+
+        var stack = new StackPanel { Orientation = Orientation.Horizontal };
+        stack.Children.Add(marker);
+        stack.Children.Add(indexLabel);
+        stack.Children.Add(thumbBorder);
+        stack.Children.Add(textStack);
+
+        var row = new Border
+        {
+            Child        = stack,
+            Background   = isActive ? BrushPurpleWash : Brushes.Transparent,
+            Cursor       = Cursors.Hand,
+            Padding      = new Thickness(8, 8, 8, 8),
+            CornerRadius = new CornerRadius(4),
+            Margin       = new Thickness(0, 1, 0, 1),
+        };
+        row.MouseEnter += (_, _) =>
+        {
+            if (!isActive) row.Background = BrushHoverGray;
+        };
+        row.MouseLeave += (_, _) =>
+        {
+            row.Background = isActive ? BrushPurpleWash : Brushes.Transparent;
+        };
+        row.MouseLeftButtonDown += (_, e) =>
+        {
+            e.Handled = true;
+            JumpToPlaylistIndex(capturedIdx);
+        };
+
+        return row;
     }
 
     // ── Playlist popup: pin + close handlers ─────────────────────────────────
@@ -1047,6 +1319,7 @@ public partial class ControlsWindow : Window
 
         if (_isPaused) { _hideTimer.Stop(); ShowControls(); }
         else           { _hideTimer.Stop(); _hideTimer.Start(); }
+        SyncPauseInfoOverlay();
     }
 
     public void SetVolume(double v)
@@ -2449,12 +2722,19 @@ public partial class ControlsWindow : Window
         IntroOutroSkipButton.Visibility = Visibility.Collapsed;
     }
 
-    // Kill switch for the intro/outro skip button — fingerprint-sourced segments have shown
-    // wrong skip windows even at confidence >= 0.75 (energy-envelope correlation getting fooled
-    // by similar speech rhythm across unrelated scenes, not just low-confidence heuristic
-    // guesses). SetIntroOutroSkipData still caches fetched data; only the UI is suppressed.
-    // Flip back to false once fingerprinting is more discriminating.
+    // Emergency-only kill switch for the intro/outro skip button — normally the source
+    // whitelist below (IsTrustedSkipSource) is what keeps unreliable fingerprint/blackframe/
+    // silence/heuristic segments off screen. Only flip this to true if a bad segment somehow
+    // slips past that filter. SetIntroOutroSkipData still caches fetched data either way.
     private const bool SkipOverlayDisabled = false;
+
+    // Only marker-based sources (embedded chapter tags, TheIntroDB community timestamps) are
+    // trustworthy enough to surface — same rule as the React overlay. Heuristic (confidence 0.3,
+    // a fixed-offset guess) and the audio-fingerprint/blackframe/silence tier-3 signals have all
+    // shown false positives, fingerprint in particular firing on unrelated scenes even at
+    // confidence >= 0.75 (energy-envelope correlation fooled by similar speech rhythm).
+    private static bool IsTrustedSkipSource(string? source) =>
+        source is "chapter" or "anilist" or "theintrodb" or "introdb" or "skipdb";
 
     private void EvaluateIntroOutroSkip()
     {
@@ -2464,23 +2744,16 @@ public partial class ControlsWindow : Window
         string? kind = null;
         SkipSegment? seg = null;
 
-        // Heuristic-sourced segments (confidence 0.3, a fixed-offset guess with no real
-        // signal from this file) are too unreliable to surface — same rule as the React
-        // overlay. The outro case is exactly why: it's computed once from whichever
-        // sampled episode's duration was known at detection time, then reused unchanged
-        // across every episode in the season — wrong by however many seconds this
-        // episode's runtime differs from that reference.
-        //
         // Outro checked first — rarer/more important near the end, mirrors the
         // equivalent React overlay's priority order.
-        if (_introOutroSkipData.Outro is { } outro && outro.Source != "heuristic" &&
+        if (_introOutroSkipData.Outro is { } outro && IsTrustedSkipSource(outro.Source) &&
             !_dismissedSkipKinds.Contains("outro") &&
             _position >= outro.Start && _position < outro.End)
         {
             kind = "outro";
             seg = outro;
         }
-        else if (_introOutroSkipData.Intro is { } intro && intro.Source != "heuristic" &&
+        else if (_introOutroSkipData.Intro is { } intro && IsTrustedSkipSource(intro.Source) &&
                  !_dismissedSkipKinds.Contains("intro") &&
                  _position >= intro.Start && _position < intro.End)
         {

@@ -1,12 +1,13 @@
 import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { X } from "lucide-react";
 import {
   getTvdbArtworks,
   isClearLogoType,
   TVDB_ARTWORK,
   type TvdbArtwork,
 } from "../api/tvdb";
+import { getFanartArtwork } from "../api/fanart";
+import { Lightbox } from "./ui/Lightbox";
 
 const TYPE_LABEL: Record<number, string> = {
   [TVDB_ARTWORK.BANNER]: "Banners",
@@ -24,29 +25,6 @@ function groupArtworks(artworks: TvdbArtwork[]) {
     groups[key].push(a);
   }
   return groups;
-}
-
-function Lightbox({ url, onClose }: { url: string; onClose: () => void }) {
-  return (
-    <div
-      className="fixed inset-0 z-[9999] flex items-center justify-center bg-black/85 backdrop-blur-sm"
-      onClick={onClose}
-    >
-      <button
-        type="button"
-        className="absolute right-4 top-4 flex h-9 w-9 items-center justify-center rounded-full bg-white/10 text-white hover:bg-white/20"
-        onClick={onClose}
-      >
-        <X className="h-4 w-4" />
-      </button>
-      <img
-        src={url}
-        alt="Full resolution artwork"
-        className="max-h-[90vh] max-w-[90vw] rounded-xl object-contain shadow-2xl"
-        onClick={(e) => e.stopPropagation()}
-      />
-    </div>
-  );
 }
 
 function thumbClass(type: number) {
@@ -81,17 +59,58 @@ export function TvdbArtworkSection({
     enabled: tmdbId > 0 && !initialArtworks?.length,
   });
 
+  const { data: fanart } = useQuery({
+    queryKey: ["fanart-artwork", tmdbId, mediaType],
+    queryFn: () => getFanartArtwork(tmdbId, mediaType),
+    staleTime: 1000 * 60 * 60 * 24,
+    retry: false,
+    enabled: tmdbId > 0,
+  });
+
   const artworks = initialArtworks?.length ? initialArtworks : fetchedArtworks;
+  const hasFanart =
+    !!fanart &&
+    (fanart.clearLogos.length + fanart.posters.length + fanart.backgrounds.length + fanart.characterArt.length) > 0;
 
-  if (!artworks || artworks.length === 0) return null;
+  if ((!artworks || artworks.length === 0) && !hasFanart) return null;
 
-  const groups = groupArtworks(artworks);
+  const groups = artworks ? groupArtworks(artworks) : {};
   const sectionOrder = [
     String(TVDB_ARTWORK.POSTER),
     String(TVDB_ARTWORK.BACKGROUND),
     String(TVDB_ARTWORK.BANNER),
     LOGO_GROUP_KEY,
   ];
+
+  const fanartRow = (label: string, items: { url: string; type: string }[] | undefined, contain: boolean) => {
+    if (!items || items.length === 0) return null;
+    return (
+      <div key={`fanart-${label}`}>
+        <p className="mb-2 text-xs font-semibold uppercase tracking-wider text-white/40">{label}</p>
+        <div className="flex flex-wrap gap-2">
+          {items.map((a, i) => (
+            <button
+              key={`${a.url}-${i}`}
+              type="button"
+              onClick={() => setLightboxUrl(a.url)}
+              className={
+                contain
+                  ? "h-[60px] w-[180px] overflow-hidden rounded-lg border border-white/10 bg-white/5 transition hover:border-pitflix-primary/40"
+                  : "h-[90px] w-[160px] overflow-hidden rounded-lg border border-white/10 transition hover:border-pitflix-primary/40"
+              }
+            >
+              <img
+                src={a.url}
+                alt={label}
+                loading="lazy"
+                className={`h-full w-full ${contain ? "object-contain" : "object-cover"}`}
+              />
+            </button>
+          ))}
+        </div>
+      </div>
+    );
+  };
 
   return (
     <>
@@ -131,6 +150,15 @@ export function TvdbArtworkSection({
               </div>
             );
           })}
+          {hasFanart && (
+            <div className="space-y-6 border-t border-white/[0.06] pt-6">
+              <p className="text-xs font-semibold uppercase tracking-wider text-white/30">From Fanart.tv</p>
+              {fanartRow("Clearlogos", fanart?.clearLogos, true)}
+              {fanartRow("Posters", fanart?.posters, false)}
+              {fanartRow("Backgrounds", fanart?.backgrounds, false)}
+              {fanartRow("Character Art", fanart?.characterArt, true)}
+            </div>
+          )}
         </div>
         <p className="mt-4 text-[10px] text-white/25">
           Image data provided by{" "}
@@ -142,6 +170,20 @@ export function TvdbArtworkSection({
           >
             TheTVDB
           </a>
+          {hasFanart ? (
+            <>
+              {" "}
+              and{" "}
+              <a
+                href="https://fanart.tv"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="underline hover:text-white/50"
+              >
+                Fanart.tv
+              </a>
+            </>
+          ) : null}
         </p>
       </section>
     </>

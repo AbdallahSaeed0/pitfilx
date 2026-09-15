@@ -37,15 +37,19 @@ class ProfileHighlights {
   }
 
   /// From Supabase's `watch_records` rows (see
-  /// UserLibraryService.fetchStatsSource). Watch streak and longest marathon
-  /// aren't computable from this schema (see StatsScreen's doc comment) —
-  /// those stay at their empty defaults, which [isEmpty]'s per-field checks
-  /// already handle gracefully. `network` is only ever set on series rows
-  /// (and only when synced from the desktop import), so mobile-only
-  /// accounts simply won't have a top network yet.
+  /// UserLibraryService.fetchStatsSource), scoped to [mediaType] ('movie' or
+  /// 'series') so the Stats page's per-tab highlights don't mix movie and
+  /// series data (e.g. a movie's decade skewing the Shows tab's "Favorite
+  /// Decade", or vice versa). Watch streak and longest marathon aren't
+  /// computable from this schema (see StatsScreen's doc comment) — those stay
+  /// at their empty defaults, which [isEmpty]'s per-field checks already
+  /// handle gracefully. `network` is only ever set on series rows (and only
+  /// when synced from the desktop import), so it's naturally always null when
+  /// [mediaType] is 'movie'.
   factory ProfileHighlights.fromUserLibraryBundle(
-    List<Map<String, dynamic>> watchRecords,
-  ) {
+    List<Map<String, dynamic>> watchRecords, {
+    required String mediaType,
+  }) {
     String? topOf(Map<String, int> counts) {
       if (counts.isEmpty) return null;
       final sorted = counts.entries.toList()
@@ -56,7 +60,7 @@ class ProfileHighlights {
     final decadeCounts = <String, int>{};
     final genreCounts = <String, int>{};
     final networkCounts = <String, int>{};
-    for (final r in watchRecords) {
+    for (final r in watchRecords.where((r) => r['media_type'] == mediaType)) {
       final year = (r['release_year'] as num?)?.toInt();
       if (year != null && year > 0) {
         final decade = '${(year ~/ 10) * 10}s';

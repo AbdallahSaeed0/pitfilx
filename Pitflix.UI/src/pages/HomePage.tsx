@@ -10,7 +10,7 @@ import {
 import { SortableContext, sortableKeyboardCoordinates, verticalListSortingStrategy } from "@dnd-kit/sortable";
 import { useMutation, useQuery, useQueryClient, keepPreviousData } from "@tanstack/react-query";
 import { useEffect, useMemo, useRef, useState } from "react";
-import { LayoutDashboard, Plus, Search, SlidersHorizontal } from "lucide-react";
+import { Dices, LayoutDashboard, Plus, Search, SlidersHorizontal } from "lucide-react";
 import { Link, useNavigate } from "react-router-dom";
 import { searchLibraryTitles, type LibraryTitleRow } from "../api/library";
 import { fetchFeaturedFallback, fetchHomeLayout, saveHomeLayout } from "../api/homeLayout";
@@ -21,11 +21,15 @@ import { dismissHistoryEntry, getHistory } from "../api/history";
 import { getStats } from "../api/stats";
 import { ContinueWatchingHero, ContinueWatchingMenuDialog, FeaturedFallbackHero } from "../features/home/ContinueWatchingHero";
 import { WatchingCurrentlySection } from "../features/home/WatchingCurrentlySection";
+import { NextUpFallbackHero } from "../features/home/NextUpFallbackHero";
 import { LibrarySectionsPanel } from "../features/home/librarySections/LibrarySectionsPanel";
 import { HomeSectionRenderer } from "../features/home/HomeSectionRenderer";
 import { HomeSectionSlot } from "../features/home/HomeSectionSlot";
 import { QuickActionsStrip } from "../features/home/QuickActionsStrip";
+import { NotificationsBell } from "../components/layout/NotificationsBell";
+import { LazyMount } from "../components/ui/LazyMount";
 import { SectionEditorModal } from "../features/home/SectionEditorModal";
+import { RouletteModal } from "../features/home/RouletteModal";
 import { normalizeSectionOrders } from "../features/home/defaultHomeLayout";
 import { useAppPrefsStore } from "../store/appPrefsStore";
 import { useHomeCustomizeStore } from "../store/homeCustomizeStore";
@@ -57,7 +61,23 @@ function addToRecentSearches(item: LibraryTitleRow) {
 
 
 function HeroSkeleton() {
-  return <div className="mb-10 h-[280px] w-full animate-pulse rounded-2xl bg-pitflix-card" />;
+  // Mirrors ContinueWatchingHero's shape (min-h-[320px], mb-8, bottom-left title/CTA block) — the
+  // hero style most people land on — so the swap from skeleton to real content doesn't reflow.
+  return (
+    <div className="relative mb-8 min-h-[320px] w-full animate-pulse overflow-hidden rounded-2xl bg-pitflix-card ring-1 ring-white/10">
+      <div className="flex min-h-[320px] items-end p-6 sm:p-10">
+        <div className="w-full max-w-2xl">
+          <div className="mb-3 h-2.5 w-32 rounded bg-white/10" />
+          <div className="h-9 w-3/4 rounded bg-white/10 sm:h-10" />
+          <div className="mt-3 h-3 w-40 rounded bg-white/10" />
+          <div className="mt-5 flex gap-2">
+            <div className="h-11 w-28 rounded-xl bg-white/10" />
+            <div className="h-11 w-28 rounded-xl bg-white/10" />
+          </div>
+        </div>
+      </div>
+    </div>
+  );
 }
 
 export function HomePage() {
@@ -75,6 +95,7 @@ export function HomePage() {
   const [recentSearches, setRecentSearches] = useState<RecentSearch[]>(() => loadRecentSearches());
   const [menuOpen, setMenuOpen] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
+  const [rouletteOpen, setRouletteOpen] = useState(false);
 
   const librarySectionsStyle = useAppPrefsStore((s) => s.librarySectionsStyle);
 
@@ -217,6 +238,14 @@ export function HomePage() {
       .catch(() => setContinueError("Could not update. Is Pitflix.API running?"));
   };
 
+  const mostRecentWatching = useMemo(() => {
+    const rows = watchingQ.data ?? [];
+    if (rows.length === 0) return null;
+    return [...rows].sort(
+      (a, b) => new Date(b.lastPlayedAtUtc).getTime() - new Date(a.lastPlayedAtUtc).getTime(),
+    )[0];
+  }, [watchingQ.data]);
+
   const history = (historyQ.data ?? []) as WatchHistoryRow[];
   // Clamp index whenever the history list shrinks (e.g. after dismissing an entry).
   const clampedIndex = Math.min(featuredIndex, Math.max(0, history.length - 1));
@@ -291,7 +320,19 @@ export function HomePage() {
                 </button>
               </>
             ) : (
-              /* Sliders icon → dropdown */
+              <>
+              {/* Roulette — random pick from Up Next or a list */}
+              <button
+                type="button"
+                title="Roulette — pick something to watch at random"
+                onClick={() => setRouletteOpen(true)}
+                className="flex h-9 w-9 items-center justify-center rounded-xl border border-white/15 bg-white/[0.04] text-pitflix-muted transition-colors duration-150 hover:border-white/30 hover:text-white"
+              >
+                <Dices className="h-4 w-4" />
+              </button>
+              {/* Notifications bell (sits next to Home options) */}
+              <NotificationsBell />
+              {/* Sliders icon → dropdown */}
               <div className="relative" ref={menuRef}>
                 <button
                   type="button"
@@ -337,6 +378,7 @@ export function HomePage() {
                   </div>
                 )}
               </div>
+              </>
             )}
           </div>
         </div>
@@ -428,6 +470,11 @@ export function HomePage() {
         </>
       ) : (watchingQ.data?.length ?? 0) === 0 && featuredQ.data ? (
         <FeaturedFallbackHero card={featuredQ.data} />
+      ) : mostRecentWatching ? (
+        <>
+          <NextUpFallbackHero card={mostRecentWatching} />
+          <WatchingCurrentlySection excludeShowId={mostRecentWatching.libraryShowId} />
+        </>
       ) : (
         <WatchingCurrentlySection />
       )}
@@ -463,14 +510,15 @@ export function HomePage() {
         </DndContext>
       ) : (
         <div className="space-y-2">
-          {displaySections.map((section) => (
-            <HomeSectionRenderer
-              key={section.id}
-              section={section}
-              isEditing={false}
-              history={history}
-              onContinueManage={setContinueMenuId}
-            />
+          {displaySections.map((section, index) => (
+            <LazyMount key={section.id} eager={index < 2}>
+              <HomeSectionRenderer
+                section={section}
+                isEditing={false}
+                history={history}
+                onContinueManage={setContinueMenuId}
+              />
+            </LazyMount>
           ))}
         </div>
       )}
@@ -496,6 +544,8 @@ export function HomePage() {
         onMarkCompleted={dismissContinueAndMarkCompleted}
         onCancel={() => setContinueMenuId(null)}
       />
+
+      <RouletteModal open={rouletteOpen} onClose={() => setRouletteOpen(false)} />
 
       {continueError ? (
         <div

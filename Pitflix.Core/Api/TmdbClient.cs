@@ -64,6 +64,61 @@ public sealed class TmdbClient
         return $"{ApiBaseUrl.TrimEnd('/')}/{path}";
     }
 
+    /// <summary>
+    /// GET with bounded retry + backoff for transient TMDB failures (HTTP 429 rate-limit, 5xx, request
+    /// timeouts). Used on the scan/match path so a momentary rate-limit no longer permanently flags a
+    /// perfectly matchable file as unmatched. The caller's cancellation is always honored, never retried,
+    /// and this does not change matching logic — it only makes the lookup itself more resilient.
+    /// </summary>
+    private async Task<string> GetStringWithRetryAsync(string url, CancellationToken cancellationToken,
+        int maxAttempts = 3)
+    {
+        for (var attempt = 1; ; attempt++)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            try
+            {
+                using var resp = await _http.GetAsync(url, cancellationToken).ConfigureAwait(false);
+                if (((int)resp.StatusCode == 429 || (int)resp.StatusCode >= 500) && attempt < maxAttempts)
+                {
+                    await Task.Delay(RetryDelay(resp, attempt), cancellationToken).ConfigureAwait(false);
+                    continue;
+                }
+
+                resp.EnsureSuccessStatusCode();
+                return await resp.Content.ReadAsStringAsync(cancellationToken).ConfigureAwait(false);
+            }
+            catch (TaskCanceledException) when (!cancellationToken.IsCancellationRequested && attempt < maxAttempts)
+            {
+                // Request timeout (not caller cancellation) — treat as transient.
+                await Task.Delay(BackoffDelay(attempt), cancellationToken).ConfigureAwait(false);
+            }
+            catch (HttpRequestException) when (attempt < maxAttempts)
+            {
+                await Task.Delay(BackoffDelay(attempt), cancellationToken).ConfigureAwait(false);
+            }
+        }
+    }
+
+    private static TimeSpan RetryDelay(HttpResponseMessage resp, int attempt)
+    {
+        // Honor Retry-After when TMDB supplies it (capped so a bad header can't stall a scan), else backoff.
+        var retryAfter = resp.Headers.RetryAfter;
+        if (retryAfter?.Delta is { } delta && delta > TimeSpan.Zero)
+            return delta > TimeSpan.FromSeconds(10) ? TimeSpan.FromSeconds(10) : delta;
+        if (retryAfter?.Date is { } date)
+        {
+            var wait = date - DateTimeOffset.UtcNow;
+            if (wait > TimeSpan.Zero)
+                return wait > TimeSpan.FromSeconds(10) ? TimeSpan.FromSeconds(10) : wait;
+        }
+
+        return BackoffDelay(attempt);
+    }
+
+    private static TimeSpan BackoffDelay(int attempt) =>
+        TimeSpan.FromMilliseconds(400 * Math.Pow(2, attempt - 1)); // 400ms → 800ms → 1600ms
+
     /// <summary>TV episode metadata for artwork and titles (TMDB <c>tv/{{id}}/season/{{s}}/episode/{{e}}</c>).</summary>
     public async Task<(string? Name, string? StillPath)?> TryGetTvEpisodeAsync(int tvTmdbId, int seasonNumber,
         int episodeNumber, CancellationToken cancellationToken = default)
@@ -1104,7 +1159,7 @@ public sealed class TmdbClient
             url += $"&{yearParam}={year.Value}";
         }
 
-        var json = await _http.GetStringAsync(url, cancellationToken).ConfigureAwait(false);
+        var json = await GetStringWithRetryAsync(url, cancellationToken).ConfigureAwait(false);
         var jo = JObject.Parse(json);
         var results = jo["results"] as JArray;
         if (results == null || results.Count == 0)
@@ -1139,6 +1194,19 @@ public sealed class TmdbClient
             var (cast, crew) = ParseFullCreditsResponse(creditsJson);
             details.Cast = cast;
             details.Crew = crew;
+
+            // Plain /credits basically never has a "Director"/"Writer" entry for TV — directing and
+            // writing on a series happen per episode, not at the show level, so that data isn't in
+            // this endpoint at all. aggregate_credits rolls crew up across every episode/season with
+            // a per-job episode_count instead; merge its directors/writers in (movies don't need
+            // this — a movie's single director is already in plain /credits).
+            if (!isMovie)
+            {
+                var aggregateCrew = await TryFetchAggregateTvCrewAsync(tmdbId, cancellationToken).ConfigureAwait(false);
+                if (aggregateCrew.Count > 0)
+                    details.Crew.AddRange(aggregateCrew);
+            }
+
             await DownloadCastAndCrewPortraitCachesAsync(details.Cast, details.Crew, cancellationToken)
                 .ConfigureAwait(false);
         }
@@ -1149,6 +1217,54 @@ public sealed class TmdbClient
         }
 
         return details;
+    }
+
+    /// <summary>TV only — directors/writers aggregated across every episode, with a per-job episode
+    /// count (see GetDetailsAsync's merge comment for why plain /credits can't provide this).</summary>
+    private async Task<List<TmdbCrewMember>> TryFetchAggregateTvCrewAsync(int tmdbId, CancellationToken cancellationToken)
+    {
+        var result = new List<TmdbCrewMember>();
+        try
+        {
+            var url = AbsoluteApiUrl($"tv/{tmdbId}/aggregate_credits?api_key={Uri.EscapeDataString(_apiKey)}&language=en-US");
+            var json = await _http.GetStringAsync(url, cancellationToken).ConfigureAwait(false);
+            var root = JObject.Parse(json);
+            var crewArr = root["crew"] as JArray;
+            if (crewArr == null) return result;
+
+            foreach (var p in crewArr)
+            {
+                var pid = (int?)p?["id"] ?? 0;
+                var name = NormalizeCastPersonName((string?)p?["name"]);
+                var profilePath = (string?)p?["profile_path"] ?? "";
+                if (pid <= 0 || string.IsNullOrWhiteSpace(name)) continue;
+                var jobsArr = p?["jobs"] as JArray;
+                if (jobsArr == null) continue;
+
+                foreach (var jobEntry in jobsArr)
+                {
+                    var job = (string?)jobEntry?["job"] ?? "";
+                    if (!job.Equals("Director", StringComparison.OrdinalIgnoreCase) &&
+                        !job.Equals("Writer", StringComparison.OrdinalIgnoreCase))
+                        continue;
+                    var episodeCount = (int?)jobEntry?["episode_count"];
+                    result.Add(new TmdbCrewMember
+                    {
+                        Id = pid,
+                        Name = name,
+                        Job = job,
+                        ProfilePath = profilePath,
+                        EpisodeCount = episodeCount is > 0 ? episodeCount : null,
+                    });
+                }
+            }
+        }
+        catch
+        {
+            // Best-effort enrichment — the show/cast page still works with plain credits alone.
+        }
+
+        return result;
     }
 
     /// <summary>TMDB <c>/credits</c> only: top-billed cast + portrait cache downloads (no movie/tv details request).</summary>
@@ -1163,6 +1279,19 @@ public sealed class TmdbClient
         var (cast, _) = ParseFullCreditsResponse(json);
         await DownloadCastPortraitCachesAsync(cast, cancellationToken).ConfigureAwait(false);
         return cast;
+    }
+
+    /// <summary>TMDB <c>/credits</c> only: full cast + crew, no portrait downloads. For scoring/comparison
+    /// use cases (e.g. recommendation cast/crew overlap) that don't display images.</summary>
+    public async Task<(List<TmdbCastMember> Cast, List<TmdbCrewMember> Crew)?> TryGetCreditsAsync(
+        int tmdbId, string mediaType, CancellationToken cancellationToken = default)
+    {
+        if (tmdbId <= 0)
+            return null;
+        var json = await TryFetchCreditsJsonAsync(tmdbId, mediaType, cancellationToken).ConfigureAwait(false);
+        if (json == null)
+            return null;
+        return ParseFullCreditsResponse(json);
     }
 
     private async Task<string?> TryFetchCreditsJsonAsync(int tmdbId, string mediaType,
@@ -1253,6 +1382,63 @@ public sealed class TmdbClient
         catch
         {
             _artworkCache[cacheKey] = null;
+            return null;
+        }
+    }
+
+    // Same key scheme as _artworkCache. Null sentinel = TMDB has no alternate poster for this title either.
+    private static readonly System.Collections.Concurrent.ConcurrentDictionary<string, string?>
+        _alternatePosterCache = new(StringComparer.OrdinalIgnoreCase);
+
+    /// <summary>
+    /// Fallback poster lookup via TMDB <c>/images?include_image_language=en,null</c> for titles whose
+    /// primary <c>poster_path</c> is empty — the default <c>language=en-US</c> filter on
+    /// <see cref="GetArtworkPathsAsync"/> can miss art that exists but is untagged or in another
+    /// language. Picks the highest-voted poster from the combined language set.
+    /// </summary>
+    public async Task<string?> TryGetAlternatePosterPathAsync(int tmdbId, string mediaType,
+        CancellationToken cancellationToken = default)
+    {
+        if (tmdbId <= 0)
+            return null;
+
+        var cacheKey = $"{mediaType}:{tmdbId}";
+        if (_alternatePosterCache.TryGetValue(cacheKey, out var cached))
+            return cached;
+
+        var isMovie = mediaType.Equals("Movie", StringComparison.OrdinalIgnoreCase);
+        var path = isMovie ? $"movie/{tmdbId}/images" : $"tv/{tmdbId}/images";
+        var url = AbsoluteApiUrl(
+            $"{path}?api_key={Uri.EscapeDataString(_apiKey)}&include_image_language=en,null");
+        try
+        {
+            var json = await _http.GetStringAsync(url, cancellationToken).ConfigureAwait(false);
+            var root = JObject.Parse(json);
+            var posters = root["posters"] as JArray;
+            string? best = null;
+            double bestVotes = -1;
+            if (posters != null)
+            {
+                foreach (var p in posters)
+                {
+                    var filePath = (string?)p?["file_path"];
+                    if (string.IsNullOrWhiteSpace(filePath))
+                        continue;
+                    var votes = (double?)p?["vote_average"] ?? 0;
+                    if (best == null || votes > bestVotes)
+                    {
+                        best = filePath;
+                        bestVotes = votes;
+                    }
+                }
+            }
+
+            _alternatePosterCache[cacheKey] = best;
+            return best;
+        }
+        catch
+        {
+            _alternatePosterCache[cacheKey] = null;
             return null;
         }
     }
@@ -1687,8 +1873,37 @@ public sealed class TmdbClient
         return p;
     }
 
+    /// <summary>All profile photos TMDB has on file for a person (not just the primary one).</summary>
+    public async Task<IReadOnlyList<string>> GetPersonProfilePathsAsync(int personId,
+        CancellationToken cancellationToken = default)
+    {
+        if (personId <= 0)
+            return Array.Empty<string>();
+
+        var url = AbsoluteApiUrl($"person/{personId}/images?api_key={Uri.EscapeDataString(_apiKey)}");
+        try
+        {
+            var json = await _http.GetStringAsync(url, cancellationToken).ConfigureAwait(false);
+            var root = JObject.Parse(json);
+            var profiles = root["profiles"] as JArray;
+            if (profiles == null)
+                return Array.Empty<string>();
+
+            return profiles
+                .Select(p => (string?)p["file_path"])
+                .Where(p => !string.IsNullOrWhiteSpace(p))
+                .Select(p => p!)
+                .ToList();
+        }
+        catch
+        {
+            return Array.Empty<string>();
+        }
+    }
+
     public async Task<string> DownloadImageAsync(string imagePath, string localFileName,
-        CancellationToken cancellationToken = default, string? subfolder = null, string tmdbImageSize = "w500")
+        CancellationToken cancellationToken = default, string? subfolder = null, string tmdbImageSize = "w780",
+        bool forceRedownload = false)
     {
         if (string.IsNullOrWhiteSpace(localFileName))
             throw new ArgumentException("Local file name is required.", nameof(localFileName));
@@ -1700,23 +1915,31 @@ public sealed class TmdbClient
 
         var safeName = Path.GetFileName(localFileName);
         var fullPath = Path.Combine(dir, safeName);
+        var alreadyCached = File.Exists(fullPath);
 
-        if (File.Exists(fullPath))
+        if (alreadyCached && !forceRedownload)
             return fullPath;
 
         if (string.IsNullOrWhiteSpace(imagePath))
             return fullPath;
 
         var path = imagePath.StartsWith('/') ? imagePath : "/" + imagePath;
-        var size = string.IsNullOrWhiteSpace(tmdbImageSize) ? "w500" : tmdbImageSize.Trim();
+        var size = string.IsNullOrWhiteSpace(tmdbImageSize) ? "w780" : tmdbImageSize.Trim();
         var url = $"https://image.tmdb.org/t/p/{size}{path}";
 
         using var response = await _http.GetAsync(url, HttpCompletionOption.ResponseHeadersRead, cancellationToken)
             .ConfigureAwait(false);
         response.EnsureSuccessStatusCode();
 
-        await using var fs = new FileStream(fullPath, FileMode.Create, FileAccess.Write, FileShare.None);
-        await response.Content.CopyToAsync(fs, cancellationToken).ConfigureAwait(false);
+        // Forced re-fetches (e.g. bulk artwork refresh) write to a side-by-side temp file and swap it
+        // in only once the download fully succeeds, so a failed refetch never leaves a title posterless.
+        var writePath = alreadyCached ? fullPath + ".tmp" : fullPath;
+        await using (var fs = new FileStream(writePath, FileMode.Create, FileAccess.Write, FileShare.None))
+        {
+            await response.Content.CopyToAsync(fs, cancellationToken).ConfigureAwait(false);
+        }
+        if (alreadyCached)
+            File.Move(writePath, fullPath, overwrite: true);
 
         return fullPath;
     }
@@ -2017,6 +2240,55 @@ public sealed class TmdbClient
             return string.IsNullOrWhiteSpace(name) ? null : name.Trim();
         }
         catch { return null; }
+    }
+
+    /// <summary>Production companies (movies and TV) plus TV networks (streaming originals live here,
+    /// not in production_companies) from TMDB's core details endpoint — the same data the
+    /// online-streaming page's "Studio" row uses, reused here for the local library detail pages.</summary>
+    public async Task<IReadOnlyList<TmdbCompanyInfo>> TryGetCompaniesAsync(
+        int tmdbId, bool isMovie, CancellationToken cancellationToken = default)
+    {
+        if (tmdbId <= 0) return Array.Empty<TmdbCompanyInfo>();
+        var endpoint = isMovie ? $"movie/{tmdbId}" : $"tv/{tmdbId}";
+        var url = AbsoluteApiUrl($"{endpoint}?api_key={Uri.EscapeDataString(_apiKey)}&language=en-US");
+        try
+        {
+            var json = await _http.GetStringAsync(url, cancellationToken).ConfigureAwait(false);
+            var root = JObject.Parse(json);
+            var result = new List<TmdbCompanyInfo>();
+            var seenIds = new HashSet<int>();
+            var seenNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+            void AddCompany(int id, string? name, string? logoPath, string kind)
+            {
+                if (id <= 0 || string.IsNullOrWhiteSpace(name) || result.Count >= 6) return;
+                var trimmedName = name.Trim();
+                // Minor production companies with no logo are usually in-house shell entities that
+                // just add clutter — drop those, but keep networks regardless since they're the
+                // primary "who airs this" signal.
+                if (kind == "company" && string.IsNullOrEmpty(logoPath)) return;
+                if (!seenIds.Add(id) || !seenNames.Add(trimmedName)) return;
+                result.Add(new TmdbCompanyInfo { Id = id, Name = trimmedName, LogoPath = logoPath, Kind = kind });
+            }
+
+            if (!isMovie && root["networks"] is JArray networks)
+            {
+                foreach (var n in networks)
+                    AddCompany((int?)n["id"] ?? 0, (string?)n["name"], (string?)n["logo_path"], "network");
+            }
+
+            if (root["production_companies"] is JArray companies)
+            {
+                foreach (var c in companies)
+                    AddCompany((int?)c["id"] ?? 0, (string?)c["name"], (string?)c["logo_path"], "company");
+            }
+
+            return result;
+        }
+        catch
+        {
+            return Array.Empty<TmdbCompanyInfo>();
+        }
     }
 
     /// <summary>

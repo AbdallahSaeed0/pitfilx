@@ -24,6 +24,10 @@ class Episode {
   /// available from either source.
   final String? stillPath;
 
+  /// This episode's original air date, straight from TMDB's `air_date`
+  /// ("yyyy-MM-dd") — null when TMDB has none (unaired/unknown episodes).
+  final String? airDate;
+
   const Episode({
     required this.number,
     required this.title,
@@ -34,6 +38,7 @@ class Episode {
     this.reaction,
     this.favoritePerson,
     this.stillPath,
+    this.airDate,
   });
 
   Episode copyWith({
@@ -53,5 +58,6 @@ class Episode {
     reaction: reaction ?? this.reaction,
     favoritePerson: favoritePerson ?? this.favoritePerson,
     stillPath: stillPath ?? this.stillPath,
+    airDate: airDate,
   );
 }

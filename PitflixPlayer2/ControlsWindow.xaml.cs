@@ -617,17 +617,25 @@ public partial class ControlsWindow : Window
     // way, click row N → set_property playlist-pos N just works.
     private List<string> _playlistFiles = new();
     private string?      _currentPlaylistFile;
+    private IReadOnlyDictionary<string, PlayerApiClient.PlaylistEpisodeInfo>? _playlistEpisodeMeta;
 
     /// <summary>
     /// Called by MainWindow once mpv's playlist is fully built.  files MUST
     /// be in the same order as mpv's playlist (folder-sorted with current
     /// at currentIdx).  After this returns, the Playlist popup is wired and
     /// the ⋮ menu's "Playlist" row is functional.
+    ///
+    /// <paramref name="episodeMeta"/> is an optional path→episode lookup
+    /// (title, IMDb rating, runtime, overview) for series playlists — when
+    /// present, rows render as episode cards instead of bare filenames.
     /// </summary>
-    public void SetPlaylist(List<string> files, string currentFile)
+    internal void SetPlaylist(
+        List<string> files, string currentFile,
+        IReadOnlyDictionary<string, PlayerApiClient.PlaylistEpisodeInfo>? episodeMeta = null)
     {
-        _playlistFiles       = files;
-        _currentPlaylistFile = currentFile;
+        _playlistFiles        = files;
+        _currentPlaylistFile  = currentFile;
+        _playlistEpisodeMeta  = episodeMeta;
     }
 
     /// <summary>
@@ -681,31 +689,197 @@ public partial class ControlsWindow : Window
             int capturedIdx  = i;                                  // for click closure
             bool isActive    = i == activeIdx;
             string fullPath  = _playlistFiles[i];
-            string filename  = System.IO.Path.GetFileName(fullPath);
 
-            // ── Thumbnail (96×54, 16:9) — Shell-extracted off the UI thread.
-            // First-time files take ~100 ms; subsequent renders hit the
-            // Windows thumbcache and return effectively instantly.
-            var thumbImage = new System.Windows.Controls.Image
+            PlayerApiClient.PlaylistEpisodeInfo? meta = null;
+            if (_playlistEpisodeMeta != null)
             {
-                Width             = 96,
-                Height            = 54,
-                Stretch           = System.Windows.Media.Stretch.UniformToFill,
-                VerticalAlignment = VerticalAlignment.Center,
-            };
-            var thumbBorder = new Border
+                string normPath;
+                try { normPath = System.IO.Path.GetFullPath(fullPath); }
+                catch { normPath = fullPath; }
+                _playlistEpisodeMeta.TryGetValue(normPath, out meta);
+            }
+
+            var row = meta != null
+                ? BuildEpisodeRow(fullPath, meta, i, isActive, capturedIdx)
+                : BuildFileNameRow(fullPath, i, isActive, capturedIdx);
+
+            PlaylistItems.Children.Add(row);
+        }
+    }
+
+    /// <summary>Shared click handler: jumps mpv to the given playlist index.</summary>
+    private async void JumpToPlaylistIndex(int index)
+    {
+        if (!_playlistPinned) PlaylistPopup.IsOpen = false;
+
+        App.Log($"Playlist: jumping to index {index}");
+        // Free the disk: tear down ALL thumbnail work (warm mpv + ffmpeg) so
+        // mpv can load the target file without HDD contention.  It re-creates
+        // itself once the file settles.
+        SuspendThumbServer();
+        // Send the three commands SEQUENTIALLY (awaited) so they reach mpv in
+        // a deterministic order.  Order: clear `start` (so the new file
+        // begins at 0) → jump → unpause.
+        await PlayerApiClient.SendMpvAsync("set_property", "start", "none").ConfigureAwait(true);
+        await PlayerApiClient.SendMpvAsync("playlist-play-index", index).ConfigureAwait(true);
+        await PlayerApiClient.SendMpvAsync("set_property", "pause", false).ConfigureAwait(true);
+    }
+
+    /// <summary>Plain filename row — used for movies / files with no library episode match.</summary>
+    private Border BuildFileNameRow(string fullPath, int index, bool isActive, int capturedIdx)
+    {
+        string filename = System.IO.Path.GetFileName(fullPath);
+
+        // ── Thumbnail (96×54, 16:9) — Shell-extracted off the UI thread.
+        // First-time files take ~100 ms; subsequent renders hit the
+        // Windows thumbcache and return effectively instantly.
+        var thumbImage = new System.Windows.Controls.Image
+        {
+            Width             = 96,
+            Height            = 54,
+            Stretch           = System.Windows.Media.Stretch.UniformToFill,
+            VerticalAlignment = VerticalAlignment.Center,
+        };
+        var thumbBorder = new Border
+        {
+            Child           = thumbImage,
+            Background      = BrushThumbBg,
+            BorderBrush     = BrushBorderGray,
+            BorderThickness = new Thickness(1),
+            CornerRadius    = new CornerRadius(3),
+            Width           = 98,
+            Height          = 56,
+            ClipToBounds    = true,
+            VerticalAlignment = VerticalAlignment.Center,
+            Margin          = new Thickness(0, 0, 10, 0),
+        };
+        string pathForLoader = fullPath;
+        _ = System.Threading.Tasks.Task.Run(() =>
+        {
+            var img = ShellThumbnail.Get(pathForLoader, 256);
+            if (img is null) return;
+            _ = Dispatcher.InvokeAsync(() => thumbImage.Source = img);
+        });
+
+        var indexLabel = new TextBlock
+        {
+            Text              = $"{index + 1}",
+            Foreground        = BrushTextGray,
+            FontFamily        = new FontFamily("Segoe UI"),
+            FontSize          = 11,
+            VerticalAlignment = VerticalAlignment.Center,
+            Width             = 24,
+            TextAlignment     = TextAlignment.Right,
+            Margin            = new Thickness(0, 0, 8, 0),
+        };
+        var nameLabel = new TextBlock
+        {
+            Text              = filename,
+            Foreground        = isActive
+                ? BrushPurple   // purple = current
+                : Brushes.White,
+            FontFamily        = new FontFamily("Segoe UI"),
+            FontSize          = 13,
+            FontWeight        = isActive ? FontWeights.SemiBold : FontWeights.Normal,
+            VerticalAlignment = VerticalAlignment.Center,
+            TextTrimming      = TextTrimming.CharacterEllipsis,
+        };
+        var marker = new TextBlock
+        {
+            Text              = isActive ? "▶" : "",
+            Foreground        = BrushPurple,
+            FontSize          = 10,
+            VerticalAlignment = VerticalAlignment.Center,
+            Width             = 14,
+            Margin            = new Thickness(0, 0, 4, 0),
+        };
+
+        var stack = new StackPanel { Orientation = Orientation.Horizontal };
+        stack.Children.Add(marker);
+        stack.Children.Add(indexLabel);
+        stack.Children.Add(thumbBorder);
+        stack.Children.Add(nameLabel);
+
+        var row = new Border
+        {
+            Child      = stack,
+            Background = isActive
+                ? BrushPurpleWash   // subtle purple wash
+                : Brushes.Transparent,
+            Cursor     = Cursors.Hand,
+            Padding    = new Thickness(8, 6, 8, 6),
+            CornerRadius = new CornerRadius(4),
+            Margin     = new Thickness(0, 1, 0, 1),
+        };
+        row.MouseEnter += (_, _) =>
+        {
+            if (!isActive) row.Background = BrushHoverGray;
+        };
+        row.MouseLeave += (_, _) =>
+        {
+            row.Background = isActive
+                ? BrushPurpleWash
+                : Brushes.Transparent;
+        };
+        row.MouseLeftButtonDown += (_, e) =>
+        {
+            // Use MouseLeftButtonDown rather than Up so the click fires even
+            // if WPF's popup focus-management eats the matching Up event.
+            e.Handled = true;
+            JumpToPlaylistIndex(capturedIdx);
+        };
+
+        return row;
+    }
+
+    /// <summary>
+    /// Episode-styled row — used when the file resolved to a library episode:
+    /// still/thumbnail, title, IMDb rating + runtime badges, and a one-line
+    /// synopsis, mirroring the "Episodes" list on the show detail page.
+    /// </summary>
+    private Border BuildEpisodeRow(string fullPath, PlayerApiClient.PlaylistEpisodeInfo meta, int index, bool isActive, int capturedIdx)
+    {
+        string title = !string.IsNullOrWhiteSpace(meta.Title) ? meta.Title! : $"Episode {meta.EpisodeNumber}";
+
+        // ── Thumbnail — prefer the show's episode still (local or TMDB URL);
+        // fall back to a Shell thumbnail off the file itself.
+        var thumbImage = new System.Windows.Controls.Image
+        {
+            Width             = 112,
+            Height            = 63,
+            Stretch           = System.Windows.Media.Stretch.UniformToFill,
+            VerticalAlignment = VerticalAlignment.Center,
+        };
+        var thumbBorder = new Border
+        {
+            Child             = thumbImage,
+            Background        = BrushThumbBg,
+            BorderBrush       = BrushBorderGray,
+            BorderThickness   = new Thickness(1),
+            CornerRadius      = new CornerRadius(4),
+            Width             = 114,
+            Height            = 65,
+            ClipToBounds      = true,
+            VerticalAlignment = VerticalAlignment.Top,
+            Margin            = new Thickness(0, 0, 12, 0),
+        };
+
+        string? stillUrl = !string.IsNullOrWhiteSpace(meta.StillLocalPath) ? meta.StillLocalPath : meta.StillUrl;
+        if (!string.IsNullOrWhiteSpace(stillUrl) && Uri.TryCreate(stillUrl, UriKind.Absolute, out var stillUri))
+        {
+            try
             {
-                Child           = thumbImage,
-                Background      = BrushThumbBg,
-                BorderBrush     = BrushBorderGray,
-                BorderThickness = new Thickness(1),
-                CornerRadius    = new CornerRadius(3),
-                Width           = 98,
-                Height          = 56,
-                ClipToBounds    = true,
-                VerticalAlignment = VerticalAlignment.Center,
-                Margin          = new Thickness(0, 0, 10, 0),
-            };
+                var bmp = new System.Windows.Media.Imaging.BitmapImage();
+                bmp.BeginInit();
+                bmp.CacheOption   = System.Windows.Media.Imaging.BitmapCacheOption.OnLoad;
+                bmp.UriSource     = stillUri;
+                bmp.EndInit();
+                thumbImage.Source = bmp;
+            }
+            catch { /* fall through to shell thumbnail below */ }
+        }
+        if (thumbImage.Source is null)
+        {
             string pathForLoader = fullPath;
             _ = System.Threading.Tasks.Task.Run(() =>
             {
@@ -713,91 +887,122 @@ public partial class ControlsWindow : Window
                 if (img is null) return;
                 _ = Dispatcher.InvokeAsync(() => thumbImage.Source = img);
             });
-
-            var indexLabel = new TextBlock
-            {
-                Text              = $"{i + 1}",
-                Foreground        = BrushTextGray,
-                FontFamily        = new FontFamily("Segoe UI"),
-                FontSize          = 11,
-                VerticalAlignment = VerticalAlignment.Center,
-                Width             = 24,
-                TextAlignment     = TextAlignment.Right,
-                Margin            = new Thickness(0, 0, 8, 0),
-            };
-            var nameLabel = new TextBlock
-            {
-                Text              = filename,
-                Foreground        = isActive
-                    ? BrushPurple   // purple = current
-                    : Brushes.White,
-                FontFamily        = new FontFamily("Segoe UI"),
-                FontSize          = 13,
-                FontWeight        = isActive ? FontWeights.SemiBold : FontWeights.Normal,
-                VerticalAlignment = VerticalAlignment.Center,
-                TextTrimming      = TextTrimming.CharacterEllipsis,
-            };
-            var marker = new TextBlock
-            {
-                Text              = isActive ? "▶" : "",
-                Foreground        = BrushPurple,
-                FontSize          = 10,
-                VerticalAlignment = VerticalAlignment.Center,
-                Width             = 14,
-                Margin            = new Thickness(0, 0, 4, 0),
-            };
-
-            var stack = new StackPanel { Orientation = Orientation.Horizontal };
-            stack.Children.Add(marker);
-            stack.Children.Add(indexLabel);
-            stack.Children.Add(thumbBorder);
-            stack.Children.Add(nameLabel);
-
-            var row = new Border
-            {
-                Child      = stack,
-                Background = isActive
-                    ? BrushPurpleWash   // subtle purple wash
-                    : Brushes.Transparent,
-                Cursor     = Cursors.Hand,
-                Padding    = new Thickness(8, 6, 8, 6),
-                CornerRadius = new CornerRadius(4),
-                Margin     = new Thickness(0, 1, 0, 1),
-            };
-            row.MouseEnter += (_, _) =>
-            {
-                if (!isActive) row.Background = BrushHoverGray;
-            };
-            row.MouseLeave += (_, _) =>
-            {
-                row.Background = isActive
-                    ? BrushPurpleWash
-                    : Brushes.Transparent;
-            };
-            row.MouseLeftButtonDown += async (_, e) =>
-            {
-                // Use MouseLeftButtonDown rather than Up so the click fires
-                // even if WPF's popup focus-management eats the matching Up
-                // event (that was likely what kept "click doesn't start" from
-                // working — Up never reached this handler).
-                e.Handled = true;
-                if (!_playlistPinned) PlaylistPopup.IsOpen = false;
-
-                App.Log($"Playlist: jumping to index {capturedIdx}");
-                // Free the disk: tear down ALL thumbnail work (warm mpv +
-                // ffmpeg) so mpv can load the target file without HDD
-                // contention.  It re-creates itself once the file settles.
-                SuspendThumbServer();
-                // Send the three commands SEQUENTIALLY (awaited) so they reach
-                // mpv in a deterministic order.  Order: clear `start` (so the
-                // new file begins at 0) → jump → unpause.
-                await PlayerApiClient.SendMpvAsync("set_property", "start", "none").ConfigureAwait(true);
-                await PlayerApiClient.SendMpvAsync("playlist-play-index", capturedIdx).ConfigureAwait(true);
-                await PlayerApiClient.SendMpvAsync("set_property", "pause", false).ConfigureAwait(true);
-            };
-
-            PlaylistItems.Children.Add(row);
         }
+
+        var indexLabel = new TextBlock
+        {
+            Text              = $"{index + 1}",
+            Foreground        = BrushTextGray,
+            FontFamily        = new FontFamily("Segoe UI"),
+            FontSize          = 11,
+            VerticalAlignment = VerticalAlignment.Top,
+            Width             = 20,
+            TextAlignment     = TextAlignment.Right,
+            Margin            = new Thickness(0, 2, 6, 0),
+        };
+
+        var titleLabel = new TextBlock
+        {
+            Text              = title,
+            Foreground        = isActive ? BrushPurple : Brushes.White,
+            FontFamily        = new FontFamily("Segoe UI"),
+            FontSize          = 13,
+            FontWeight        = isActive ? FontWeights.SemiBold : FontWeights.Medium,
+            TextTrimming      = TextTrimming.CharacterEllipsis,
+        };
+
+        var badgesPanel = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(0, 3, 0, 0) };
+        if (meta.ImdbVoteAverage is double imdb && imdb > 0)
+        {
+            badgesPanel.Children.Add(new Border
+            {
+                Background   = MakeFrozen(0x2A, 0x22, 0x08),
+                CornerRadius = new CornerRadius(3),
+                Padding      = new Thickness(5, 1, 5, 1),
+                Margin       = new Thickness(0, 0, 6, 0),
+                Child        = new TextBlock
+                {
+                    Text       = $"IMDb {imdb:0.0}",
+                    FontSize   = 10,
+                    FontWeight = FontWeights.SemiBold,
+                    Foreground = MakeFrozen(0xF5, 0xC5, 0x18),
+                },
+            });
+        }
+        if (meta.RuntimeMinutes is int rt && rt > 0)
+        {
+            badgesPanel.Children.Add(new Border
+            {
+                Background   = MakeFrozen(0x2A, 0x2A, 0x2A),
+                CornerRadius = new CornerRadius(3),
+                Padding      = new Thickness(5, 1, 5, 1),
+                Child        = new TextBlock
+                {
+                    Text       = $"{rt}m",
+                    FontSize   = 10,
+                    Foreground = BrushPanelGray,
+                },
+            });
+        }
+
+        var textStack = new StackPanel { VerticalAlignment = VerticalAlignment.Top };
+        textStack.Children.Add(titleLabel);
+        textStack.Children.Add(badgesPanel);
+        if (!string.IsNullOrWhiteSpace(meta.Overview))
+        {
+            textStack.Children.Add(new TextBlock
+            {
+                Text          = meta.Overview,
+                Foreground    = BrushTextGray,
+                FontFamily    = new FontFamily("Segoe UI"),
+                FontSize      = 11,
+                TextTrimming  = TextTrimming.CharacterEllipsis,
+                TextWrapping  = TextWrapping.Wrap,
+                MaxHeight     = 30,
+                Margin        = new Thickness(0, 4, 0, 0),
+            });
+        }
+
+        var marker = new TextBlock
+        {
+            Text              = isActive ? "▶" : "",
+            Foreground        = BrushPurple,
+            FontSize          = 10,
+            VerticalAlignment = VerticalAlignment.Top,
+            Width             = 14,
+            Margin            = new Thickness(0, 2, 2, 0),
+        };
+
+        var stack = new StackPanel { Orientation = Orientation.Horizontal };
+        stack.Children.Add(marker);
+        stack.Children.Add(indexLabel);
+        stack.Children.Add(thumbBorder);
+        stack.Children.Add(textStack);
+
+        var row = new Border
+        {
+            Child        = stack,
+            Background   = isActive ? BrushPurpleWash : Brushes.Transparent,
+            Cursor       = Cursors.Hand,
+            Padding      = new Thickness(8, 8, 8, 8),
+            CornerRadius = new CornerRadius(4),
+            Margin       = new Thickness(0, 1, 0, 1),
+        };
+        row.MouseEnter += (_, _) =>
+        {
+            if (!isActive) row.Background = BrushHoverGray;
+        };
+        row.MouseLeave += (_, _) =>
+        {
+            row.Background = isActive ? BrushPurpleWash : Brushes.Transparent;
+        };
+        row.MouseLeftButtonDown += (_, e) =>
+        {
+            e.Handled = true;
+            JumpToPlaylistIndex(capturedIdx);
+        };
+
+        return row;
     }
 
     // ── Playlist popup: pin + close handlers ─────────────────────────────────

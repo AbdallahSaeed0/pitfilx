@@ -162,7 +162,10 @@ export function RemotePlayerPage() {
   const prevEp = prevEpData?.previous ?? null;
 
   // ── Device folder query ────────────────────────────────────────────────────
-  const parentDir = isDevice ? getParentDir(filePath) : "";
+  // A virtual grouping (e.g. a saved "collection") isn't a real filesystem folder — use its
+  // explicit video list instead of scanning the file's real parent directory.
+  const collectionEntries = launch?.deviceCollectionEntries;
+  const parentDir = isDevice && !collectionEntries?.length ? getParentDir(filePath) : "";
 
   const { data: folderEntries } = useQuery<DeviceFsEntry[]>({
     queryKey: ["remote-folder", parentDir],
@@ -171,9 +174,11 @@ export function RemotePlayerPage() {
     staleTime: 30_000,
   });
 
-  const folderVideos = (folderEntries ?? [])
-    .filter(isVideoFile)
-    .sort((a, b) => a.name.toLowerCase().localeCompare(b.name.toLowerCase()));
+  const folderVideos = collectionEntries?.length
+    ? collectionEntries.map((e) => ({ name: e.name, path: e.path, is_directory: false, media_kind: "video" }))
+    : (folderEntries ?? [])
+        .filter(isVideoFile)
+        .sort((a, b) => a.name.toLowerCase().localeCompare(b.name.toLowerCase()));
 
   const currentFolderIdx = folderVideos.findIndex(
     (v) => v.path.toLowerCase() === filePath.toLowerCase(),

@@ -7,6 +7,7 @@ import {
   ListMusic,
   Minus,
   Pause as PauseIcon,
+  PictureInPicture2,
   Play,
   Plus,
   RotateCcw,
@@ -15,19 +16,20 @@ import {
   SkipForward,
 } from "lucide-react";
 import { cn } from "../../utils/cn";
-import { toPosterSrc } from "../../utils/posterSrc";
+import { toPosterSrc, upscaleTmdbImageUrl } from "../../utils/posterSrc";
 import { isNativeBackendEmbeddedLibmpv } from "../../utils/playerNativeBackend";
 import { EpisodeNavigationOverlay } from "../../components/player/EpisodeNavigationOverlay";
+import { PlayerPauseInfoOverlay } from "../../components/player/PlayerPauseInfoOverlay";
 import { SkipSegmentOverlay } from "../../components/player/SkipSegmentOverlay";
 import { SKIP_OVERLAY_DISABLED } from "./playerConstants";
-import { getControlSizeClasses, resolveControlScale, TIME_LABEL_SIZE_CLASSES } from "./playerLayoutSizes";
+import { getControlSizeClasses, getPlayerLayoutSizeClasses, resolveControlScale, TIME_LABEL_SIZE_CLASSES } from "./playerLayoutSizes";
 import { getSeekBarVisualStyle } from "./playerSeekBarLayout";
 import { pointerXOnTrack, seekSecondsFromPointer } from "./playerSeekBar";
 import { getSeekHoverCached, seekHoverPreviewSecond } from "../../utils/seekHoverThumbCache";
 import { groupControlsByZone } from "./playerLayoutZones";
 import type { PlayerLayoutControlId } from "./playerLayoutTypes";
 import { logPlayer2InvokeFailure } from "./playerDebug";
-import { fmtSubDelayLabel, fmtTime } from "./playerFormat";
+import { fmtSubDelayLabel, fmtTime, normalizeMediaPathKey } from "./playerFormat";
 import { PlayerEmbeddedFolderPlaylist } from "./PlayerEmbeddedFolderPlaylist";
 import { PlayerEmbeddedSubtitleMenu } from "./PlayerEmbeddedSubtitleMenu";
 import { PlayerEmbeddedVolumeControl } from "./PlayerEmbeddedVolumeControl";
@@ -81,6 +83,8 @@ export function PlayerEmbeddedView(props: PlayerEmbeddedViewProps) {
     setFolderPlaylistOpen,
     setFolderPlaylistPinned,
     navigateToSiblingFile,
+    playlistEpisodeMetaByPath,
+    moviePauseBackdropPath,
     sessionBlocksTransport,
     timePos,
     duration,
@@ -102,6 +106,7 @@ export function PlayerEmbeddedView(props: PlayerEmbeddedViewProps) {
     seekHover,
     setSeekHover,
     scheduleHoverThumb,
+    scheduleExactHoverThumb,
     subVisible,
     subTracks,
     externalSubFiles,
@@ -129,6 +134,8 @@ export function PlayerEmbeddedView(props: PlayerEmbeddedViewProps) {
     audioTracks,
     alwaysOnTop,
     toggleAlwaysOnTop,
+    isPip,
+    togglePip,
     layoutPrefs,
     nativeState,
     embeddedSafeMode,
@@ -376,7 +383,9 @@ export function PlayerEmbeddedView(props: PlayerEmbeddedViewProps) {
         );
       case "audio":
         return wrapControl(
-          <details className="group relative">
+          // open:z-[70]: promotes trigger+popup above row siblings while open — see the same
+          // comment in PlayerSpeedControl.tsx for why this matters for a bottom-full popup.
+          <details className="group relative open:z-[70]">
             <summary
               className={cn(
                 "flex cursor-pointer list-none items-center justify-center rounded-md text-white marker:content-none hover:bg-white/[0.09] [&::-webkit-details-marker]:hidden",
@@ -412,7 +421,9 @@ export function PlayerEmbeddedView(props: PlayerEmbeddedViewProps) {
         );
       case "subDelay":
         return wrapControl(
-          <details className="group relative">
+          // open:z-[70]: promotes trigger+popup above row siblings while open — see the same
+          // comment in PlayerSpeedControl.tsx for why this matters for a bottom-full popup.
+          <details className="group relative open:z-[70]">
             <summary
               className={cn(
                 "flex cursor-pointer list-none items-center justify-center rounded-md text-white marker:content-none hover:bg-white/[0.09] [&::-webkit-details-marker]:hidden",
@@ -453,11 +464,55 @@ export function PlayerEmbeddedView(props: PlayerEmbeddedViewProps) {
     }
   };
 
+  // Fixed (non-configurable) mini-player toggle, docked at the end of the right control cluster —
+  // moved here from the top-right window chrome so it sits next to CC / speed / etc.
+  const fixedSizes = getPlayerLayoutSizeClasses(layoutPrefs.controlSize);
   const renderZone = (zone: "left" | "center" | "right", justify: string) => (
     <div className={cn("flex flex-wrap content-center items-center gap-1", justify)}>
       {groupedControls[zone].map((id) => renderLayoutControl(id))}
+      {zone === "right" ? (
+        <button
+          type="button"
+          title={isPip ? "Exit mini player" : "Mini player (picture-in-picture)"}
+          aria-label={isPip ? "Exit mini player" : "Mini player"}
+          aria-pressed={isPip}
+          className={cn(
+            "flex items-center justify-center rounded-md text-white hover:bg-white/[0.09]",
+            isPip && "bg-white/15 text-pitflix-primary",
+            fixedSizes.secondaryBtn,
+          )}
+          onClick={() => {
+            onFullscreenPointerActivity();
+            togglePip();
+          }}
+        >
+          <PictureInPicture2 className={fixedSizes.secondaryIcon} />
+        </button>
+      ) : null}
     </div>
   );
+
+  // Pause info screen data — episode overview only, since that's the only place a synopsis is
+  // currently piped into this component (see playlistEpisodeMetaByPath, populated per-season for
+  // library episodes). `state.title` is normally the episode's own title and `state.seriesName`
+  // the show name (see PlaybackLaunchState) — for movies seriesName is unset, so the movie title
+  // becomes the big headline and the separate episode-title line is skipped.
+  const pauseEpisodeMeta = playlistEpisodeMetaByPath.get(normalizeMediaPathKey(state.filePath));
+  const pauseInfoTitle = state.seriesName ?? state.title;
+  const pauseInfoEpisodeTitle = state.seriesName ? state.title : null;
+  const pauseInfoOverview = pauseEpisodeMeta?.overview ?? null;
+  // stillUrl is a TMDB URL hardcoded to w300 server-side (fine for a small playlist row, pixelated
+  // full-bleed) — upscale it since, unlike stillLocalPath's already-small cached file, the full-res
+  // source is one URL edit away. Movies have no still — moviePauseBackdropPath is the movie's own
+  // landscape backdrop (~1280px), fetched separately in PlayerPage since state.posterPath alone is
+  // a portrait ~500px poster that reads as pixelated once stretched full-bleed across the player.
+  // state.posterPath (portrait) is the last-resort fallback, not the primary movie source.
+  const pauseInfoBackdropSrc =
+    upscaleTmdbImageUrl(pauseEpisodeMeta?.stillUrl) ||
+    pauseEpisodeMeta?.stillLocalPath ||
+    toPosterSrc(moviePauseBackdropPath) ||
+    toPosterSrc(state.posterPath) ||
+    null;
 
   return (
     <>
@@ -492,6 +547,24 @@ export function PlayerEmbeddedView(props: PlayerEmbeddedViewProps) {
     title="Drag to move window"
     aria-label="Drag to move window"
   />
+
+  {isPip ? (
+    <div
+      role="separator"
+      aria-label="Resize mini player"
+      title="Drag to resize"
+      className="absolute bottom-0 right-0 z-[40] h-5 w-5 cursor-nwse-resize"
+      onPointerDown={(e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        void getCurrentWindow().startResizeDragging("SouthEast").catch(() => {});
+      }}
+    >
+      <svg viewBox="0 0 16 16" className="h-full w-full p-0.5 text-white/45">
+        <path d="M14 2 2 14M14 8 8 14M14 14v0" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+      </svg>
+    </div>
+  ) : null}
   <div className="relative flex min-h-0 flex-1 flex-row overflow-hidden">
   <div className="relative flex min-h-0 min-w-0 flex-1 flex-col">
   <div className="relative min-h-0 flex-1">
@@ -510,34 +583,58 @@ export function PlayerEmbeddedView(props: PlayerEmbeddedViewProps) {
     inert={chromeVisible ? undefined : true}
     aria-hidden={chromeVisible ? undefined : true}
   >
-    <div className="flex min-w-0 flex-1 items-center gap-2">
-      <button
-        type="button"
-        onClick={() => setEpisodeInfoOpen(true)}
-        title="Show details"
-        className="max-w-[min(60vw,28rem)] whitespace-normal break-words text-left text-sm font-semibold leading-snug text-white transition-colors hover:text-pitflix-primary"
-      >
-        {state.title}
-      </button>
-      <div
-        className="min-h-8 min-w-8 flex-1 self-stretch rounded-md"
-        data-tauri-drag-region
-        title="Drag to move window"
-        aria-hidden
-      />
-    </div>
-    <PlayerWindowChrome
-      alwaysOnTop={alwaysOnTop}
-      onToggleAlwaysOnTop={toggleAlwaysOnTop}
-      hasPlaylist={Boolean(currentFolderForPlaylist)}
-      playlistOpen={folderPlaylistOpen || folderPlaylistPinned}
-      onTogglePlaylist={() => setFolderPlaylistOpen((v) => !v)}
-      isMaximized={isMaximized}
-      onToggleMaximize={() => void onToggleMaximize()}
-      isFullscreen={isFullscreen}
-      onToggleFullscreen={() => void onFullscreen()}
-      onClose={() => void exitAndClose()}
-    />
+    {isPip ? (
+      // Same overlap problem as the footer control grid — title text + all six chrome buttons
+      // don't fit at ~384px width. Only a way back out of PiP is essential here.
+      <>
+        <div
+          className="min-h-8 flex-1 self-stretch rounded-md"
+          data-tauri-drag-region
+          title="Drag to move window"
+          aria-hidden
+        />
+        <button
+          type="button"
+          title="Exit mini player"
+          onClick={togglePip}
+          className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md bg-white/15 text-pitflix-primary transition hover:bg-white/25"
+        >
+          <PictureInPicture2 className="h-4 w-4" />
+        </button>
+      </>
+    ) : (
+      <>
+        <div className="flex min-w-0 flex-1 items-center gap-2">
+          <button
+            type="button"
+            onClick={() => setEpisodeInfoOpen(true)}
+            title="Show details"
+            className="max-w-[min(60vw,28rem)] whitespace-normal break-words text-left text-sm font-semibold leading-snug text-white transition-colors hover:text-pitflix-primary"
+          >
+            {state.title}
+          </button>
+          <div
+            className="min-h-8 min-w-8 flex-1 self-stretch rounded-md"
+            data-tauri-drag-region
+            title="Drag to move window"
+            aria-hidden
+          />
+        </div>
+        <PlayerWindowChrome
+          alwaysOnTop={alwaysOnTop}
+          onToggleAlwaysOnTop={toggleAlwaysOnTop}
+          hasPlaylist={Boolean(currentFolderForPlaylist)}
+          playlistOpen={folderPlaylistOpen || folderPlaylistPinned}
+          onTogglePlaylist={() => setFolderPlaylistOpen((v) => !v)}
+          onMinimize={() => void getCurrentWindow().minimize().catch(() => {})}
+          isMaximized={isMaximized}
+          onToggleMaximize={() => void onToggleMaximize()}
+          isFullscreen={isFullscreen}
+          onToggleFullscreen={() => void onFullscreen()}
+          onClose={() => void exitAndClose()}
+        />
+      </>
+    )}
   </header>
 
   <div
@@ -569,6 +666,16 @@ export function PlayerEmbeddedView(props: PlayerEmbeddedViewProps) {
       </div>
     ) : null}
     
+    <PlayerPauseInfoOverlay
+      visible={displayPaused && !isPip}
+      title={pauseInfoTitle}
+      season={state.season}
+      episodeNumber={state.episodeNumber}
+      episodeTitle={pauseInfoEpisodeTitle}
+      overview={pauseInfoOverview}
+      backdropSrc={pauseInfoBackdropSrc}
+    />
+
     {/* Episode Navigation Overlay - hidden in libmpv mode (duplicates the bottom buttons). */}
     {!useLibMpv && (
       <EpisodeNavigationOverlay
@@ -705,6 +812,13 @@ export function PlayerEmbeddedView(props: PlayerEmbeddedViewProps) {
           e.currentTarget.setPointerCapture(e.pointerId);
           seekFromPointer(e.clientX);
           updateSeekHover(e.clientX);
+          // The click itself deserves a frame-exact preview, not the ~2.5s-rounded bucket the
+          // hover-sweep path (updateSeekHover → scheduleHoverThumb) uses — that rounding is what
+          // made the shown thumbnail not match the second actually clicked.
+          if (state?.filePath && seekBarTrackRef.current) {
+            const exactSeconds = seekSecondsFromPointer(e.clientX, seekBarTrackRef.current, duration);
+            scheduleExactHoverThumb(state.filePath, exactSeconds);
+          }
         }}
         onPointerMove={(e) => {
           onFullscreenPointerActivity();
@@ -847,11 +961,28 @@ export function PlayerEmbeddedView(props: PlayerEmbeddedViewProps) {
         </div>
       </div>
     ) : null}
-    <div className="grid w-full grid-cols-3 items-start gap-x-1 gap-y-1">
-      {renderZone("left", "justify-start")}
-      {renderZone("center", "justify-center")}
-      {renderZone("right", "justify-end")}
-    </div>
+    {isPip ? (
+      // The normal 3-column control-zone grid below packs many buttons (volume, subtitles,
+      // speed, playlist, clock, etc.) side by side — at PiP's ~384px width they wrap onto each
+      // other instead of fitting in a row. Only play/pause is essential for "keep watching in a
+      // corner while doing something else", so that's all PiP shows.
+      <div className="flex w-full items-center justify-center">
+        <button
+          type="button"
+          onClick={() => void handlePrimaryTransport()}
+          aria-label={displayPaused ? "Play" : "Pause"}
+          className="flex h-9 w-9 items-center justify-center rounded-full bg-white/15 text-white transition hover:bg-white/25"
+        >
+          {displayPaused ? <Play className="h-4 w-4 fill-current" /> : <PauseIcon className="h-4 w-4 fill-current" />}
+        </button>
+      </div>
+    ) : (
+      <div className="grid w-full grid-cols-3 items-start gap-x-1 gap-y-1">
+        {renderZone("left", "justify-start")}
+        {renderZone("center", "justify-center")}
+        {renderZone("right", "justify-end")}
+      </div>
+    )}
 
   </div>{/* end w-full space-y */}
   </div>{/* end footer chrome */}
@@ -868,6 +999,8 @@ export function PlayerEmbeddedView(props: PlayerEmbeddedViewProps) {
     setFolderPlaylistOpen={setFolderPlaylistOpen}
     setFolderPlaylistPinned={setFolderPlaylistPinned}
     navigateToSiblingFile={navigateToSiblingFile}
+    exitAndClose={exitAndClose}
+    playlistEpisodeMetaByPath={playlistEpisodeMetaByPath}
     activeFilePath={state.filePath}
     isFullscreen={isFullscreen}
     fsControlsVisible={fsControlsVisible}

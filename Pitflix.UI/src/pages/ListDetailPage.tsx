@@ -1,4 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { PosterGridSkeleton } from "../components/ui/Skeleton";
 import { Trash2 } from "lucide-react";
 import { useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
@@ -6,7 +7,6 @@ import { getListById, getListItems, removeListItem } from "../api/lists";
 import { getWatchedTmdbIds } from "../api/history";
 import { PosterCard } from "../components/ui/PosterCard";
 import { LibraryPosterGrid } from "../components/ui/LibraryPosterGrid";
-import { Spinner } from "../components/ui/Spinner";
 import { LibraryContextMenuLayer } from "../features/library/LibraryContextMenuLayer";
 import { lookupImdbRating, useImdbRatingsMap } from "../hooks/useImdbRatingsMap";
 import { mediaTypeOf, useLibraryPosterCards } from "../features/library/useLibraryPosterCards";
@@ -98,9 +98,7 @@ export function ListDetailPage() {
   if (!Number.isFinite(listId) || listId <= 0) return <p className="text-pitflix-muted">Invalid list</p>;
   if (isLoading || listMetaQ.isLoading)
     return (
-      <div className="flex justify-center py-24">
-        <Spinner />
-      </div>
+      <PosterGridSkeleton />
     );
 
   const meta = listMetaQ.data;

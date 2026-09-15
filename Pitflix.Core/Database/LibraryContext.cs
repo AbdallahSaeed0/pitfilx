@@ -30,15 +30,26 @@ public class LibraryContext : DbContext
     public DbSet<TraktIdMap> TraktIdMaps => Set<TraktIdMap>();
     public DbSet<SupabaseSyncMap> SupabaseSyncMaps => Set<SupabaseSyncMap>();
     public DbSet<SupabaseWatchEvent> SupabaseWatchEvents => Set<SupabaseWatchEvent>();
+    public DbSet<DetailRecommendationCache> DetailRecommendationCaches => Set<DetailRecommendationCache>();
+    public DbSet<LibraryRecommendation> LibraryRecommendations => Set<LibraryRecommendation>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
+        // The composite (IsMatched, IsArabic, <sort key>) indexes below cover the catalog list queries'
+        // filter and ORDER BY together — without them SQLite builds a temp B-tree per page. Existing
+        // databases get them from LibraryRepository.EnsureCatalogSortIndexesAsync (EnsureCreated never
+        // adds indexes to a table that already exists); these declarations are what new ones get.
         modelBuilder.Entity<Show>(e =>
         {
             e.HasIndex(x => x.TmdbId);
             e.HasIndex(x => x.FolderPath);
             e.HasIndex(x => x.IsArabic);
             e.HasIndex(x => x.IsMatched);
+            e.HasIndex(x => new { x.IsMatched, x.IsArabic, x.Title });
+            e.HasIndex(x => new { x.IsMatched, x.IsArabic, x.DateAdded });
+            e.HasIndex(x => new { x.IsMatched, x.IsArabic, x.Year });
+            e.HasIndex(x => new { x.IsMatched, x.IsArabic, x.VoteAverage });
+            e.HasIndex(x => new { x.IsMatched, x.DateAdded, x.WatchStatus });
         });
 
         modelBuilder.Entity<Movie>(e =>
@@ -47,6 +58,10 @@ public class LibraryContext : DbContext
             e.HasIndex(x => x.FilePath);
             e.HasIndex(x => x.IsArabic);
             e.HasIndex(x => x.IsMatched);
+            e.HasIndex(x => new { x.IsMatched, x.IsArabic, x.Title });
+            e.HasIndex(x => new { x.IsMatched, x.IsArabic, x.DateAdded });
+            e.HasIndex(x => new { x.IsMatched, x.IsArabic, x.Year });
+            e.HasIndex(x => new { x.IsMatched, x.IsArabic, x.VoteAverage });
         });
 
         modelBuilder.Entity<Episode>(e =>
@@ -157,6 +172,18 @@ public class LibraryContext : DbContext
             e.HasIndex(x => new { x.TmdbId, x.MediaType }).IsUnique();
             e.HasIndex(x => x.RemoteId).IsUnique();
             e.HasIndex(x => x.SyncedAtUtc);
+        });
+
+        modelBuilder.Entity<DetailRecommendationCache>(e =>
+        {
+            e.HasIndex(x => new { x.TmdbId, x.MediaType }).IsUnique();
+            e.HasIndex(x => x.ExpiresAtUtc);
+        });
+
+        modelBuilder.Entity<LibraryRecommendation>(e =>
+        {
+            e.HasIndex(x => x.SortOrder);
+            e.HasIndex(x => new { x.MediaType, x.TmdbId });
         });
     }
 

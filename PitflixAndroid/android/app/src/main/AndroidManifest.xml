@@ -5,8 +5,25 @@
     <!-- Edit Profile photo picker (camera capture option). -->
     <uses-permission android:name="android.permission.CAMERA"/>
     <uses-feature android:name="android.hardware.camera" android:required="false"/>
+    <!-- My Device (Settings > "Enable My Device") — local, on-device video browsing via
+         MediaStore (photo_manager). READ_MEDIA_VIDEO covers API 33+; photo_manager's own
+         manifest already declares READ_EXTERNAL_STORAGE (maxSdkVersion 32) for below that, but
+         it's repeated here for clarity. Deliberately NOT requesting MANAGE_EXTERNAL_STORAGE —
+         this feature only ever needs video files, never broader filesystem access. -->
+    <uses-permission android:name="android.permission.READ_MEDIA_VIDEO"/>
+    <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" android:maxSdkVersion="32"/>
+    <!-- My Device player background playback: keeps the process alive (and shows a
+         play/pause notification) once the app is backgrounded/screen-locked mid-video.
+         POST_NOTIFICATIONS is the API 33+ runtime permission for the notification itself. -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE"/>
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK"/>
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS"/>
+    <!-- ExoPlayer's WAKE_MODE_LOCAL (see third_party/video_player_android's VideoPlayer.java
+         patch) acquires a PARTIAL_WAKE_LOCK while playing, so the CPU doesn't deep-sleep and
+         halt playback once the screen turns off — this permission is required for that. -->
+    <uses-permission android:name="android.permission.WAKE_LOCK"/>
     <application
-        android:label="pitflix_android"
+        android:label="PitFlix"
         android:name="${applicationName}"
         android:icon="@mipmap/ic_launcher"
         android:usesCleartextTraffic="true">
@@ -21,6 +38,7 @@
             android:theme="@style/LaunchTheme"
             android:configChanges="orientation|keyboardHidden|keyboard|screenSize|smallestScreenSize|locale|layoutDirection|fontScale|screenLayout|density|uiMode"
             android:hardwareAccelerated="true"
+            android:supportsPictureInPicture="true"
             android:windowSoftInputMode="adjustResize">
             <!-- Specifies an Android theme to apply to this Activity as soon as
                  the Android process has started. This theme is visible to the user
@@ -40,6 +58,24 @@
         <meta-data
             android:name="flutterEmbedding"
             android:value="2" />
+        <!-- image_cropper's Android implementation (uCrop) requires this activity to be
+             declared in the app's own manifest — the plugin's own manifest is deliberately
+             empty, this isn't auto-merged. Used by Edit Profile/Onboarding's avatar+cover
+             pickers to crop/reposition a picked photo before upload. -->
+        <activity
+            android:name="com.yalantis.ucrop.UCropActivity"
+            android:screenOrientation="portrait"
+            android:theme="@style/Ucrop.CropTheme"/>
+        <!-- My Device player background playback — see PlaybackForegroundService.kt.
+             Started/stopped from Dart via the pitflix.dev/playback_service MethodChannel.
+             stopWithTask=false: without this, Android kills this service the instant the
+             task is swiped away from Recents, regardless of startForeground — the whole
+             point of this service is to survive exactly that. -->
+        <service
+            android:name=".PlaybackForegroundService"
+            android:exported="false"
+            android:stopWithTask="false"
+            android:foregroundServiceType="mediaPlayback"/>
     </application>
     <!-- Required to query activities that can process text, see:
          https://developer.android.com/training/package-visibility and

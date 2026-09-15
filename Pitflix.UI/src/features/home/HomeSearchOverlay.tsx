@@ -20,7 +20,7 @@ import { Link } from "react-router-dom";
 import type { LibraryTitleRow } from "../../api/library";
 import { COMMON_GENRES } from "../../data/commonGenres";
 import { formatRating } from "../../utils/format";
-import { toPosterSrc } from "../../utils/posterSrc";
+import { POSTER_WIDTHS, toPosterSrc } from "../../utils/posterSrc";
 
 export type RecentSearch = {
   id: number;
@@ -46,7 +46,7 @@ const JUMP_TO: { to: string; label: string; icon: ReactNode }[] = [
 const GENRE_PILLS = COMMON_GENRES.slice(0, 18);
 
 function ResultRow({ item, onPick }: { item: LibraryTitleRow; onPick: () => void }) {
-  const posterSrc = toPosterSrc(item.posterUrl ?? undefined);
+  const posterSrc = toPosterSrc(item.posterUrl ?? undefined, POSTER_WIDTHS.thumb);
 
   return (
     <button
@@ -70,7 +70,7 @@ function ResultRow({ item, onPick }: { item: LibraryTitleRow; onPick: () => void
 }
 
 function TopMatchCard({ item, onOpen }: { item: LibraryTitleRow; onOpen: () => void }) {
-  const posterSrc = toPosterSrc(item.posterUrl ?? undefined);
+  const posterSrc = toPosterSrc(item.posterUrl ?? undefined, POSTER_WIDTHS.thumb);
   const overview = item.overview ?? undefined;
   const voteAverage = item.voteAverage ?? undefined;
 

@@ -10,7 +10,7 @@ import type { StreamingDetailsLocationState } from "../../pages/StreamingDetails
 import type { MediaCard } from "../../types/media";
 import { cn } from "../../utils/cn";
 import { formatRating, formatYear } from "../../utils/format";
-import { toPosterSrc } from "../../utils/posterSrc";
+import { POSTER_WIDTHS, toPosterSrc } from "../../utils/posterSrc";
 import { MediaHoverCard } from "./MediaHoverCard";
 import { MediaImage } from "./MediaImage";
 
@@ -38,6 +38,8 @@ export type PosterCardProps = {
   /** Cached IMDb rating — shown instead of TMDB when present. */
   imdbRating?: number | null;
   onContextMenu?: (e: React.MouseEvent) => void;
+  /** Defaults to lazy — pass "eager" only for cards guaranteed to be above the fold on mount. */
+  loading?: "lazy" | "eager";
 };
 
 export function PosterCard({
@@ -53,6 +55,7 @@ export function PosterCard({
   metaHints,
   imdbRating,
   onContextMenu,
+  loading = "lazy",
 }: PosterCardProps) {
   const navigate = useNavigate();
   const qc = useQueryClient();
@@ -62,9 +65,12 @@ export function PosterCard({
   const { open: hoverOpen, triggerProps, cardProps } = useHoverCard();
   const primary = item.selectedPosterPath || item.posterLocalPath;
   const remote = item.posterRemoteUrl;
-  const src = toPosterSrc((primary ?? remote) ?? undefined);
+  // Grid cells are ~145 px wide (`sm` carousels ~136 px) but the cache holds 500 px posters — ask the
+  // API for a variant sized for the cell so the WebView isn't decoding a 500x750 bitmap per card.
+  const posterWidth = size === "sm" ? POSTER_WIDTHS.thumb : POSTER_WIDTHS.card;
+  const src = toPosterSrc((primary ?? remote) ?? undefined, posterWidth);
   const fallbackSrc =
-    primary && remote && remote !== primary ? toPosterSrc(remote) : undefined;
+    primary && remote && remote !== primary ? toPosterSrc(remote, posterWidth) : undefined;
 
   const detailPath = mediaType === "Movie" ? `/movie/${item.id}` : `/series/${item.id}`;
   const rating = imdbRating != null && imdbRating > 0 ? imdbRating : 0;
@@ -170,8 +176,9 @@ export function PosterCard({
         fallbackSrc={fallbackSrc}
         alt={item.title}
         className="aspect-[2/3] w-full bg-gradient-to-b from-pitflix-card to-pitflix-surface"
+        imgClassName="group-hover:opacity-70 group-hover:scale-105"
         fallbackText={item.title.slice(0, 24)}
-        loading="eager"
+        loading={loading}
       />
           {showPosterRatingOnHover && ratingIsImdb && rating > 0 ? (
             <div

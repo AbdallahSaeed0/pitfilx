@@ -6,7 +6,7 @@ import { setShowDropped } from "../../api/series";
 import { HorizontalScrollRow } from "../../components/ui/HorizontalScrollRow";
 import { MediaImage } from "../../components/ui/MediaImage";
 import { Spinner } from "../../components/ui/Spinner";
-import { toPosterSrc } from "../../utils/posterSrc";
+import { POSTER_WIDTHS, toPosterSrc } from "../../utils/posterSrc";
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -39,7 +39,7 @@ function UpNextCard({
 }) {
   const navigate = useNavigate();
   const pct = Math.min(100, Math.max(0, (card.progressFraction ?? 0) * 100));
-  const poster = toPosterSrc(card.posterUrl ?? undefined);
+  const poster = toPosterSrc(card.posterUrl ?? undefined, POSTER_WIDTHS.thumb);
   const badge = episodeBadge(card);
   const continueTo = continueSeasonRoute(card);
   return (
@@ -136,9 +136,9 @@ function UpNextCard({
 
 // ─── Section ─────────────────────────────────────────────────────────────────
 
-type Props = { embedded?: boolean };
+type Props = { embedded?: boolean; excludeShowId?: number };
 
-export function WatchingCurrentlySection({ embedded = false }: Props) {
+export function WatchingCurrentlySection({ embedded = false, excludeShowId }: Props) {
   const qc = useQueryClient();
   const q = useQuery({
     queryKey: ["home-watching-currently"],
@@ -164,7 +164,7 @@ export function WatchingCurrentlySection({ embedded = false }: Props) {
 
   if (q.isError) return null; // don't block home page on error
 
-  const list = q.data ?? [];
+  const list = (q.data ?? []).filter((c) => c.libraryShowId !== excludeShowId);
   if (list.length === 0) return null; // hide entirely when nothing in progress
 
   return (

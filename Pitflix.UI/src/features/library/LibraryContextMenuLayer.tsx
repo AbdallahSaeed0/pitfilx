@@ -11,10 +11,9 @@ export function LibraryContextMenuLayer({ menu, onClose, onAction }: Props) {
   if (!menu) return null;
   return (
     <MediaContextMenu
-      label={menu.target.title}
+      target={menu.target}
       x={menu.x}
       y={menu.y}
-      watchStatus={"watchStatus" in menu.target ? menu.target.watchStatus : undefined}
       showRescan={menu.target.kind !== "streaming"}
       onAction={onAction}
       onClose={onClose}

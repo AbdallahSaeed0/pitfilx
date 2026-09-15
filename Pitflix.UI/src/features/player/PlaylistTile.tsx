@@ -1,24 +1,36 @@
 import { isTauri } from "@tauri-apps/api/core";
-import { useEffect, useState, type MouseEvent } from "react";
+import { useEffect, useRef, useState, type MouseEvent } from "react";
 import { Antenna } from "lucide-react";
 import { cn } from "../../utils/cn";
+import { DeviceVideoHoverPreview } from "../device/DeviceThumbs";
 import { getPosterThumbnail, resolvePlaylistPoster } from "../../utils/videoThumbnailCache";
 import { fileDisplayTitle, formatBytes } from "./playerFormat";
-import type { DeviceFsEntry } from "./playerTypes";
+import type { DeviceFsEntry, PlaylistEpisodeMeta } from "./playerTypes";
 
-/** Renders one playlist row with a thumbnail poster (lazy-fetched via Tauri) or a channel logo for live IPTV. */
+/** Renders one playlist row with a thumbnail poster (lazy-fetched via Tauri) or a channel logo for live IPTV.
+ * When `episodeMeta` is provided (the file resolved to a library episode), the row renders as an episode
+ * card — title, IMDb rating + runtime badges, and a clamped synopsis — instead of a bare filename. */
 export function PlaylistTile({
   entry,
   active,
+  episodeMeta,
   onSelect,
   onContextMenu,
 }: {
   entry: DeviceFsEntry;
   active: boolean;
+  episodeMeta?: PlaylistEpisodeMeta;
   onSelect: () => void;
   onContextMenu?: (e: MouseEvent) => void;
 }) {
   const isLive = Boolean(entry.logoUrl !== undefined);
+  const episodeStillUrl = episodeMeta?.stillLocalPath || episodeMeta?.stillUrl || null;
+  const episodeTitle = episodeMeta?.title?.trim() || null;
+  const hasBadges = Boolean(
+    (episodeMeta?.imdbVoteAverage != null && episodeMeta.imdbVoteAverage > 0) ||
+      (episodeMeta?.runtimeMinutes != null && episodeMeta.runtimeMinutes > 0),
+  );
+  const rowRef = useRef<HTMLButtonElement>(null);
   const [thumbUrl, setThumbUrl] = useState<string | null>(() =>
     entry.logoUrl ? entry.logoUrl : (getPosterThumbnail(entry.path) ?? null),
   );
@@ -49,6 +61,7 @@ export function PlaylistTile({
 
   return (
     <button
+      ref={rowRef}
       type="button"
       data-own-context-menu="true"
       onClick={() => { if (!active) onSelect(); }}
@@ -64,7 +77,7 @@ export function PlaylistTile({
       )}
       title={entry.name}
     >
-      <span className="relative flex h-[58px] w-[80px] shrink-0 items-center justify-center overflow-hidden rounded-[7px] bg-black/50">
+      <span className="relative flex h-[72px] w-[104px] shrink-0 items-center justify-center overflow-hidden rounded-[7px] bg-black/50">
         {isLive ? (
           thumbUrl && !logoFailed ? (
             <img
@@ -76,9 +89,15 @@ export function PlaylistTile({
           ) : (
             <Antenna className="h-6 w-6 text-white/30" />
           )
-        ) : thumbUrl ? (
-          <img src={thumbUrl} alt="" className="h-full w-full object-cover" />
-        ) : null}
+        ) : (
+          <DeviceVideoHoverPreview path={entry.path} hoverContainerRef={rowRef}>
+            {episodeStillUrl ? (
+              <img src={episodeStillUrl} alt="" className="h-full w-full object-cover" />
+            ) : thumbUrl ? (
+              <img src={thumbUrl} alt="" className="h-full w-full object-cover" />
+            ) : null}
+          </DeviceVideoHoverPreview>
+        )}
         {active ? (
           <span className="absolute inset-0 flex items-center justify-center bg-black/40">
             <span className="flex h-7 w-7 items-center justify-center rounded-full bg-[#7c3aed]">
@@ -97,13 +116,33 @@ export function PlaylistTile({
         ) : null}
         <span
           className={cn(
-            "block overflow-x-auto whitespace-nowrap font-semibold [scrollbar-width:none] [&::-webkit-scrollbar]:hidden",
+            "block overflow-x-auto whitespace-nowrap text-[11.5px] font-semibold [scrollbar-width:none] [&::-webkit-scrollbar]:hidden",
             active ? "text-white" : "text-white/[0.88]",
           )}
         >
-          {isLive ? entry.name : fileDisplayTitle(entry.name)}
+          {isLive ? entry.name : episodeTitle ?? fileDisplayTitle(entry.name)}
         </span>
-        {!isLive && entry.size_bytes != null ? (
+        {episodeMeta ? (
+          <>
+            {hasBadges ? (
+              <span className="flex items-center gap-1.5">
+                {episodeMeta.imdbVoteAverage != null && episodeMeta.imdbVoteAverage > 0 ? (
+                  <span className="rounded-[3px] bg-[#2a2208] px-1.5 py-px text-[9.5px] font-semibold text-[#f5c518]">
+                    IMDb {episodeMeta.imdbVoteAverage.toFixed(1)}
+                  </span>
+                ) : null}
+                {episodeMeta.runtimeMinutes != null && episodeMeta.runtimeMinutes > 0 ? (
+                  <span className="rounded-[3px] bg-white/10 px-1.5 py-px text-[9.5px] text-white/70">
+                    {episodeMeta.runtimeMinutes}m
+                  </span>
+                ) : null}
+              </span>
+            ) : null}
+            {episodeMeta.overview ? (
+              <span className="line-clamp-2 text-[10.5px] leading-[1.25] text-white/45">{episodeMeta.overview}</span>
+            ) : null}
+          </>
+        ) : !isLive && entry.size_bytes != null ? (
           <span className="truncate text-[10.5px] text-white/40">{formatBytes(entry.size_bytes)}</span>
         ) : null}
       </span>

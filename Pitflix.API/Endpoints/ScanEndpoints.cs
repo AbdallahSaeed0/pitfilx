@@ -112,6 +112,87 @@ public static class ScanEndpoints
             return Results.Json(new { jobId });
         });
 
+        // Re-runs TMDB matching for every file currently logged as Unmatched, bypassing the
+        // "skip unchanged unmatched" optimization that normal/background scans use. Use this to recover
+        // files that were left unmatched by a transient TMDB failure or by earlier parser versions.
+        // Matching uses the exact same thresholds as a normal scan — no looser acceptance — so any
+        // auto-match here is one the scanner would have made originally.
+        app.MapPost("/api/scan/rescan-unmatched", async (LibraryRepository repo, ScanRuntime scan,
+                IServiceScopeFactory scopes, RatingsRefreshQueue ratingsRefreshQueue,
+                ITmdbClientFactory tmdbClientFactory) =>
+        {
+            var tmdb = tmdbClientFactory.Create();
+            if (tmdb == null)
+                return Results.BadRequest(new { error = "TMDB API key not configured." });
+
+            if (scan.IsRunning)
+                return Results.Conflict(new { error = "Scan already running.", jobId = scan.JobId });
+
+            var unmatchedLogs = await repo.GetUnmatchedFilesAsync().ConfigureAwait(false);
+            var paths = unmatchedLogs
+                .Select(l => l.FilePath)
+                .Where(p => !string.IsNullOrWhiteSpace(p))
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToList();
+            if (paths.Count == 0)
+                return Results.Json(new { jobId = (string?)null, empty = true, message = "No unmatched files to rescan." });
+
+            var jobId = await scan.BeginJobAsync().ConfigureAwait(false);
+            scan.StartCancellationSource();
+            var token = scan.ScanToken;
+
+            _ = Task.Run(async () =>
+            {
+                try
+                {
+                    await using var scope = scopes.CreateAsyncScope();
+                    var r = scope.ServiceProvider.GetRequiredService<LibraryRepository>();
+                    var pipeline = new ScanPipeline(new FileScanner(), tmdb, r);
+
+                    scan.ResetProgress(paths.Count);
+
+                    var progress = new Progress<ScanProgress>(p =>
+                    {
+                        scan.Update(p.Current, p.CurrentFile, p.MatchedSoFar, p.UnmatchedSoFar, p.SkippedSoFar);
+                        _ = scan.BroadcastAsync(new
+                        {
+                            type = "progress",
+                            current = p.Current,
+                            total = p.Total,
+                            file = string.IsNullOrEmpty(p.CurrentFile)
+                                ? ""
+                                : Path.GetFileNameWithoutExtension(p.CurrentFile),
+                            p.MatchedSoFar,
+                            p.UnmatchedSoFar,
+                            skipped = p.SkippedSoFar
+                        }, CancellationToken.None);
+                    });
+
+                    // skipUnchangedUnmatchedScanLogs defaults to false here → each unmatched file IS re-queried.
+                    var result = await pipeline.RunScanOnFilesAsync(paths, progress, token).ConfigureAwait(false);
+                    await scan.BroadcastAsync(new
+                    {
+                        type = "complete",
+                        result.Matched,
+                        result.Unmatched,
+                        skipped = result.SkippedAlreadyMatched
+                    }, CancellationToken.None).ConfigureAwait(false);
+                    ratingsRefreshQueue.TryEnqueueStaleSweep();
+                }
+                catch (OperationCanceledException)
+                {
+                    await scan.BroadcastAsync(new { type = "cancelled" }, CancellationToken.None).ConfigureAwait(false);
+                }
+                finally
+                {
+                    scan.DisposeCancellationSource();
+                    await scan.EndJobAsync().ConfigureAwait(false);
+                }
+            }, CancellationToken.None);
+
+            return Results.Json(new { jobId });
+        });
+
         app.MapGet("/api/scan/progress", (ScanRuntime scan) =>
         {
             return Results.Json(new

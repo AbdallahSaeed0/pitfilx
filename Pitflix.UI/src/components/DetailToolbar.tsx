@@ -58,6 +58,13 @@ export function DetailToolbar({
     void qc.invalidateQueries({ queryKey: ["list-contains"] });
     void qc.invalidateQueries({ queryKey: ["list-tmdb-ids"] });
     void qc.invalidateQueries({ queryKey: [kind === "movie" ? "movie-videos" : "show-videos", libraryId] });
+    // Poster/title changes here (re-match, pick-correct-title) never touched Home's own queries, so
+    // a title fixed up on its detail page kept showing its old poster/data on Home until a full
+    // reload. Covers every "home-*" key (home-layout, home-history, home-section:<id>, …) by prefix
+    // so new home queries stay covered without another edit here.
+    void qc.invalidateQueries({
+      predicate: (query) => typeof query.queryKey[0] === "string" && query.queryKey[0].startsWith("home"),
+    });
   };
 
   const showToast = (msg: string) => {

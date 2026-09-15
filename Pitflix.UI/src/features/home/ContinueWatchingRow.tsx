@@ -2,7 +2,7 @@ import { HorizontalScrollRow } from "../../components/ui/HorizontalScrollRow";
 import { MediaImage } from "../../components/ui/MediaImage";
 import type { HomeLayoutStyle } from "../../types/homeSection";
 import type { WatchHistoryRow } from "../../types/homeSection";
-import { toPosterSrc } from "../../utils/posterSrc";
+import { POSTER_WIDTHS, toPosterSrc } from "../../utils/posterSrc";
 import { cn } from "../../utils/cn";
 import { useNavigate } from "react-router-dom";
 
@@ -14,9 +14,11 @@ function ContinueThumb({
   onManage?: (id: number) => void;
 }) {
   const navigate = useNavigate();
-  const src = toPosterSrc(item.posterLocalPath ?? item.posterRemoteUrl ?? undefined);
+  const src = toPosterSrc(item.posterLocalPath ?? item.posterRemoteUrl ?? undefined, POSTER_WIDTHS.thumb);
   const fallbackSrc =
-    item.posterLocalPath && item.posterRemoteUrl ? toPosterSrc(item.posterRemoteUrl) : undefined;
+    item.posterLocalPath && item.posterRemoteUrl
+      ? toPosterSrc(item.posterRemoteUrl, POSTER_WIDTHS.thumb)
+      : undefined;
 
   const goToDetailPage = () => {
     if (item.libraryMovieId != null) {

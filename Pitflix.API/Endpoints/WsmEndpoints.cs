@@ -9,6 +9,10 @@ namespace Pitflix.API.Endpoints;
 public static class WsmEndpoints
 {
     private static readonly TimeSpan CacheTtl = TimeSpan.FromMinutes(30);
+    // Empty results get a much shorter TTL than real hits — a transient scrape failure (site down,
+    // markup change, network blip) previously looked identical to "no releases exist" and got frozen
+    // as such for a full 30 minutes. This lets it self-heal on the next request instead.
+    private static readonly TimeSpan EmptyCacheTtl = TimeSpan.FromMinutes(3);
 
     public static void MapWsmEndpoints(this WebApplication app, JsonSerializerOptions jsonSerializerOptions)
     {
@@ -16,17 +20,29 @@ public static class WsmEndpoints
         app.MapGet("/api/wsm/movie/{tmdbId:int}", async (
             int tmdbId, string? imdbId, string? title, int? year, WatchSoMuchScraperService wsm, IMemoryCache cache, CancellationToken ct) =>
         {
-            var cacheKey = $"wsm:movie:{tmdbId}";
-            if (cache.TryGetValue(cacheKey, out IReadOnlyList<WsmTorrent>? cached))
-                return Results.Json(new { items = cached!.Select(WsmTorrentJson).ToList() }, jsonSerializerOptions);
+            try
+            {
+                var t = title?.Trim() ?? "";
+                // Include imdbId/title/year in the key, not just tmdbId — otherwise a stale cached result
+                // from an earlier (wrong) match could be served back for the same tmdbId indefinitely.
+                var cacheKey = $"wsm:movie:{tmdbId}:{imdbId}:{t}:{year}";
+                if (cache.TryGetValue(cacheKey, out IReadOnlyList<WsmTorrent>? cached))
+                    return Results.Json(new { items = cached!.Select(WsmTorrentJson).ToList() }, jsonSerializerOptions);
 
-            var t = title?.Trim() ?? "";
-            var items = string.IsNullOrEmpty(imdbId) || string.IsNullOrEmpty(t) || year is not > 0
-                ? Array.Empty<WsmTorrent>()
-                : await wsm.ScrapeAsync(imdbId, t, year.Value, ct).ConfigureAwait(false);
+                var items = string.IsNullOrEmpty(imdbId) || string.IsNullOrEmpty(t) || year is not > 0
+                    ? Array.Empty<WsmTorrent>()
+                    : await wsm.ScrapeAsync(imdbId, t, year.Value, ct).ConfigureAwait(false);
 
-            cache.Set(cacheKey, items, CacheTtl);
-            return Results.Json(new { items = items.Select(WsmTorrentJson).ToList() }, jsonSerializerOptions);
+                cache.Set(cacheKey, items, items.Count > 0 ? CacheTtl : EmptyCacheTtl);
+                return Results.Json(new { items = items.Select(WsmTorrentJson).ToList() }, jsonSerializerOptions);
+            }
+            catch (Exception ex) when (!ct.IsCancellationRequested)
+            {
+                // Letting this escape unhandled makes ASP.NET Core clear the response (wiping the CORS
+                // headers UseCors already set) before writing its default 500 — the browser then reports
+                // a misleading "blocked by CORS policy" instead of the real error.
+                return Results.Json(new { items = Array.Empty<object>(), error = ex.Message }, jsonSerializerOptions, statusCode: 500);
+            }
         });
 
         // Episode pages embed only the show's current episode — the full season/episode archive is reached
@@ -34,32 +50,46 @@ public static class WsmEndpoints
         app.MapGet("/api/wsm/episode/{tmdbId:int}/{season:int}/{episode:int}", async (
             int tmdbId, int season, int episode, string? imdbId, WatchSoMuchScraperService wsm, IMemoryCache cache, CancellationToken ct) =>
         {
-            var cacheKey = $"wsm:episode:{tmdbId}-{season}-{episode}";
-            if (cache.TryGetValue(cacheKey, out IReadOnlyList<WsmTorrent>? cached))
-                return Results.Json(new { items = cached!.Select(WsmTorrentJson).ToList() }, jsonSerializerOptions);
+            try
+            {
+                var cacheKey = $"wsm:episode:{tmdbId}-{season}-{episode}:{imdbId}";
+                if (cache.TryGetValue(cacheKey, out IReadOnlyList<WsmTorrent>? cached))
+                    return Results.Json(new { items = cached!.Select(WsmTorrentJson).ToList() }, jsonSerializerOptions);
 
-            var items = string.IsNullOrEmpty(imdbId)
-                ? Array.Empty<WsmTorrent>()
-                : await wsm.ScrapeEpisodeAsync(imdbId, season, episode, ct).ConfigureAwait(false);
+                var items = string.IsNullOrEmpty(imdbId)
+                    ? Array.Empty<WsmTorrent>()
+                    : await wsm.ScrapeEpisodeAsync(imdbId, season, episode, ct).ConfigureAwait(false);
 
-            cache.Set(cacheKey, items, CacheTtl);
-            return Results.Json(new { items = items.Select(WsmTorrentJson).ToList() }, jsonSerializerOptions);
+                cache.Set(cacheKey, items, items.Count > 0 ? CacheTtl : EmptyCacheTtl);
+                return Results.Json(new { items = items.Select(WsmTorrentJson).ToList() }, jsonSerializerOptions);
+            }
+            catch (Exception ex) when (!ct.IsCancellationRequested)
+            {
+                return Results.Json(new { items = Array.Empty<object>(), error = ex.Message }, jsonSerializerOptions, statusCode: 500);
+            }
         });
 
         // Targets a season's "full season pack" releases rather than a single episode.
         app.MapGet("/api/wsm/season/{tmdbId:int}/{season:int}", async (
             int tmdbId, int season, string? imdbId, WatchSoMuchScraperService wsm, IMemoryCache cache, CancellationToken ct) =>
         {
-            var cacheKey = $"wsm:season:{tmdbId}-{season}";
-            if (cache.TryGetValue(cacheKey, out IReadOnlyList<WsmTorrent>? cached))
-                return Results.Json(new { items = cached!.Select(WsmTorrentJson).ToList() }, jsonSerializerOptions);
+            try
+            {
+                var cacheKey = $"wsm:season:{tmdbId}-{season}:{imdbId}";
+                if (cache.TryGetValue(cacheKey, out IReadOnlyList<WsmTorrent>? cached))
+                    return Results.Json(new { items = cached!.Select(WsmTorrentJson).ToList() }, jsonSerializerOptions);
 
-            var items = string.IsNullOrEmpty(imdbId)
-                ? Array.Empty<WsmTorrent>()
-                : await wsm.ScrapeSeasonAsync(imdbId, season, ct).ConfigureAwait(false);
+                var items = string.IsNullOrEmpty(imdbId)
+                    ? Array.Empty<WsmTorrent>()
+                    : await wsm.ScrapeSeasonAsync(imdbId, season, ct).ConfigureAwait(false);
 
-            cache.Set(cacheKey, items, CacheTtl);
-            return Results.Json(new { items = items.Select(WsmTorrentJson).ToList() }, jsonSerializerOptions);
+                cache.Set(cacheKey, items, items.Count > 0 ? CacheTtl : EmptyCacheTtl);
+                return Results.Json(new { items = items.Select(WsmTorrentJson).ToList() }, jsonSerializerOptions);
+            }
+            catch (Exception ex) when (!ct.IsCancellationRequested)
+            {
+                return Results.Json(new { items = Array.Empty<object>(), error = ex.Message }, jsonSerializerOptions, statusCode: 500);
+            }
         });
 
         app.MapPost("/api/wsm/download", async (TorrentDownloadBody body, LibraryRepository repo, CancellationToken ct) =>
@@ -78,7 +108,8 @@ public static class WsmEndpoints
             var password = await repo.GetSettingAsync("QBittorrentPassword", ct).ConfigureAwait(false);
 
             var client = new QBittorrentClient(baseUrl, username ?? "", password ?? "");
-            var result = await client.AddTorrentAsync(body.MagnetLink, body.SavePath.Trim(), ct).ConfigureAwait(false);
+            var result = await client.AddTorrentAsync(body.MagnetLink, body.SavePath.Trim(), body.FileIndex, ct)
+                .ConfigureAwait(false);
             return result.Success
                 ? Results.Json(new { action = "queued" }, jsonSerializerOptions)
                 : Results.Json(new { error = result.Error }, jsonSerializerOptions, statusCode: 502);

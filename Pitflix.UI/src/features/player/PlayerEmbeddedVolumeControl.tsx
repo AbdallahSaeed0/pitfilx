@@ -21,7 +21,9 @@ export function PlayerEmbeddedVolumeControl({
   onFullscreenPointerActivity,
 }: Props) {
   return (
-    <details className="group relative">
+    // open:z-[70]: promotes trigger+popup above row siblings while open — see the same
+    // comment in PlayerSpeedControl.tsx for why this matters for a bottom-full popup.
+    <details className="group relative open:z-[70]">
       <summary
         ref={volumeWheelRef}
         className="flex h-8 w-8 cursor-pointer list-none items-center justify-center rounded-md bg-white/10 text-white marker:content-none hover:bg-white/20 [&::-webkit-details-marker]:hidden"

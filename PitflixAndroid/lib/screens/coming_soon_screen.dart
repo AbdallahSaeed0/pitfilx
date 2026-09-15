@@ -1,17 +1,23 @@
 import 'package:flutter/material.dart';
 import '../models/coming_soon_item.dart';
 import '../models/title_item.dart';
-import '../services/local_backend_service.dart';
+import '../services/app_settings.dart';
+import '../services/tmdb_service.dart';
 import '../theme/app_theme.dart';
 import '../widgets/widgets.dart';
 import 'title_detail_movie_screen.dart';
 import 'title_detail_series_screen.dart';
+import '../widgets/pitflix_network_image.dart';
 
 /// Full "Coming Soon" page — automatic countdown of upcoming movie releases
-/// and new/returning TV seasons from the local backend's
-/// `/api/home/coming-soon` discovery endpoint.
+/// and new/returning TV within the next few months, straight from TMDB (see
+/// TmdbService.fetchComingSoon). Tabbed Movies/Shows, same split as Home's
+/// two Coming Soon sections — [initialShowsTab] seeds which tab is active so
+/// opening this from the Shows section's "See All" doesn't land on Movies.
 class ComingSoonScreen extends StatefulWidget {
-  const ComingSoonScreen({super.key});
+  final bool initialShowsTab;
+
+  const ComingSoonScreen({super.key, this.initialShowsTab = true});
 
   @override
   State<ComingSoonScreen> createState() => _ComingSoonScreenState();
@@ -20,6 +26,7 @@ class ComingSoonScreen extends StatefulWidget {
 class _ComingSoonScreenState extends State<ComingSoonScreen> {
   List<ComingSoonItem>? _items;
   String? _error;
+  late int _tab = widget.initialShowsTab ? 0 : 1; // 0 Shows, 1 Movies
 
   @override
   void initState() {
@@ -30,13 +37,23 @@ class _ComingSoonScreenState extends State<ComingSoonScreen> {
   Future<void> _load() async {
     setState(() => _error = null);
     try {
-      final items = await LocalBackendService.fetchComingSoon();
+      final items = await TmdbService.fetchComingSoon();
       if (!mounted) return;
-      setState(() => _items = items);
+      final dismissed = AppSettings.dismissedComingSoonIds.value;
+      setState(
+        () => _items = items
+            .where((i) => !dismissed.contains('${i.tmdbId}-${i.mediaType}'))
+            .toList(),
+      );
     } catch (e) {
       if (!mounted) return;
       setState(() => _error = e.toString());
     }
+  }
+
+  void _dismiss(ComingSoonItem item) {
+    setState(() => _items?.remove(item));
+    AppSettings.dismissComingSoonItem(item.tmdbId, item.mediaType);
   }
 
   void _openTitle(ComingSoonItem item) {
@@ -54,6 +71,7 @@ class _ComingSoonScreenState extends State<ComingSoonScreen> {
       posterPath: item.posterUrl,
       tmdbId: item.tmdbId,
       isSummaryOnly: true,
+      releaseDate: item.releaseDate,
     );
     Navigator.of(context).push(
       MaterialPageRoute(
@@ -91,6 +109,11 @@ class _ComingSoonScreenState extends State<ComingSoonScreen> {
                   ),
                 ],
               ),
+            ),
+            SegmentedTabBar(
+              tabs: const ['Shows', 'Movies'],
+              activeIndex: _tab,
+              onChanged: (i) => setState(() => _tab = i),
             ),
             Expanded(child: _buildBody()),
           ],
@@ -137,7 +160,10 @@ class _ComingSoonScreenState extends State<ComingSoonScreen> {
       return const ListRowsSkeleton(rowHeight: 96);
     }
 
-    if (_items!.isEmpty) {
+    final showsOnly = _tab == 0;
+    final items = _items!.where((i) => i.isShow == showsOnly).toList();
+
+    if (items.isEmpty) {
       return Center(
         child: Text(
           'Nothing coming up right now.',
@@ -148,10 +174,44 @@ class _ComingSoonScreenState extends State<ComingSoonScreen> {
 
     return ListView.separated(
       padding: const EdgeInsets.fromLTRB(20, 16, 20, 20),
-      itemCount: _items!.length,
+      itemCount: items.length,
       separatorBuilder: (_, _) => const SizedBox(height: 12),
-      itemBuilder: (context, i) =>
-          _ComingSoonRow(item: _items![i], onTap: () => _openTitle(_items![i])),
+      itemBuilder: (context, i) {
+        final item = items[i];
+        return Dismissible(
+          key: ValueKey('${item.tmdbId}-${item.mediaType}'),
+          direction: DismissDirection.horizontal,
+          background: _DismissBackground(alignment: Alignment.centerLeft),
+          secondaryBackground: _DismissBackground(
+            alignment: Alignment.centerRight,
+          ),
+          onDismissed: (_) => _dismiss(item),
+          child: _ComingSoonRow(item: item, onTap: () => _openTitle(item)),
+        );
+      },
+    );
+  }
+}
+
+class _DismissBackground extends StatelessWidget {
+  final Alignment alignment;
+
+  const _DismissBackground({required this.alignment});
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      decoration: BoxDecoration(
+        color: AppColors.destructive.withValues(alpha: 0.85),
+        borderRadius: BorderRadius.circular(AppSpacing.cardRadiusMax),
+      ),
+      alignment: alignment,
+      padding: const EdgeInsets.symmetric(horizontal: 14),
+      child: const Icon(
+        Icons.delete_outline,
+        color: AppColors.textPrimary,
+        size: 20,
+      ),
     );
   }
 }
@@ -222,7 +282,7 @@ class _ComingSoonRow extends StatelessWidget {
                 width: 68,
                 height: 100,
                 child: item.posterUrl != null
-                    ? Image.network(
+                    ? PitflixNetworkImage(
                         item.posterUrl!,
                         fit: BoxFit.cover,
                         errorBuilder: (context, error, stackTrace) =>

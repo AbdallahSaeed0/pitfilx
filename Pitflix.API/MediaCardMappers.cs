@@ -23,7 +23,8 @@ public static class MediaCardMappers
             BackdropLocalPath = m.BackdropLocalPath,
             SelectedBackdropPath = m.SelectedBackdropPath,
             MediaFilePath = m.FilePath,
-            TmdbMediaType = "Movie"
+            TmdbMediaType = "Movie",
+            PosterRemoteUrl = m.PosterRemoteUrl
         };
 
     public static MediaCardDto ToCardFromShow(Show s) =>
@@ -43,6 +44,7 @@ public static class MediaCardMappers
             Overview = s.Overview != null && s.Overview.Length > 200 ? s.Overview[..200] : s.Overview,
             BackdropLocalPath = s.BackdropLocalPath,
             SelectedBackdropPath = s.SelectedBackdropPath,
-            TmdbMediaType = "Series"
+            TmdbMediaType = "Series",
+            PosterRemoteUrl = s.PosterRemoteUrl
         };
 }

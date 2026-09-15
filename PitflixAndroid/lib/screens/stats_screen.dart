@@ -99,7 +99,7 @@ class _StatsScreenState extends State<StatsScreen> {
     final showTab = _tab == 0;
     final tabScoped = showTab ? data.shows : data.movies;
 
-    final highlights = data.highlights;
+    final highlights = showTab ? data.seriesHighlights : data.movieHighlights;
     return ListView(
       padding: const EdgeInsets.fromLTRB(20, 18, 20, 24),
       children: [
@@ -114,7 +114,7 @@ class _StatsScreenState extends State<StatsScreen> {
         ),
         const SizedBox(height: 14),
         _BarChartCard(
-          title: 'LAST 7 DAYS',
+          title: showTab ? 'EPISODES · LAST 7 DAYS' : 'MOVIES · LAST 7 DAYS',
           values: tabScoped.dailyValues,
           labels: tabScoped.dailyLabels,
         ),
@@ -146,14 +146,38 @@ class _StatsScreenState extends State<StatsScreen> {
         ),
         if (data.hasBackendExtras) ...[
           const SizedBox(height: 14),
-          _CountCardsRow(
-            leftLabel: 'AVG RATING',
-            leftValue: tabScoped.averageRating != null && tabScoped.averageRating! > 0
-                ? '${tabScoped.averageRating!.toStringAsFixed(1)}★'
-                : '—',
-            rightLabel: 'REWATCH SESSIONS',
-            rightValue: '${data.rewatchSessionsApprox ?? 0}',
-          ),
+          // Rewatch sessions only exist for episodes (episode_watch_status'
+          // rewatch_count) — there's no equivalent concept for movies in this
+          // schema, so that tile only appears on the Shows tab instead of
+          // showing a series-only number while viewing Movies.
+          if (showTab)
+            _CountCardsRow(
+              leftLabel: 'AVG RATING',
+              leftValue:
+                  tabScoped.averageRating != null && tabScoped.averageRating! > 0
+                  ? '${tabScoped.averageRating!.toStringAsFixed(1)}★'
+                  : '—',
+              rightLabel: 'REWATCH SESSIONS',
+              rightValue: '${data.rewatchSessionsApprox ?? 0}',
+            )
+          else
+            _StatCard(
+              padding: const EdgeInsets.fromLTRB(14, 16, 14, 16),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text('AVG RATING', style: AppTextStyles.sectionLabel()),
+                  const SizedBox(height: 4),
+                  Text(
+                    tabScoped.averageRating != null &&
+                            tabScoped.averageRating! > 0
+                        ? '${tabScoped.averageRating!.toStringAsFixed(1)}★'
+                        : '—',
+                    style: AppTextStyles.bebas(fontSize: 24),
+                  ),
+                ],
+              ),
+            ),
           const SizedBox(height: 14),
           _ProgressListCard(
             title: 'MOVIES VS SERIES',
@@ -171,12 +195,17 @@ class _StatsScreenState extends State<StatsScreen> {
             ],
             emptyText: 'Nothing here yet.',
           ),
-          const SizedBox(height: 14),
-          _ProgressListCard(
-            title: 'TOP NETWORKS',
-            rows: data.networkRows,
-            emptyText: 'Nothing here yet.',
-          ),
+          // Networks only ever come from series rows (desktop-import synced
+          // shows) — showing this on the Movies tab would just be series data
+          // bleeding into the wrong tab.
+          if (showTab) ...[
+            const SizedBox(height: 14),
+            _ProgressListCard(
+              title: 'TOP NETWORKS',
+              rows: data.networkRows,
+              emptyText: 'Nothing here yet.',
+            ),
+          ],
           const SizedBox(height: 14),
           _ProgressListCard(
             title: 'BY DECADE',
@@ -186,13 +215,17 @@ class _StatsScreenState extends State<StatsScreen> {
         ],
         const SizedBox(height: 14),
         ValueListenableBuilder<Map<int, int>>(
-          valueListenable: SessionStatsStore.ratings,
+          valueListenable: showTab
+              ? SessionStatsStore.seriesRatings
+              : SessionStatsStore.movieRatings,
           builder: (context, ratingsMap, _) =>
               _RatingDistributionCard(ratings: ratingsMap),
         ),
         const SizedBox(height: 14),
         ValueListenableBuilder<Map<String, int>>(
-          valueListenable: SessionStatsStore.reactions,
+          valueListenable: showTab
+              ? SessionStatsStore.seriesReactions
+              : SessionStatsStore.movieReactions,
           builder: (context, reactionsMap, _) =>
               _ReactionsCard(reactions: reactionsMap),
         ),
@@ -325,13 +358,27 @@ typedef _RankedRow = (String primary, String secondary);
 /// a 0-1 fraction driving the progress bar width.
 typedef _ProgressRow = (String label, String rightText, double fraction);
 
-const _dayLabels = ['6d', '5d', '4d', '3d', '2d', '1d', 'Today'];
+/// Real weekday names for the last 7 calendar days (oldest → today), e.g.
+/// ['Thu','Fri','Sat','Sun','Mon','Tue','Wed'] — replaces the old relative
+/// '6d'/'5d'/.../'Today' labels, which didn't say which actual day each bar
+/// was.
+List<String> _last7DayLabels() {
+  const names = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+  final now = DateTime.now();
+  final today = DateTime(now.year, now.month, now.day);
+  return [
+    for (var i = 6; i >= 0; i--)
+      names[today.subtract(Duration(days: i)).weekday % 7],
+  ];
+}
 
 class _TabScopedStats {
   final String heroValue;
   final String heroSubLabel;
-  final List<int> dailyValues; // 7 entries, oldest → today
-  final List<String> dailyLabels; // 7 entries
+  /// Episodes (Shows tab) or movies (Movies tab) watched per day, oldest →
+  /// today — 7 entries, one per [dailyLabels] entry.
+  final List<int> dailyValues;
+  final List<String> dailyLabels; // real weekday names, 7 entries
   final String weekTotalLabel;
   final String monthTotalLabel;
   final List<_RankedRow> recentRows;
@@ -383,7 +430,8 @@ class _StatsData {
   final int? rewatchSessionsApprox;
   final List<_ProgressRow> networkRows;
   final int? seriesCompletionPercent;
-  final ProfileHighlights? highlights;
+  final ProfileHighlights? movieHighlights;
+  final ProfileHighlights? seriesHighlights;
 
   bool get hasBackendExtras => moviePercent != null;
 
@@ -400,23 +448,30 @@ class _StatsData {
     this.rewatchSessionsApprox,
     this.networkRows = const [],
     this.seriesCompletionPercent,
-    this.highlights,
+    this.movieHighlights,
+    this.seriesHighlights,
   });
 
-  /// Buckets watch_log minutes into the last 7 calendar days.
-  static List<int> _dailyMinutesFromLog(
+  /// Counts watch_log rows (each = one "mark watched" event, i.e. one movie
+  /// or one episode) per calendar day for the last 7 days — this is what
+  /// drives the "Last 7 Days" chart now, so it reads as "how many did I
+  /// watch" instead of raw minutes, which don't mean much bar-to-bar when a
+  /// single movie and a single episode take very different amounts of time.
+  static List<int> _dailyCountsFromLog(
     List<Map<String, dynamic>> log,
     String mediaType,
   ) {
     final buckets = List<int>.filled(7, 0);
     final now = DateTime.now();
+    final today = DateTime(now.year, now.month, now.day);
     for (final row in log) {
       if (row['media_type'] != mediaType) continue;
       final loggedAt = DateTime.tryParse(row['logged_at'] as String? ?? '');
       if (loggedAt == null) continue;
-      final daysAgo = now.difference(loggedAt).inDays;
+      final loggedDay = DateTime(loggedAt.year, loggedAt.month, loggedAt.day);
+      final daysAgo = today.difference(loggedDay).inDays;
       if (daysAgo < 0 || daysAgo > 6) continue;
-      buckets[6 - daysAgo] += (row['minutes'] as num?)?.toInt() ?? 0;
+      buckets[6 - daysAgo] += 1;
     }
     return buckets;
   }
@@ -429,6 +484,7 @@ class _StatsData {
     List<Map<String, dynamic>> episodeRewatches,
   ) {
     int asInt(dynamic v) => (v as num?)?.toInt() ?? 0;
+    final dayLabels = _last7DayLabels();
 
     _TabScopedStats scoped(String mediaType) {
       final records = watchRecords
@@ -506,8 +562,8 @@ class _StatsData {
       return _TabScopedStats(
         heroValue: formatMinutes(totalMinutes),
         heroSubLabel: '+${formatMinutes(weekMinutes)} in the last 7 days',
-        dailyValues: _dailyMinutesFromLog(watchLog, mediaType),
-        dailyLabels: _dayLabels,
+        dailyValues: _dailyCountsFromLog(watchLog, mediaType),
+        dailyLabels: dayLabels,
         weekTotalLabel: formatMinutes(weekMinutes),
         monthTotalLabel: formatMinutes(monthMinutes),
         recentRows: completed
@@ -583,7 +639,14 @@ class _StatsData {
       ),
       networkRows: networkRows,
       seriesCompletionPercent: seriesCompletionPercent,
-      highlights: ProfileHighlights.fromUserLibraryBundle(watchRecords),
+      movieHighlights: ProfileHighlights.fromUserLibraryBundle(
+        watchRecords,
+        mediaType: 'movie',
+      ),
+      seriesHighlights: ProfileHighlights.fromUserLibraryBundle(
+        watchRecords,
+        mediaType: 'series',
+      ),
     );
   }
 }
@@ -673,7 +736,7 @@ class _BarChartCard extends StatelessWidget {
           Text(title, style: AppTextStyles.sectionLabel()),
           const SizedBox(height: 16),
           SizedBox(
-            height: 60,
+            height: 76,
             child: Row(
               crossAxisAlignment: CrossAxisAlignment.end,
               children: [
@@ -681,19 +744,41 @@ class _BarChartCard extends StatelessWidget {
                   Expanded(
                     child: Padding(
                       padding: const EdgeInsets.symmetric(horizontal: 3),
-                      child: FractionallySizedBox(
-                        alignment: Alignment.bottomCenter,
-                        heightFactor: values[i] / maxVal,
-                        child: DecoratedBox(
-                          decoration: BoxDecoration(
-                            color: i == values.length - 1
-                                ? AppColors.accent
-                                : AppColors.progressTrack,
-                            borderRadius: const BorderRadius.vertical(
-                              top: Radius.circular(3),
+                      child: Column(
+                        mainAxisAlignment: MainAxisAlignment.end,
+                        children: [
+                          // The exact count above each bar — bar height
+                          // alone is hard to read precisely for small
+                          // day-to-day counts (0-3 episodes/movies).
+                          Text(
+                            '${values[i]}',
+                            style: AppTextStyles.dmSans(
+                              fontSize: 9,
+                              fontWeight: FontWeight.w600,
+                              color: i == values.length - 1
+                                  ? AppColors.accent
+                                  : AppColors.textMuted,
                             ),
                           ),
-                        ),
+                          const SizedBox(height: 4),
+                          SizedBox(
+                            height: 44,
+                            child: FractionallySizedBox(
+                              alignment: Alignment.bottomCenter,
+                              heightFactor: values[i] / maxVal,
+                              child: DecoratedBox(
+                                decoration: BoxDecoration(
+                                  color: i == values.length - 1
+                                      ? AppColors.accent
+                                      : AppColors.progressTrack,
+                                  borderRadius: const BorderRadius.vertical(
+                                    top: Radius.circular(3),
+                                  ),
+                                ),
+                              ),
+                            ),
+                          ),
+                        ],
                       ),
                     ),
                   ),

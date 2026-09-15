@@ -77,11 +77,11 @@ public sealed class SupabaseUserClient
 
     /// <summary>Bulk upsert — mirrors the mobile app's own `.upsert(rows, onConflict: ...)` calls
     /// (see PitflixAndroid's UserLibraryService), same conflict-target columns.</summary>
-    public async Task<bool> UpsertAsync(
+    public async Task<(bool ok, string? error)> UpsertAsync(
         string accessToken, string table, string onConflict, IReadOnlyList<object> rows, CancellationToken ct)
     {
         if (rows.Count == 0)
-            return true;
+            return (true, null);
 
         var url = $"{AppSettings.ResolvedSupabaseUrl}/rest/v1/{table}?on_conflict={Uri.EscapeDataString(onConflict)}";
         using var req = new HttpRequestMessage(HttpMethod.Post, url);
@@ -97,14 +97,45 @@ public sealed class SupabaseUserClient
             {
                 var body = await res.Content.ReadAsStringAsync(ct).ConfigureAwait(false);
                 _log.LogWarning("Mobile sync UPSERT {Table} failed: {Status} {Body}", table, res.StatusCode, body);
-                return false;
+                return (false, $"{table}: {(int)res.StatusCode} {body}");
             }
-            return true;
+            return (true, null);
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
             _log.LogWarning(ex, "Mobile sync UPSERT {Table} threw", table);
-            return false;
+            return (false, $"{table}: {ex.Message}");
+        }
+    }
+
+    /// <summary>Deletes rows matching a raw PostgREST filter query (e.g.
+    /// "user_id=eq.X&amp;tmdb_id=in.(1,2,3)") — used by MobileAccountSyncService to remove
+    /// rows a desktop push no longer accounts for, so a push actually mirrors the desktop's
+    /// current state instead of only ever adding to what's already there.</summary>
+    public async Task<(bool ok, string? error)> DeleteAsync(
+        string accessToken, string table, string filterQuery, CancellationToken ct)
+    {
+        var url = $"{AppSettings.ResolvedSupabaseUrl}/rest/v1/{table}?{filterQuery}";
+        using var req = new HttpRequestMessage(HttpMethod.Delete, url);
+        ApplyHeaders(req, accessToken);
+        req.Headers.Add("Prefer", "return=minimal");
+
+        try
+        {
+            var http = _httpClientFactory.CreateClient();
+            using var res = await http.SendAsync(req, ct).ConfigureAwait(false);
+            if (!res.IsSuccessStatusCode)
+            {
+                var body = await res.Content.ReadAsStringAsync(ct).ConfigureAwait(false);
+                _log.LogWarning("Mobile sync DELETE {Table} failed: {Status} {Body}", table, res.StatusCode, body);
+                return (false, $"{table}: {(int)res.StatusCode} {body}");
+            }
+            return (true, null);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            _log.LogWarning(ex, "Mobile sync DELETE {Table} threw", table);
+            return (false, $"{table}: {ex.Message}");
         }
     }
 

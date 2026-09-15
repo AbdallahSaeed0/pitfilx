@@ -1,9 +1,10 @@
 import { BarChart3, Clapperboard, FolderOpen, HelpCircle, Key, LayoutGrid, Play, RefreshCw, Wrench } from "lucide-react";
 import { ApiHealthCheck } from "../components/ApiHealthCheck";
+import { BackButton } from "../components/ui/BackButton";
 import { ConfirmDialog } from "../components/ui/ConfirmDialog";
 import { ApiKeyGuideCopyBlock, ApiKeyGuideModal } from "../components/ui/ApiKeyGuideModal";
 import { RemoveTitleBrowseModal } from "../components/RemoveTitleBrowseModal";
-import { Spinner } from "../components/ui/Spinner";
+import { Skeleton } from "../components/ui/Skeleton";
 import { cn } from "../utils/cn";
 import { useSettingsPageModel } from "../features/settings/useSettingsPageModel";
 import { SettingsLibraryTab } from "../features/settings/SettingsLibraryTab";
@@ -49,13 +50,29 @@ export function SettingsPage() {
 
   if (isPageLoading)
     return (
-      <div className="flex justify-center py-24">
-        <Spinner />
+      <div className="w-full space-y-6 p-4 md:p-8" aria-busy="true" aria-label="Loading">
+        <Skeleton className="h-9 w-44 rounded-lg" />
+        <Skeleton className="h-4 w-2/3 max-w-xl rounded" />
+        <div className="flex flex-wrap gap-2">
+          {Array.from({ length: 6 }).map((_, i) => (
+            <Skeleton key={i} className="h-8 w-24 rounded-full" />
+          ))}
+        </div>
+        <div className="space-y-4">
+          {Array.from({ length: 5 }).map((_, i) => (
+            <div key={i} className="space-y-2 rounded-xl border border-pitflix-card/40 bg-pitflix-surface/30 p-4">
+              <Skeleton className="h-4 w-40 rounded" />
+              <Skeleton className="h-3 w-3/4 rounded" />
+              <Skeleton className="h-9 w-full rounded-lg" />
+            </div>
+          ))}
+        </div>
       </div>
     );
 
   return (
-    <div className="mx-auto w-full max-w-7xl space-y-5 p-4 md:p-8">
+    <div className="w-full space-y-5 p-4 md:p-8">
+      <BackButton className="mb-0" />
       <header className="border-b border-white/[0.08] pb-6">
         <h1 className="text-3xl font-bold tracking-tight text-white">Settings</h1>
         <p className="mt-2 max-w-2xl text-sm leading-relaxed text-pitflix-muted">
@@ -404,6 +421,30 @@ export function SettingsPage() {
       />
 
       <ApiKeyGuideModal
+        open={apiKeyGuide === "omdb"}
+        title="How to get an OMDb API key"
+        onClose={() => setApiKeyGuide(null)}
+        steps={[
+          <>
+            Go to{" "}
+            <a
+              href="https://www.omdbapi.com/apikey.aspx"
+              target="_blank"
+              rel="noreferrer"
+              className="text-pitflix-primary hover:underline"
+            >
+              omdbapi.com/apikey.aspx
+            </a>{" "}
+            and select the free tier.
+          </>,
+          "Enter your email — OMDb sends the key by email and it needs a one-click activation link.",
+          "Copy the API key from the activation email.",
+          "Expand “Additional Sources” above, paste it into the OMDb field, and click “Save & Test”.",
+          "The free tier allows 1,000 requests per day.",
+        ]}
+      />
+
+      <ApiKeyGuideModal
         open={apiKeyGuide === "tvdb"}
         title="How to get a TVDB API key"
         onClose={() => setApiKeyGuide(null)}
@@ -448,6 +489,41 @@ export function SettingsPage() {
           </>,
           "Submit the form — your v4 API key appears in the dashboard once approved.",
           "Expand “Additional Sources” above, paste it into the TVDB field, and click “Save & Test”.",
+        ]}
+      />
+
+      <ApiKeyGuideModal
+        open={apiKeyGuide === "fanart"}
+        title="How to get a Fanart.tv API key"
+        onClose={() => setApiKeyGuide(null)}
+        steps={[
+          <>
+            Go to{" "}
+            <a
+              href="https://fanart.tv"
+              target="_blank"
+              rel="noreferrer"
+              className="text-pitflix-primary hover:underline"
+            >
+              fanart.tv
+            </a>{" "}
+            and create a free account (or sign in).
+          </>,
+          <>
+            Open your{" "}
+            <a
+              href="https://fanart.tv/get-an-api-key"
+              target="_blank"
+              rel="noreferrer"
+              className="text-pitflix-primary hover:underline"
+            >
+              account settings
+            </a>{" "}
+            — your personal API key is shown there.
+          </>,
+          "Copy the API key.",
+          "Expand “Additional Sources” above, paste it into the Fanart.tv field, and click “Save & Test”.",
+          "TV show artwork also needs a TVDB key configured above, since Fanart looks up shows by TVDB id.",
         ]}
       />
 

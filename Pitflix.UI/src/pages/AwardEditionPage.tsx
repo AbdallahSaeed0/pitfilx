@@ -1,4 +1,5 @@
 import { useQuery } from "@tanstack/react-query";
+import { PosterGridSkeleton } from "../components/ui/Skeleton";
 import { useEffect, useMemo, useState } from "react";
 import { Link, Navigate, useParams } from "react-router-dom";
 import { getAwardEdition, getAwardsCatalog, getAwardYears } from "../api/awards";
@@ -8,7 +9,6 @@ import { AwardEditionHero } from "../components/awards/AwardEditionHero";
 import { AwardEditionInsightStrip } from "../components/awards/AwardEditionInsightStrip";
 import { AwardEditionYearNav } from "../components/awards/AwardEditionYearNav";
 import { AwardWinnerRecommendations } from "../components/awards/AwardWinnerRecommendations";
-import { Spinner } from "../components/ui/Spinner";
 import { useLibraryTmdbIndex } from "../hooks/useLibraryTmdbIndex";
 import { debugAwards } from "../utils/awardDebug";
 import { getAwardBrandingImageSrc } from "../utils/awardBranding";
@@ -106,9 +106,7 @@ export function AwardEditionPage() {
 
   if (!yearsReady)
     return (
-      <div className="flex justify-center py-24">
-        <Spinner />
-      </div>
+      <PosterGridSkeleton />
     );
 
   if (years.length === 0)
@@ -156,9 +154,7 @@ export function AwardEditionPage() {
           ) : null}
           <AwardEditionYearNav awardId={awardId} years={years} activeYear={year} />
         </div>
-        <div className="flex justify-center py-16">
-          <Spinner />
-        </div>
+        <PosterGridSkeleton />
       </div>
     );
   }

@@ -1,9 +1,10 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { PosterGridSkeleton } from "../components/ui/Skeleton";
 import { useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { createList, deleteList, getLists, renameList } from "../api/lists";
 import { ConfirmDialog } from "../components/ui/ConfirmDialog";
-import { Spinner } from "../components/ui/Spinner";
+import { BackButton } from "../components/ui/BackButton";
 import { Pencil } from "lucide-react";
 import { cn } from "../utils/cn";
 import { decodeListTitle, encodeListName, LIST_MARK_OPTIONS, ListMarkGlyph } from "../utils/listMarks";
@@ -72,13 +73,12 @@ export function MyListsPage() {
 
   if (isLoading)
     return (
-      <div className="flex justify-center py-24">
-        <Spinner />
-      </div>
+      <PosterGridSkeleton />
     );
 
   return (
     <div>
+      <BackButton />
       <div className="mb-8 flex items-center justify-between">
         <div>
           <h1 className="text-3xl font-bold text-white">My Lists</h1>

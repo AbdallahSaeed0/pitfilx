@@ -1,7 +1,7 @@
 import { createPortal } from "react-dom";
 import { Play, Info } from "lucide-react";
 import type { MediaCard } from "../../types/media";
-import { toPosterSrc } from "../../utils/posterSrc";
+import { POSTER_WIDTHS, toPosterSrc } from "../../utils/posterSrc";
 import { formatRating, formatYear } from "../../utils/format";
 import { cn } from "../../utils/cn";
 
@@ -48,8 +48,11 @@ export function MediaHoverCard({
 
   const primary = item.selectedPosterPath || item.posterLocalPath;
   const remote = item.posterRemoteUrl;
-  const poster = toPosterSrc((primary ?? remote) ?? undefined);
-  const backdrop = toPosterSrc(item.selectedBackdropPath || item.backdropLocalPath || undefined);
+  const poster = toPosterSrc((primary ?? remote) ?? undefined, POSTER_WIDTHS.thumb);
+  const backdrop = toPosterSrc(
+    item.selectedBackdropPath || item.backdropLocalPath || undefined,
+    POSTER_WIDTHS.detail,
+  );
 
   const genres = item.genresCsv
     ?.split(",")

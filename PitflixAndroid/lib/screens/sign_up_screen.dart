@@ -2,9 +2,10 @@ import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import '../services/auth_service.dart';
 import '../services/friends_store.dart';
+import '../services/social_service.dart';
 import '../theme/app_theme.dart';
 import '../widgets/widgets.dart';
-import 'root_shell.dart';
+import 'onboarding_screen.dart';
 
 class SignUpScreen extends StatefulWidget {
   const SignUpScreen({super.key});
@@ -14,6 +15,7 @@ class SignUpScreen extends StatefulWidget {
 }
 
 class _SignUpScreenState extends State<SignUpScreen> {
+  final _usernameController = TextEditingController();
   final _emailController = TextEditingController();
   final _passwordController = TextEditingController();
   final _confirmPasswordController = TextEditingController();
@@ -21,15 +23,29 @@ class _SignUpScreenState extends State<SignUpScreen> {
 
   @override
   void dispose() {
+    _usernameController.dispose();
     _emailController.dispose();
     _passwordController.dispose();
     _confirmPasswordController.dispose();
     super.dispose();
   }
 
+  static final _usernamePattern = RegExp(r'^[a-zA-Z0-9_.]{3,20}$');
+
   Future<void> _signUp() async {
+    final username = _usernameController.text.trim();
     final email = _emailController.text.trim();
     final password = _passwordController.text;
+    if (!_usernamePattern.hasMatch(username)) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text(
+            'Username must be 3-20 characters: letters, numbers, "_" or "."',
+          ),
+        ),
+      );
+      return;
+    }
     if (email.isEmpty || !email.contains('@') || password.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('Enter a valid email and password')),
@@ -44,15 +60,37 @@ class _SignUpScreenState extends State<SignUpScreen> {
     }
     setState(() => _loading = true);
     try {
+      // Checked up front (rather than only relying on the DB's unique
+      // constraint after the fact) so a taken username never leaves behind
+      // a signed-up auth account with no username set — the RPC email
+      // lookup already exists for Login's username-or-email field, and
+      // doubles as an availability check here (a hit means it's taken).
+      final existingEmail = await AuthService.emailForUsername(username);
+      if (existingEmail != null) {
+        if (!mounted) return;
+        setState(() => _loading = false);
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('That username is already taken')),
+        );
+        return;
+      }
+
       final response = await AuthService.signUp(email, password);
       if (!mounted) return;
       if (response.session != null) {
         // Email confirmation disabled — Supabase returned a session
         // immediately, so log straight into the app.
+        try {
+          await SocialService.updateProfile(username: username);
+        } catch (_) {
+          // Rare race (someone else took the name in the last few seconds)
+          // — the account still exists and works, just without a username
+          // set; Edit Profile lets them pick another one later.
+        }
         await FriendsStore.refresh();
         if (!mounted) return;
         Navigator.of(context).pushReplacement(
-          MaterialPageRoute(builder: (_) => const RootShell()),
+          MaterialPageRoute(builder: (_) => const OnboardingScreen()),
         );
       } else {
         // Defensive path in case email confirmation gets re-enabled later.
@@ -154,6 +192,13 @@ class _SignUpScreenState extends State<SignUpScreen> {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
+              Text('USERNAME', style: AppTextStyles.sectionLabel()),
+              const SizedBox(height: 8),
+              AuthTextField(
+                controller: _usernameController,
+                hintText: 'User Name',
+              ),
+              const SizedBox(height: 14),
               Text('EMAIL', style: AppTextStyles.sectionLabel()),
               const SizedBox(height: 8),
               AuthTextField(

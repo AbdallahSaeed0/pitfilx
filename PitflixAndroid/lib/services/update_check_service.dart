@@ -1,5 +1,5 @@
 import 'dart:convert';
-import 'package:http/http.dart' as http;
+import 'http_client.dart';
 
 /// Checks GitHub Releases for a newer mobile build. Mirrors the desktop
 /// app's own updater (Pitflix.UI/src/updater/githubReleaseUpdater.ts) —
@@ -20,7 +20,7 @@ abstract class UpdateCheckService {
       final url = Uri.parse(
         'https://api.github.com/repos/$_owner/$_repo/releases',
       );
-      final res = await http.get(
+      final res = await PitflixHttp.client.get(
         url,
         headers: {
           'Accept': 'application/vnd.github+json',

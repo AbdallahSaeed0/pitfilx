@@ -169,16 +169,6 @@ class _LoginScreenState extends State<LoginScreen> {
               ),
               const SizedBox(height: 16),
               Center(
-                child: Text(
-                  'Forgot password?',
-                  style: AppTextStyles.dmSans(
-                    fontSize: 13,
-                    color: Colors.white.withValues(alpha: 0.45),
-                  ),
-                ),
-              ),
-              const SizedBox(height: 12),
-              Center(
                 child: GestureDetector(
                   onTap: () => Navigator.of(context).push(
                     MaterialPageRoute(builder: (_) => const SignUpScreen()),

@@ -1,8 +1,8 @@
 import { useQuery } from "@tanstack/react-query";
+import { PosterGridSkeleton } from "../components/ui/Skeleton";
 import { useLocation, useNavigate } from "react-router-dom";
 import { getStreamCollection } from "../api/browse";
 import { MediaImage } from "../components/ui/MediaImage";
-import { Spinner } from "../components/ui/Spinner";
 import type { StreamingDetailsLocationState } from "./StreamingDetailsPage";
 
 export type StreamingCollectionLocationState = {
@@ -105,9 +105,7 @@ export function StreamingCollectionPage() {
       </button>
 
       {isLoading && (
-        <div className="flex justify-center py-24">
-          <Spinner />
-        </div>
+        <PosterGridSkeleton />
       )}
 
       {!isLoading && data && (

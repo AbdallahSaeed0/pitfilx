@@ -1,7 +1,6 @@
 import 'package:flutter/material.dart';
 import '../models/title_item.dart';
 import '../screens/image_picker_screen.dart';
-import '../services/app_settings.dart';
 import '../services/user_library_service.dart';
 import '../theme/app_theme.dart';
 import '../widgets/add_to_list_sheet.dart';
@@ -9,19 +8,19 @@ import '../widgets/recommend_friend_sheet.dart';
 
 enum _TitleAction { addToList, drop, recommend, changePoster, changeBackdrop }
 
-/// The Title Detail "..." menu — Add to List and Drop work for any real
-/// title (only need a tmdbId); Change Poster/Change Backdrop additionally
-/// require [TitleItem.libraryId] (the title must already be matched in the
-/// local library) AND Settings' "Sync with Desktop" to be on (the picker
-/// calls the local backend directly), so those two are hidden otherwise.
+/// The Title Detail "..." menu — every action here only needs a tmdbId.
+/// Change Poster/Change Backdrop pull candidates straight from TMDB and save
+/// the pick to this account's Supabase row (see
+/// Pitflix.API/Services/Supabase/sql/008_pitflix_title_customizations.sql),
+/// so they work for any title regardless of whether it's matched in the
+/// desktop's local scanned-media library.
 Future<void> showTitleActionsSheet(
   BuildContext context,
   TitleItem title,
-  ValueChanged<TitleItem> onArtworkUpdated,
-) async {
+  ValueChanged<TitleItem> onArtworkUpdated, {
+  VoidCallback? onDropped,
+}) async {
   if (title.tmdbId == null) return;
-  final canChangeArtwork =
-      title.libraryId != null && AppSettings.desktopSyncActive;
 
   final action = await showModalBottomSheet<_TitleAction>(
     context: context,
@@ -63,31 +62,29 @@ Future<void> showTitleActionsSheet(
             ),
             onTap: () => Navigator.of(context).pop(_TitleAction.recommend),
           ),
-          if (canChangeArtwork) ...[
-            ListTile(
-              leading: const Icon(
-                Icons.image_outlined,
-                color: AppColors.textPrimary,
-              ),
-              title: Text(
-                'Change Poster',
-                style: AppTextStyles.dmSans(fontSize: 15),
-              ),
-              onTap: () => Navigator.of(context).pop(_TitleAction.changePoster),
+          ListTile(
+            leading: const Icon(
+              Icons.image_outlined,
+              color: AppColors.textPrimary,
             ),
-            ListTile(
-              leading: const Icon(
-                Icons.panorama_outlined,
-                color: AppColors.textPrimary,
-              ),
-              title: Text(
-                'Change Backdrop',
-                style: AppTextStyles.dmSans(fontSize: 15),
-              ),
-              onTap: () =>
-                  Navigator.of(context).pop(_TitleAction.changeBackdrop),
+            title: Text(
+              'Change Poster',
+              style: AppTextStyles.dmSans(fontSize: 15),
             ),
-          ],
+            onTap: () => Navigator.of(context).pop(_TitleAction.changePoster),
+          ),
+          ListTile(
+            leading: const Icon(
+              Icons.panorama_outlined,
+              color: AppColors.textPrimary,
+            ),
+            title: Text(
+              'Change Backdrop',
+              style: AppTextStyles.dmSans(fontSize: 15),
+            ),
+            onTap: () =>
+                Navigator.of(context).pop(_TitleAction.changeBackdrop),
+          ),
         ],
       ),
     ),
@@ -98,7 +95,7 @@ Future<void> showTitleActionsSheet(
     case _TitleAction.addToList:
       await showAddToListSheet(context, title);
     case _TitleAction.drop:
-      await _dropTitle(context, title);
+      await _dropTitle(context, title, onDropped: onDropped);
     case _TitleAction.recommend:
       await showRecommendFriendSheet(context, title.name);
     case _TitleAction.changePoster:
@@ -121,7 +118,11 @@ Future<void> showTitleActionsSheet(
 /// "Drop" has no dedicated backend status (only Unwatched/Watching/Completed
 /// exist) — represented as adding the title to a "Dropped" list instead,
 /// creating it on first use.
-Future<void> _dropTitle(BuildContext context, TitleItem title) async {
+Future<void> _dropTitle(
+  BuildContext context,
+  TitleItem title, {
+  VoidCallback? onDropped,
+}) async {
   final mediaType = title.isShow ? 'series' : 'movie';
   try {
     final lists = await UserLibraryService.fetchLists(forceRefresh: true);
@@ -139,6 +140,7 @@ Future<void> _dropTitle(BuildContext context, TitleItem title) async {
       title: title.name,
       posterPath: title.posterPath,
     );
+    onDropped?.call();
     if (!context.mounted) return;
     ScaffoldMessenger.of(
       context,
@@ -157,13 +159,11 @@ Future<void> _changeArtwork(
   required bool isBackdrop,
   required ValueChanged<TitleItem> onArtworkUpdated,
 }) async {
-  final mediaType = title.isShow ? 'Series' : 'Movie';
   final chosenPath = await Navigator.of(context).push<String>(
     MaterialPageRoute(
       builder: (_) => ImagePickerScreen(
-        libraryId: title.libraryId!,
         tmdbId: title.tmdbId!,
-        mediaType: mediaType,
+        kind: title.kind,
         isBackdrop: isBackdrop,
       ),
     ),

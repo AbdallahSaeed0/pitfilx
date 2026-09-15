@@ -35,6 +35,8 @@ type CrewMember = {
   profilePath?: string;
   profileLocalPath?: string | null;
   profileRemoteUrl?: string | null;
+  /** TV only — episodes this person did this job on. Absent for movies. */
+  episodeCount?: number | null;
 };
 
 
@@ -88,6 +90,13 @@ function CastCrewSection({ cast, crew, navigate }: {
     ] as { key: CastTabKey; label: string; count: number }[]
   ).filter((t) => t.count > 0);
 
+  // TV crew carries a per-job episode count (from TMDB aggregate_credits) — show that instead of
+  // the bare job label ("Directed 5" rather than "Director") so multiple directors/writers on a
+  // series are distinguishable by how much of it they actually did. Movies (and any TV crew
+  // without a count) just fall back to the job label.
+  const jobLabel = (c: CrewMember, verb: string): string =>
+    c.episodeCount != null && c.episodeCount > 0 ? `${verb} ${c.episodeCount}` : c.job;
+
   const items: { name: string; role?: string; imgSrc?: string; fallbackSrc?: string; id: number; key: string }[] =
     tab === "cast"
       ? cast.map((c) => ({
@@ -99,9 +108,9 @@ function CastCrewSection({ cast, crew, navigate }: {
           key: `${c.personTmdbId}-${c.name}`,
         }))
       : tab === "directors"
-      ? directors.map((c) => ({ name: c.name, role: c.job, imgSrc: crewAvatarSrc(c), id: c.id, key: `${c.id}-${c.job}` }))
+      ? directors.map((c) => ({ name: c.name, role: jobLabel(c, "Directed"), imgSrc: crewAvatarSrc(c), id: c.id, key: `${c.id}-${c.job}` }))
       : tab === "writers"
-      ? writers.map((c) => ({ name: c.name, role: c.job, imgSrc: crewAvatarSrc(c), id: c.id, key: `${c.id}-${c.job}` }))
+      ? writers.map((c) => ({ name: c.name, role: jobLabel(c, "Wrote"), imgSrc: crewAvatarSrc(c), id: c.id, key: `${c.id}-${c.job}` }))
       : otherCrew.map((c) => ({ name: c.name, role: c.job, imgSrc: crewAvatarSrc(c), id: c.id, key: `${c.id}-${c.job}` }));
 
   if (tabs.length === 0) return null;

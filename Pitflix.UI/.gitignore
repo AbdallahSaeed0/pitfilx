@@ -27,3 +27,8 @@ dist-ssr
 # Tauri updater signing — never commit private keys (use CI secrets or a local-only file)
 src-tauri/.tauri-updater.key
 **/.tauri-updater.key
+
+# Local-only device extras
+src/features/device/collectionsStore.ts
+src/features/device/collectionsLookup.ts
+src/features/device/CollectionsPanel.tsx

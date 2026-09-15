@@ -117,17 +117,18 @@ function SectionChrome({
   );
 }
 
+// Mirrors PosterCard: a poster image plus a title line and a details line below it. Matching that
+// two-part shape (rather than one flat block) keeps the row's height and spacing stable when the
+// skeleton swaps for real cards, instead of everything shifting down as captions pop in.
 function RowSkeleton({ count = 6, tall }: { count?: number; tall?: boolean }) {
   return (
     <div className="flex gap-4 pb-2">
       {Array.from({ length: count }).map((_, i) => (
-        <div
-          key={i}
-          className={cn(
-            "shrink-0 animate-pulse rounded-xl bg-pitflix-card",
-            tall ? "h-[264px] w-44" : "h-[210px] w-36",
-          )}
-        />
+        <div key={i} className={cn("shrink-0", tall ? "w-44" : "w-36")}>
+          <div className={cn("animate-pulse rounded-xl bg-pitflix-card", tall ? "h-[264px]" : "h-[216px]")} />
+          <div className="mt-2 h-3.5 w-4/5 animate-pulse rounded bg-pitflix-card" />
+          <div className="mt-1.5 h-3 w-2/5 animate-pulse rounded bg-pitflix-card" />
+        </div>
       ))}
     </div>
   );
@@ -137,7 +138,11 @@ function GridSkeleton() {
   return (
     <div className="grid grid-cols-2 gap-4 md:grid-cols-4">
       {Array.from({ length: 8 }).map((_, i) => (
-        <div key={i} className="h-[240px] animate-pulse rounded-xl bg-pitflix-card" />
+        <div key={i}>
+          <div className="aspect-[2/3] w-full animate-pulse rounded-xl bg-pitflix-card" />
+          <div className="mt-2 h-3.5 w-4/5 animate-pulse rounded bg-pitflix-card" />
+          <div className="mt-1.5 h-3 w-2/5 animate-pulse rounded bg-pitflix-card" />
+        </div>
       ))}
     </div>
   );

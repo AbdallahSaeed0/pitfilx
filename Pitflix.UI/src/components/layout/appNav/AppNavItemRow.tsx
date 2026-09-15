@@ -1,6 +1,7 @@
 import { AnimatePresence, motion } from "framer-motion";
 import { cloneElement, isValidElement, useRef, useState, type ReactElement } from "react";
 import { NavLink } from "react-router-dom";
+import { preloadRoute } from "../../../routes/lazyPages";
 import { cn } from "../../../utils/cn";
 import type { AppNavItemDef } from "./appNavItems";
 import { SidebarCollapsedFlyout } from "./SidebarCollapsedFlyout";
@@ -77,7 +78,10 @@ function CollapsedSidebarRow({
         to={item.to}
         end={item.end}
         className={({ isActive }) => rowCls(isActive)}
-        onMouseEnter={() => onHover(true)}
+        onMouseEnter={() => {
+          onHover(true);
+          preloadRoute(item.to);
+        }}
         onMouseLeave={() => onHover(false)}
       >
         <span ref={anchorRef} className="flex h-full w-full items-center justify-center">
@@ -180,7 +184,10 @@ export function AppNavItemRow({ item, variant, collapsed = false, offlineMode }:
       to={item.to}
       end={item.end}
       className={linkCls}
-      onMouseEnter={() => setHovered(true)}
+      onMouseEnter={() => {
+        setHovered(true);
+        preloadRoute(item.to);
+      }}
       onMouseLeave={() => setHovered(false)}
     >
       {iconEl}

@@ -4,6 +4,7 @@ import '../models/title_item.dart';
 import '../services/app_settings.dart';
 import '../services/tmdb_service.dart';
 import '../theme/app_theme.dart';
+import '../utils/title_actions_sheet.dart';
 import '../widgets/widgets.dart';
 import 'title_detail_movie_screen.dart';
 import 'title_detail_series_screen.dart';
@@ -331,7 +332,11 @@ class _SearchScreenState extends State<SearchScreen> {
                       subtitle: t.year > 0 ? '${t.year}' : null,
                       gradientSeed: t.gradientSeed,
                       imageUrl: TmdbService.posterUrl(t.posterPath),
+                      tmdbId: t.tmdbId,
+                      kind: t.kind,
                       onTap: () => _openTitle(t),
+                      onLongPress: () =>
+                          showTitleActionsSheet(context, t, (_) {}),
                     );
                   },
                 ),

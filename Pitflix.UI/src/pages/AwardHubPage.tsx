@@ -1,8 +1,8 @@
 import { useQuery } from "@tanstack/react-query";
+import { PosterGridSkeleton } from "../components/ui/Skeleton";
 import { Link, Navigate, useParams } from "react-router-dom";
 import { getAwardsCatalog, getAwardYears } from "../api/awards";
 import { MediaImage } from "../components/ui/MediaImage";
-import { Spinner } from "../components/ui/Spinner";
 import { cn } from "../utils/cn";
 import { getAwardBrandingFallbackSrc, getAwardBrandingImageSrc } from "../utils/awardBranding";
 import { toPosterSrc } from "../utils/posterSrc";
@@ -32,9 +32,7 @@ export function AwardHubPage() {
 
   if (catQ.isLoading && !catQ.data)
     return (
-      <div className="flex justify-center py-24">
-        <Spinner />
-      </div>
+      <PosterGridSkeleton />
     );
 
   const years = yearsQ.data ?? [];
@@ -83,9 +81,7 @@ export function AwardHubPage() {
         </div>
       </div>
 
-      <div className="flex justify-center py-16">
-        <Spinner />
-      </div>
+      <PosterGridSkeleton />
 
       {!yearsQ.isLoading && years.length === 0 ? (
         <div className="rounded-xl border border-dashed border-amber-500/30 bg-amber-950/10 p-4 text-sm text-pitflix-subtle">

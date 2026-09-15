@@ -12,6 +12,7 @@ public sealed class RatingsAggregationService
     private readonly IMemoryCache _cache;
     private readonly PhpImdbGrabberClient _phpImdb;
     private readonly MdbListService _mdbList;
+    private readonly OmdbRatingClient _omdb;
     private readonly ITmdbClientFactory _tmdbClientFactory;
     private readonly IResolvedApiKeysAccessor _apiKeys;
     private readonly ILogger<RatingsAggregationService> _log;
@@ -20,6 +21,7 @@ public sealed class RatingsAggregationService
         IMemoryCache cache,
         PhpImdbGrabberClient phpImdb,
         MdbListService mdbList,
+        OmdbRatingClient omdb,
         ITmdbClientFactory tmdbClientFactory,
         IResolvedApiKeysAccessor apiKeys,
         ILogger<RatingsAggregationService> log)
@@ -27,6 +29,7 @@ public sealed class RatingsAggregationService
         _cache = cache;
         _phpImdb = phpImdb;
         _mdbList = mdbList;
+        _omdb = omdb;
         _tmdbClientFactory = tmdbClientFactory;
         _apiKeys = apiKeys;
         _log = log;
@@ -160,9 +163,10 @@ public sealed class RatingsAggregationService
         if (tmdb == null)
             return null;
 
+        IReadOnlyDictionary<int, (string? Name, string? StillPath, double? VoteAverage, string? Overview, string? AirDate, int? Runtime)>? map = null;
         try
         {
-            var map = await tmdb.TryGetTvSeasonEpisodesAsync(tvTmdbId, season, ct).ConfigureAwait(false);
+            map = await tmdb.TryGetTvSeasonEpisodesAsync(tvTmdbId, season, ct).ConfigureAwait(false);
             if (map != null && map.TryGetValue(episodeNumber, out var row) && row.VoteAverage is > 0)
             {
                 var dto = new EpisodeRatingDto(row.VoteAverage.Value, "TMDB");
@@ -181,14 +185,16 @@ public sealed class RatingsAggregationService
             var seriesImdb = await tmdb.TryGetImdbIdAsync(tvTmdbId, "Series", ct).ConfigureAwait(false);
             if (!string.IsNullOrEmpty(seriesImdb))
             {
-                var mdbRating = await _mdbList.GetEpisodeRatingAsync(seriesImdb, season, episodeNumber, ct)
+                var (hit, mdbRating) = await _mdbList.TryGetCachedEpisodeRatingAsync(seriesImdb, season, episodeNumber, ct)
                     .ConfigureAwait(false);
-                if (mdbRating is > 0)
+                if (hit && mdbRating is > 0)
                 {
-                    var dto = new EpisodeRatingDto(mdbRating.Value, "MDBList");
+                    var dto = new EpisodeRatingDto(mdbRating.Value, "OMDb");
                     _cache.Set(key, dto, TimeSpan.FromHours(12));
                     return dto;
                 }
+                if (!hit)
+                    _ = WarmShowEpisodeRatingsAsync(tvTmdbId, season, new[] { episodeNumber });
             }
         }
         catch (Exception ex)
@@ -200,46 +206,10 @@ public sealed class RatingsAggregationService
         return null;
     }
 
-    /// <summary>Per-episode IMDb score from MDBList.</summary>
-    public async Task<double?> TryGetEpisodeImdbRatingAsync(int tvTmdbId, int season, int episodeNumber,
-        CancellationToken ct)
-    {
-        if (tvTmdbId <= 0 || season < 0 || episodeNumber <= 0) return null;
-
-        var key = $"ratings:imdbep:{tvTmdbId}:{season}:{episodeNumber}";
-        if (_cache.TryGetValue(key, out double cachedHit))
-            return cachedHit;
-
-        var tmdb = _tmdbClientFactory.Create();
-        if (tmdb == null) return null;
-
-        string? seriesImdb = null;
-        try { seriesImdb = await tmdb.TryGetImdbIdAsync(tvTmdbId, "Series", ct).ConfigureAwait(false); }
-        catch { /* non-fatal */ }
-
-        if (string.IsNullOrEmpty(seriesImdb)) return null;
-
-        try
-        {
-            var mdbRating = await _mdbList.GetEpisodeRatingAsync(seriesImdb, season, episodeNumber, ct).ConfigureAwait(false);
-            if (mdbRating is > 0)
-            {
-                _cache.Set(key, mdbRating.Value, new MemoryCacheEntryOptions { AbsoluteExpirationRelativeToNow = TimeSpan.FromHours(12) });
-                return mdbRating.Value;
-            }
-        }
-        catch (Exception ex)
-        {
-            _log.LogDebug(ex, "Ratings: MDBList episode IMDb rating failed for TV {Id} S{Season}E{Ep}", tvTmdbId, season, episodeNumber);
-        }
-
-        return null;
-    }
-
     /// <summary>
     /// Cache-only per-episode IMDb score — never waits on MDBList's 1-req/sec rate limit. Use this on
     /// the synchronous request path so season pages render immediately; call
-    /// <see cref="WarmEpisodeImdbRatingAsync"/> in the background to backfill anything missing.
+    /// <see cref="WarmShowEpisodeRatingsAsync"/> in the background to backfill anything missing.
     /// </summary>
     public async Task<double?> TryGetCachedEpisodeImdbRatingAsync(int tvTmdbId, int season, int episodeNumber,
         CancellationToken ct)
@@ -289,17 +259,45 @@ public sealed class RatingsAggregationService
     }
 
     /// <summary>
-    /// Best-effort background backfill for an episode's IMDb rating — respects MDBList's rate limit,
-    /// so callers should fire this without awaiting it on the request path.
+    /// Best-effort background backfill for a season's IMDb ratings via OMDb — the only source that
+    /// actually varies by episode (MDBList's free tier doesn't: see <see cref="OmdbRatingClient"/>).
+    /// Skips episodes already cached (rating or confirmed miss) so repeat visits never re-hit OMDb.
+    /// Callers should fire this without awaiting it on the request path.
     /// </summary>
-    public async Task WarmEpisodeImdbRatingAsync(int tvTmdbId, int season, int episodeNumber)
+    public async Task WarmShowEpisodeRatingsAsync(int tvTmdbId, int season, IReadOnlyCollection<int> episodeNumbers)
     {
+        if (tvTmdbId <= 0 || episodeNumbers.Count == 0) return;
         try
         {
-            await TryGetEpisodeImdbRatingAsync(tvTmdbId, season, episodeNumber, CancellationToken.None)
+            var tmdb = _tmdbClientFactory.Create();
+            if (tmdb == null) return;
+
+            var seriesImdb = await tmdb.TryGetImdbIdAsync(tvTmdbId, "Series", CancellationToken.None)
                 .ConfigureAwait(false);
+            if (string.IsNullOrEmpty(seriesImdb)) return;
+
+            foreach (var ep in episodeNumbers)
+            {
+                var (hit, _) = await _mdbList.TryGetCachedEpisodeRatingAsync(seriesImdb, season, ep, CancellationToken.None)
+                    .ConfigureAwait(false);
+                if (hit) continue;
+
+                var rating = await _omdb.TryGetEpisodeRatingAsync(seriesImdb, season, ep, CancellationToken.None)
+                    .ConfigureAwait(false);
+                await _mdbList.CacheEpisodeRatingAsync(seriesImdb, season, ep, rating, CancellationToken.None)
+                    .ConfigureAwait(false);
+
+                if (rating is > 0)
+                {
+                    var cacheKey = $"ratings:imdbep:{tvTmdbId}:{season}:{ep}";
+                    _cache.Set(cacheKey, rating.Value, new MemoryCacheEntryOptions { AbsoluteExpirationRelativeToNow = TimeSpan.FromHours(12) });
+                }
+            }
         }
-        catch { /* best-effort */ }
+        catch (Exception ex)
+        {
+            _log.LogDebug(ex, "Ratings: OMDb episode ratings warm failed for TV {Id} S{Season}", tvTmdbId, season);
+        }
     }
 }
 

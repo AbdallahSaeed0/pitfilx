@@ -45,6 +45,14 @@ export type WatchStats = {
   recentlyCompletedSeries?: MediaCard[];
   /** Last 7 calendar days (today inclusive), oldest first — completions + which titles that day. */
   last7Days?: { date: string; count: number; titles: string[] }[];
+  /** Longest run of consecutive activity days ever recorded, not just the one still running today. */
+  longestStreakEver?: number;
+  /** Days with 3+ distinct episodes of the same show watched — most recent first. */
+  bingeSessions?: { showTitle: string; date: string; episodeCount: number; totalMinutes: number }[];
+  /** Session start times bucketed by time of day. */
+  watchByDaypart?: { morning: number; afternoon: number; evening: number; night: number };
+  /** Session start times bucketed by day of week, Sun–Sat. */
+  watchByDayOfWeek?: { day: string; count: number }[];
 };
 
 export const getWatchStats = () => api.get<WatchStats>("/stats/watch").then((r) => r.data);

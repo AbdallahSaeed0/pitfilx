@@ -1,15 +1,17 @@
 import { invoke, isTauri } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { save } from "@tauri-apps/plugin-dialog";
-import { getCurrentWindow } from "@tauri-apps/api/window";
-import { LogicalSize } from "@tauri-apps/api/dpi";
+import { currentMonitor, getCurrentWindow } from "@tauri-apps/api/window";
+import { LogicalPosition, LogicalSize } from "@tauri-apps/api/dpi";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import { addHistory, getHistory, historyStopped, postHistoryProgress, dismissHistoryEntry } from "../api/history";
+import { taskbarSetPlaying, taskbarSetProgress } from "../api/player";
 import { trustedResumeHeadFromRow, type HistoryResumeFields } from "../utils/trustedResume";
 import { getNextLibraryEpisode, getPreviousLibraryEpisode, getShow, getShowSeason, resolvePlaybackByPath } from "../api/series";
 import type { NextLibraryEpisode } from "../api/series";
+import { getMovie } from "../api/movies";
 import type { PlaybackLaunchState } from "../types/playback";
 import { RotateCcw, Play } from "lucide-react";
 import { pickReturnToAfterLibraryNavigation } from "../utils/playbackReturnTo";
@@ -54,6 +56,7 @@ import {
   setSeekHoverCached,
 } from "../utils/seekHoverThumbCache";
 import { SubtitleDrawer } from "../components/SubtitleDrawer";
+import { TorrentStreamProgress } from "../components/TorrentStreamProgress";
 import {
   FS_HIDE_IDLE_MS,
   FS_HIDE_PAUSED_MS,
@@ -77,6 +80,7 @@ import {
 } from "../features/player/playerFormat";
 import { recordDeviceLastPlayedFromPlayer } from "../features/device/deviceUtils";
 import { usePlayerLayoutPrefs } from "../hooks/usePlayerLayoutPrefs";
+import type { PlayerPipCorner } from "../features/player/playerLayoutTypes";
 import {
   loadEpSubPickMap,
   loadSubtitlePrefs,
@@ -89,7 +93,38 @@ import type {
   Player2Event,
   Player2NativeState,
   PlayerSubtitlePrefs,
+  PlaylistEpisodeMeta,
 } from "../features/player/playerTypes";
+
+/** How long the pointer must rest on a new 5s seek-bar bucket before firing the accurate,
+ * ffmpeg-backed `thumb_at` lookup. Buckets merely swept through only get the cheap disk-only
+ * `thumb_at_quick` call (fired immediately, no debounce) — see scheduleHoverThumb. */
+const HOVER_ACCURATE_DEBOUNCE_MS = 120;
+
+// Picture-in-Picture (mini player) window geometry — module-level so computePipPosition (used
+// both when entering PiP and to live-reposition an already-open PiP window on a settings
+// change) doesn't need every caller to thread these through.
+const PIP_WIDTH = 384;
+const PIP_HEIGHT = 216;
+const PIP_MARGIN = 20;
+const PIP_MIN_WIDTH = 240;
+const PIP_MIN_HEIGHT = 135;
+const PIP_MAX_WIDTH = 800;
+const PIP_MAX_HEIGHT = 450;
+
+/** Where the PiP window's top-left corner should land for a given target corner + bounds
+ * (a monitor's or, as a fallback, the window's own current outer rect). */
+function computePipPosition(
+  corner: PlayerPipCorner,
+  bounds: { x: number; y: number; width: number; height: number },
+): { x: number; y: number } {
+  const isRight = corner === "top-right" || corner === "bottom-right";
+  const isBottom = corner === "bottom-left" || corner === "bottom-right";
+  return {
+    x: isRight ? bounds.x + bounds.width - PIP_WIDTH - PIP_MARGIN : bounds.x + PIP_MARGIN,
+    y: isBottom ? bounds.y + bounds.height - PIP_HEIGHT - PIP_MARGIN : bounds.y + PIP_MARGIN,
+  };
+}
 
 /** Resume head for a local file path (history rows + POL disk checkpoint). */
 async function resolveResumeSecondsForPath(filePath: string): Promise<number | undefined> {
@@ -149,6 +184,16 @@ export function PlayerPage() {
   // When the user picked the "libmpv-embedded" engine in Settings, route every
   // player2_* invoke through the libmpv-backed Tauri commands. Same payloads.
   const useLibMpv = state?.useLibMpv === true;
+  useEffect(() => {
+    const hash = state?.torrentInfoHash;
+    if (!hash || !isTauri()) return;
+    return () => {
+      // Give mpv a moment to release its localhost connection before deleting cached pieces.
+      window.setTimeout(() => {
+        void invoke("torrent_stream_stop", { infoHash: hash, deleteFiles: true }).catch(() => {});
+      }, 2000);
+    };
+  }, [state?.torrentInfoHash]);
   /** Map external-mpv command names to their libmpv equivalents when libmpv engine is selected. */
   const p2cmd = (name: string): string => {
     if (!useLibMpv) return name;
@@ -309,6 +354,8 @@ export function PlayerPage() {
   const seekHoverDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const seekHoverDebounceSecondRef = useRef<number | null>(null);
   const seekHoverPrefetchingRef = useRef(new Set<string>());
+  const exactHoverFetchSeqRef = useRef(0);
+  const lastExactHoverUrlRef = useRef<string | null>(null);
 
   const storeHoverThumbBytes = useCallback((filePath: string, previewSecond: number, bytes: ArrayBuffer) => {
     if (getSeekHoverCached(filePath, previewSecond)) return;
@@ -394,6 +441,14 @@ export function PlayerPage() {
       }
       seekHoverDebounceSecondRef.current = previewSecond;
       if (seekHoverDebounceRef.current) clearTimeout(seekHoverDebounceRef.current);
+      // 8ms used to live here — shorter than the gap between consecutive browser
+      // pointermove events, so it wasn't debouncing anything in practice: a fast
+      // sweep across the seek bar crosses many 5s buckets, and each one fired its
+      // own ffmpeg-backed `thumb_at` almost immediately. Those cold extractions
+      // serialize behind a single-extraction lock on the Rust side (thumbs.rs),
+      // so a burst of them piling up during one sweep is what turned an isolated
+      // ~300-900ms extraction into the reported multi-second wait. Only fire the
+      // accurate fetch once the pointer actually settles on a bucket.
       seekHoverDebounceRef.current = setTimeout(() => {
         const seq = ++seekHoverFetchSeqRef.current;
         void invoke<ArrayBuffer>("thumb_at", { filePath, seconds: previewSecond })
@@ -413,10 +468,34 @@ export function PlayerPage() {
               setSeekHover((prev) => (prev ? { ...prev, loading: false } : prev));
             }
           });
-      }, 8);
+      }, HOVER_ACCURATE_DEBOUNCE_MS);
     },
     [prefetchHoverNeighbors, storeHoverThumbBytes],
   );
+
+  /** Fetches the frame at the EXACT clicked second (no 5s-bucket rounding) — used only on an
+   * actual seek-bar click. `scheduleHoverThumb` above intentionally rounds to the nearest 5s
+   * bucket for hover-sweep previews (that's what the one-time bulk scan's cache is keyed by), so
+   * the thumbnail shown while hovering can be up to ~2.5s off from wherever you land. That's an
+   * acceptable approximation while sweeping, but not at the moment you actually click: the video
+   * seeks to the exact second, so the preview should match it exactly too. Bypasses the shared
+   * bucketed cache (this key scheme is second-exact, not bucket-exact) and manages its own
+   * ephemeral blob URL since it isn't reusable across other hover positions. */
+  const scheduleExactHoverThumb = useCallback((filePath: string, seconds: number) => {
+    if (!isTauri()) return;
+    const exactSecond = Math.max(0, Math.round(seconds));
+    const seq = ++exactHoverFetchSeqRef.current;
+    void invoke<ArrayBuffer>("thumb_at", { filePath, seconds: exactSecond })
+      .then((bytes) => {
+        if (seq !== exactHoverFetchSeqRef.current) return;
+        const url = bytesToSeekHoverUrl(bytes);
+        if (!url) return;
+        if (lastExactHoverUrlRef.current) URL.revokeObjectURL(lastExactHoverUrlRef.current);
+        lastExactHoverUrlRef.current = url;
+        setSeekHover((prev) => (prev ? { ...prev, dataUrl: url, loading: false } : prev));
+      })
+      .catch(() => {});
+  }, []);
 
   useEffect(() => {
     return () => {
@@ -427,6 +506,10 @@ export function PlayerPage() {
       seekHoverDebounceSecondRef.current = null;
       clearSeekHoverCache();
       seekHoverPrefetchingRef.current.clear();
+      if (lastExactHoverUrlRef.current) {
+        URL.revokeObjectURL(lastExactHoverUrlRef.current);
+        lastExactHoverUrlRef.current = null;
+      }
     };
   }, []);
 
@@ -458,6 +541,8 @@ export function PlayerPage() {
   }, []);
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [isMaximized, setIsMaximized] = useState(false);
+  const isMaximizedRef = useRef(false);
+  useEffect(() => { isMaximizedRef.current = isMaximized; }, [isMaximized]);
   const [alwaysOnTop, setAlwaysOnTop] = useState(false);
   const toggleAlwaysOnTop = useCallback(() => {
     if (!isTauri()) return;
@@ -475,6 +560,160 @@ export function PlayerPage() {
       return next;
     });
   }, []);
+
+  // ── Picture-in-Picture (mini player) ──────────────────────────────────────
+  //
+  // Shrinks THIS window itself into a small movable always-on-top corner overlay with the
+  // player chrome hidden, rather than spawning a second window with its own video session —
+  // the app only supports one embedded mpv/video-HWND session at a time (see
+  // syncVideoBounds/windows_host.rs), so a genuinely separate floating PiP window would need an
+  // entirely new video pipeline. Reusing the existing single session means the video area's
+  // existing ResizeObserver-driven bounds sync (syncVideoBounds) "just works" once the window
+  // and its chrome are resized/hidden — no special-cased PiP video positioning needed.
+  const [isPip, setIsPip] = useState(false);
+  const pipReassertIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const pipPrevBoundsRef = useRef<{ x: number; y: number; width: number; height: number } | null>(null);
+  const pipPrevAlwaysOnTopRef = useRef(false);
+  const pipPrevPlaylistOpenRef = useRef(false);
+
+  const exitPip = useCallback(async () => {
+    if (pipReassertIntervalRef.current) {
+      clearInterval(pipReassertIntervalRef.current);
+      pipReassertIntervalRef.current = null;
+    }
+    setIsPip(false);
+    if (!isTauri()) return;
+    const w = getCurrentWindow();
+    try {
+      if (!pipPrevAlwaysOnTopRef.current) {
+        await w.setAlwaysOnTop(false);
+        setAlwaysOnTop(false);
+      }
+      // Restore the normal window's min-size floor before resizing back up — while a size
+      // smaller than the configured minSize is in effect (set on PiP entry below), setSize
+      // would otherwise get silently clamped back up to PIP_MIN on some platforms.
+      await w.setMinSize(new LogicalSize(1100, 700));
+      await w.setMaxSize(null);
+      const prev = pipPrevBoundsRef.current;
+      if (prev) {
+        await w.setSize(new LogicalSize(prev.width, prev.height));
+        await w.setPosition(new LogicalPosition(prev.x, prev.y));
+      }
+    } catch {
+      /* best-effort */
+    }
+    if (pipPrevPlaylistOpenRef.current) setFolderPlaylistOpen(true);
+    lastAppliedBoundsRef.current = null;
+    window.setTimeout(() => window.dispatchEvent(new Event("__pitflix_resync_bounds")), 80);
+  }, []);
+
+  const enterPip = useCallback(async () => {
+    if (!isTauri()) return;
+    const w = getCurrentWindow();
+    try {
+      const scale = await w.scaleFactor();
+      const outerSize = (await w.outerSize()).toLogical(scale);
+      const outerPos = (await w.outerPosition()).toLogical(scale);
+      pipPrevBoundsRef.current = { x: outerPos.x, y: outerPos.y, width: outerSize.width, height: outerSize.height };
+      pipPrevAlwaysOnTopRef.current = alwaysOnTop;
+      pipPrevPlaylistOpenRef.current = folderPlaylistOpen;
+      setFolderPlaylistOpen(false);
+      setFolderPlaylistPinned(false);
+
+      // Fallback bounds (this window's own current outer rect) in case currentMonitor() below
+      // fails — same per-corner math, just anchored to the window instead of the monitor.
+      let { x, y } = computePipPosition(layoutPrefs.pipCorner, {
+        x: outerPos.x,
+        y: outerPos.y,
+        width: outerSize.width,
+        height: outerSize.height,
+      });
+      const monitor = await currentMonitor().catch(() => null);
+      if (monitor) {
+        const monSize = monitor.size.toLogical(scale);
+        const monPos = monitor.position.toLogical(scale);
+        ({ x, y } = computePipPosition(layoutPrefs.pipCorner, {
+          x: monPos.x,
+          y: monPos.y,
+          width: monSize.width,
+          height: monSize.height,
+        }));
+      }
+
+      // Lower the min-size floor (the main window normally enforces 1100x700, see
+      // tauri.conf.json) BEFORE shrinking, and cap a max size so PiP can be resized a bit
+      // without growing back into "basically the full app" territory.
+      await w.setMinSize(new LogicalSize(PIP_MIN_WIDTH, PIP_MIN_HEIGHT));
+      await w.setMaxSize(new LogicalSize(PIP_MAX_WIDTH, PIP_MAX_HEIGHT));
+      await w.setResizable(true);
+      await w.setSize(new LogicalSize(PIP_WIDTH, PIP_HEIGHT));
+      await w.setPosition(new LogicalPosition(x, y));
+      await w.setAlwaysOnTop(true);
+      setAlwaysOnTop(true);
+      setIsPip(true);
+
+      // Windows/DWM (and many games) periodically knock a topmost window back down — a single
+      // setAlwaysOnTop(true) call doesn't stay "stuck" on top forever. Re-asserting on a timer is
+      // the standard workaround. It still cannot beat a true DirectX EXCLUSIVE-fullscreen app
+      // (as opposed to Borderless/Windowed Fullscreen) — those bypass the desktop compositor
+      // entirely, which is an OS-level limit no application-level trick can defeat.
+      if (pipReassertIntervalRef.current) clearInterval(pipReassertIntervalRef.current);
+      pipReassertIntervalRef.current = window.setInterval(() => {
+        void getCurrentWindow().setAlwaysOnTop(true).catch(() => {});
+      }, 800);
+
+      lastAppliedBoundsRef.current = null;
+      window.setTimeout(() => window.dispatchEvent(new Event("__pitflix_resync_bounds")), 80);
+    } catch {
+      /* best-effort */
+    }
+  }, [alwaysOnTop, folderPlaylistOpen, layoutPrefs.pipCorner]);
+
+  const togglePip = useCallback(() => {
+    if (isPip) void exitPip();
+    else void enterPip();
+  }, [isPip, enterPip, exitPip]);
+
+  // Changing "Mini player position" in Settings while PiP is already open only takes effect the
+  // NEXT time you toggle into PiP unless something re-applies it live — this repositions the
+  // already-open window immediately instead, so "change the setting, watch it not move until you
+  // toggle it off and on again" doesn't look like the setting silently doing nothing.
+  useEffect(() => {
+    if (!isPip || !isTauri()) return;
+    void (async () => {
+      const w = getCurrentWindow();
+      try {
+        const scale = await w.scaleFactor();
+        const monitor = await currentMonitor().catch(() => null);
+        let bounds: { x: number; y: number; width: number; height: number };
+        if (monitor) {
+          const monSize = monitor.size.toLogical(scale);
+          const monPos = monitor.position.toLogical(scale);
+          bounds = { x: monPos.x, y: monPos.y, width: monSize.width, height: monSize.height };
+        } else {
+          const outerSize = (await w.outerSize()).toLogical(scale);
+          const outerPos = (await w.outerPosition()).toLogical(scale);
+          bounds = { x: outerPos.x, y: outerPos.y, width: outerSize.width, height: outerSize.height };
+        }
+        const { x, y } = computePipPosition(layoutPrefs.pipCorner, bounds);
+        await w.setPosition(new LogicalPosition(x, y));
+      } catch {
+        /* best-effort */
+      }
+    })();
+  }, [isPip, layoutPrefs.pipCorner]);
+
+  // Best-effort cleanup if the component unmounts while PiP is still active without going
+  // through exitAndClose (e.g. a hot-reload in dev, or an unexpected navigation elsewhere).
+  useEffect(() => {
+    return () => {
+      if (pipReassertIntervalRef.current) {
+        clearInterval(pipReassertIntervalRef.current);
+        pipReassertIntervalRef.current = null;
+      }
+    };
+  }, []);
+
   /** Mirror for syncVideoBounds (a memoized callback that doesn't re-run on state changes). */
   const isFullscreenRef = useRef(false);
   useEffect(() => { isFullscreenRef.current = isFullscreen; }, [isFullscreen]);
@@ -568,8 +807,9 @@ export function PlayerPage() {
   const currentFolderForPlaylist = useMemo(() => {
     if (!state?.filePath) return "";
     if (state.liveChannels?.length) return "__live__";
+    if (state.deviceCollectionEntries?.length) return "__collection__";
     return parentDirectory(state.filePath);
-  }, [state?.filePath, state?.liveChannels]);
+  }, [state?.filePath, state?.liveChannels, state?.deviceCollectionEntries]);
 
   const folderSiblingIndex = useMemo(() => {
     if (!state?.filePath || folderPlaylistEntries.length === 0) return -1;
@@ -609,6 +849,19 @@ export function PlayerPage() {
       );
       return;
     }
+    // Virtual grouping (e.g. a saved "collection") — use its explicit video list instead of
+    // scanning the file's real parent folder, since the videos don't actually live together.
+    if (dir === "__collection__" && state?.deviceCollectionEntries?.length) {
+      setFolderPlaylistEntries(
+        state.deviceCollectionEntries.map((e) => ({
+          name: e.name,
+          path: e.path,
+          is_directory: false,
+          media_kind: "video",
+        })),
+      );
+      return;
+    }
     if (!isTauri()) return;
     setFolderPlaylistBusy(true);
     invoke<DeviceFsEntry[]>("device_read_dir", { path: dir })
@@ -627,6 +880,17 @@ export function PlayerPage() {
   useEffect(() => {
     const next = Boolean(currentFolderForPlaylist && (folderPlaylistOpen || folderPlaylistPinned));
     playlistVisibleRef.current = next;
+    // When maximized or fullscreen the window can't widen to make room for the aside, so the video
+    // surface itself has to resize as the playlist toggles. The native video HWND is HWND_TOP —
+    // ABOVE WebView2 (see windows_host.rs) — so the DOM playlist column can't sit on top of it;
+    // while the video's bounds are momentarily stale the full-width surface paints over the
+    // playlist ("video takes the full app and shows under/over the playlist"). Hide the video
+    // up-front and reveal it only after bounds resync — the same proven choreography used for
+    // window drags (runSettleResync / windows_host.rs set_video_visible).
+    const videoWillResize = isFullscreenRef.current || isMaximizedRef.current;
+    if (videoWillResize && isTauri()) {
+      void invoke(p2cmd("player2_set_video_visible"), { visible: false }).catch(() => {});
+    }
     // Burst-fire over a few frames — layout reflow when the playlist aside appears
     // or the window resizes doesn't always settle in a single tick.
     const burstResync = () => {
@@ -637,6 +901,15 @@ export function PlayerPage() {
         if (n < 4) requestAnimationFrame(fire);
       };
       requestAnimationFrame(fire);
+    };
+    // Video resizing → hide/settle/reveal (invisible while its bounds are wrong). Otherwise the
+    // window widened and the video stays put, so a plain burst resync is enough.
+    const finishResync = () => {
+      if (videoWillResize) {
+        window.dispatchEvent(new Event("__pitflix_resync_bounds_settle"));
+      } else {
+        burstResync();
+      }
     };
     // Close the (deprecated) popout window if it was opened by a previous version.
     if (isTauri()) void invoke("playlist_window_close").catch(() => {});
@@ -677,7 +950,7 @@ export function PlayerPage() {
           // before setSize() resolves sends mpv an intermediate, mismatched rect (the aside
           // has already appeared in the DOM but the window hasn't widened to compensate yet,
           // or vice versa), which is what produced the brief "video frame jumps size" flash.
-          burstResync();
+          finishResync();
         }
       };
       // Chain onto any in-flight resize (module-scoped, so it also serializes across remounts)
@@ -687,6 +960,28 @@ export function PlayerPage() {
       burstResync();
     }
   }, [currentFolderForPlaylist, folderPlaylistOpen, folderPlaylistPinned]);
+
+  // The widen effect above only narrows the window back down when the PLAYLIST closes while
+  // still on this page — toggling folderPlaylistOpen/Pinned back to false re-runs it with a
+  // smaller `next`. It has no cleanup, so leaving the player entirely (closing it, or the whole
+  // app) while the playlist was left open/pinned skipped that narrow-back step, leaving the main
+  // window stuck at the widened size. This unmount-only effect (empty deps) restores the
+  // pre-widen size whenever the player page itself goes away, regardless of playlist state.
+  useEffect(() => {
+    return () => {
+      if (!isTauri()) return;
+      if (!windowWidenedForPlaylist) return;
+      if (playlistBaseWindowWidth == null || playlistBaseWindowHeight == null) return;
+      const width = playlistBaseWindowWidth;
+      const height = playlistBaseWindowHeight;
+      windowWidenedForPlaylist = false;
+      playlistResizeChain = playlistResizeChain.then(
+        () => getCurrentWindow().setSize(new LogicalSize(width, height)).catch(() => {}),
+        () => getCurrentWindow().setSize(new LogicalSize(width, height)).catch(() => {}),
+      );
+    };
+  }, []);
+
   /** Throttle state updates in external mode to reduce rerender churn */
   const lastStateUpdateTimeRef = useRef<number>(0);
   const STATE_UPDATE_THROTTLE_MS = 1000; // Only update UI once per second in external mode
@@ -719,6 +1014,19 @@ export function PlayerPage() {
   const lastLoggedBoundsRef = useRef<string | null>(null);
   const lastAppliedBoundsRef = useRef<string | null>(null);
   const boundsSyncTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // Guards against overlapping player2_set_video_bounds invokes — see syncVideoBounds below.
+  const boundsSyncInFlightRef = useRef(false);
+  const boundsSyncPendingRef = useRef(false);
+  // Live window-drag tracking — see the onMoved handler below.
+  const isDraggingWindowRef = useRef(false);
+  const dragQuietTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // Set when a press on a drag strip pre-emptively hides the video before the OS move loop starts.
+  const preemptiveDragHideRef = useRef(false);
+  // Window regaining focus (e.g. restored from the taskbar after being minimized/hidden
+  // behind another app) — see the onFocusChanged handler below.
+  const focusSettleTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // True while the window is known to be minimized — see the isMinimized() poll below.
+  const wasMinimizedRef = useRef(false);
   const lastLoggedEventPausedRef = useRef<boolean | null>(null);
   const volumeWheelRef = useRef<HTMLDivElement>(null);
   /** Blocks overlapping pause/resume invokes until the current one finishes (ref + state for UI). */
@@ -770,7 +1078,61 @@ export function PlayerPage() {
     enabled: externalReady && !!state?.libraryShowId && state.season != null,
     staleTime: 10 * 60_000,
   });
-  
+
+  // Same query key as companionSeasonQ — react-query dedupes the network
+  // fetch, this just observes it independent of `externalReady` so the
+  // embedded-engine folder playlist (the one actually in use, per most
+  // users' setup) can also render episode-rich rows, not just companion mode.
+  const playlistSeasonMetaQ = useQuery({
+    queryKey: ["show-season", state?.libraryShowId, state?.season],
+    queryFn: () => getShowSeason(state!.libraryShowId!, state!.season!),
+    enabled: isTauri() && !!state?.libraryShowId && state?.season != null,
+    staleTime: 10 * 60_000,
+  });
+
+  const playlistEpisodeMetaByPath = useMemo(() => {
+    const map = new Map<string, PlaylistEpisodeMeta>();
+    const episodes = (playlistSeasonMetaQ.data?.episodes ?? []) as Array<{
+      filePath?: string | null;
+      title?: string | null;
+      overview?: string | null;
+      imdbVoteAverage?: number | null;
+      runtimeMinutes?: number | null;
+      stillUrl?: string | null;
+      stillLocalPath?: string | null;
+    }>;
+    for (const ep of episodes) {
+      if (!ep.filePath) continue;
+      map.set(normalizeMediaPathKey(ep.filePath), {
+        title: ep.title,
+        overview: ep.overview,
+        imdbVoteAverage: ep.imdbVoteAverage,
+        runtimeMinutes: ep.runtimeMinutes,
+        stillUrl: ep.stillUrl,
+        stillLocalPath: ep.stillLocalPath,
+      });
+    }
+    return map;
+  }, [playlistSeasonMetaQ.data]);
+
+  // Movie counterpart to playlistEpisodeMetaByPath's episode stills — the pause info screen needs
+  // an actual backdrop (landscape, ~1280px wide) for movies. state.posterPath alone is a portrait
+  // ~500px poster; stretched full-bleed across the player window it reads as visibly pixelated.
+  const moviePauseBackdropQ = useQuery({
+    queryKey: ["movie-pause-backdrop", state?.libraryMovieId],
+    queryFn: () => getMovie(state!.libraryMovieId!),
+    enabled: !!state?.libraryMovieId,
+    staleTime: 30 * 60_000,
+  });
+  const moviePauseBackdropPath = useMemo(() => {
+    // GET /api/movies/{id} wraps the movie fields under a `movie` key (see MovieDetailPage.tsx,
+    // which does the same `data.movie` unwrap) — not flat on the top-level response.
+    const m = (moviePauseBackdropQ.data as { movie?: Record<string, unknown> } | undefined)?.movie as
+      | { selectedBackdropPath?: string | null; backdropLocalPath?: string | null }
+      | undefined;
+    return m?.selectedBackdropPath || m?.backdropLocalPath || null;
+  }, [moviePauseBackdropQ.data]);
+
   // backendResolving: true while we're waiting to know which mode to render
   const backendResolving = Boolean(
     state && isTauri() && resumeChoice !== "pending" && resumeChoice !== null && !backendKnown
@@ -1030,6 +1392,17 @@ export function PlayerPage() {
   const syncVideoBounds = useCallback(() => {
     const el = videoAreaRef.current;
     if (!el) return;
+    // Without this guard, several rapid callers (ResizeObserver, resize, the poll interval, etc.)
+    // could each kick off their own overlapping player2_set_video_bounds invoke — and since IPC
+    // round-trips don't resolve in strict order, a later call could land BEFORE an earlier one, so
+    // the earlier (now-stale) position would win and briefly snap the video surface backward. Only
+    // one invoke in flight at a time now; anything that lands while one's pending just triggers a
+    // single trailing re-sync (with a fresh rect) once it resolves, instead of a pile of racing calls.
+    if (boundsSyncInFlightRef.current) {
+      boundsSyncPendingRef.current = true;
+      return;
+    }
+    boundsSyncInFlightRef.current = true;
     void (async () => {
       try {
         const videoRect = el.getBoundingClientRect();
@@ -1045,6 +1418,14 @@ export function PlayerPage() {
           left = 0;
           right = window.innerWidth;
           bottom = window.innerHeight;
+          // The docked playlist occupies a fixed-width column on the right even in fullscreen
+          // (the aside stays in the layout — only its opacity is toggled). The native video HWND
+          // is HWND_TOP (above WebView2 — see windows_host.rs), so a full-window surface paints
+          // OVER the playlist column instead of beside it. Clamp the right edge to the video
+          // column's real laid-out width so the video never covers the playlist.
+          if (playlistVisibleRef.current) {
+            right = Math.round(videoRect.right);
+          }
         }
         // Header/footer are now absolute overlays drawn on top of the video
         // surface (not docked, layout-affecting bars), so the video area's
@@ -1089,15 +1470,23 @@ export function PlayerPage() {
             },
           });
         }
-        // Logical CSS px; Rust converts with GetDpiForWindow(parent) to match WebView2.
+        // Logical CSS px; Rust converts with a DPI cached at open time (see cached_dpi in Rust) to
+        // match WebView2 — not a fresh GetDpiForWindow, which could transiently disagree mid-drag.
         await invoke(p2cmd("player2_set_video_bounds"), {
           x: logicalBounds.x,
           y: logicalBounds.y,
           width: logicalBounds.width,
           height: logicalBounds.height,
+          skipOverlayRefresh: false,
         });
       } catch (e) {
         logPlayer2InvokeFailure("player2_set_video_bounds", e);
+      } finally {
+        boundsSyncInFlightRef.current = false;
+        if (boundsSyncPendingRef.current) {
+          boundsSyncPendingRef.current = false;
+          syncVideoBounds();
+        }
       }
     })();
   }, [embedReady]);
@@ -1125,6 +1514,21 @@ export function PlayerPage() {
         scheduleSyncVideoBounds();
       }
     };
+    // Shared hide → resync → reveal choreography (see the long comment on onMoved below for
+    // *why* a plain reposition isn't enough): forces DWM to actually recomposite the video
+    // surface instead of leaving a stale-composited frame behind the WebView2 sibling.
+    const runSettleResync = (settleMs: number) => {
+      void invoke(p2cmd("player2_set_video_visible"), { visible: false }).catch(() => {});
+      if (focusSettleTimerRef.current) clearTimeout(focusSettleTimerRef.current);
+      focusSettleTimerRef.current = window.setTimeout(() => {
+        focusSettleTimerRef.current = null;
+        lastAppliedBoundsRef.current = null; // force the resync below to actually re-send
+        syncVideoBounds();
+        window.setTimeout(() => {
+          void invoke(p2cmd("player2_set_video_visible"), { visible: true }).catch(() => {});
+        }, 60);
+      }, settleMs);
+    };
     run();
     const ro = new ResizeObserver(run);
     const el = videoAreaRef.current;
@@ -1140,13 +1544,55 @@ export function PlayerPage() {
     vv?.addEventListener("scroll", run);
     document.addEventListener("fullscreenchange", run);
     window.addEventListener("__pitflix_resync_bounds", run);
+    // Hide → settle → resync → reveal, for callers that resize the video surface itself (e.g. the
+    // playlist toggle while maximized/fullscreen) and must not flash the stale full-width surface
+    // over the playlist column while React reflows and the new bounds are applied.
+    const onSettleResyncBounds = () => runSettleResync(90);
+    window.addEventListener("__pitflix_resync_bounds_settle", onSettleResyncBounds);
+    // Pressing a drag strip (data-tauri-drag-region) starts the OS window-move loop synchronously.
+    // onMoved (below) only fires a few frames *after* the move has begun, so hiding the video there
+    // still lets the native surface lag visibly behind the window for the first frames of a drag
+    // (video HWND is HWND_TOP and DWM won't recomposite a sibling smoothly mid-move-loop — see
+    // set_video_visible in windows_host.rs). Hide it here, on pointer-down, before the loop starts.
+    const onDragStripPointerDown = (e: PointerEvent) => {
+      if (e.button !== 0) return;
+      const t = e.target as HTMLElement | null;
+      if (!t?.closest?.("[data-tauri-drag-region]")) return;
+      preemptiveDragHideRef.current = true;
+      void invoke(p2cmd("player2_set_video_visible"), { visible: false }).catch(() => {});
+    };
+    const onDragStripPointerUp = () => {
+      if (!preemptiveDragHideRef.current) return;
+      preemptiveDragHideRef.current = false;
+      // If the press turned into a real drag, onMoved's quiet-timer owns the resync + reveal.
+      // If it was just a click (no move), reveal now so the video doesn't stay hidden.
+      if (!isDraggingWindowRef.current && !dragQuietTimerRef.current) {
+        void invoke(p2cmd("player2_set_video_visible"), { visible: true }).catch(() => {});
+      }
+    };
+    window.addEventListener("pointerdown", onDragStripPointerDown, true);
+    window.addEventListener("pointerup", onDragStripPointerUp, true);
+    window.addEventListener("pointercancel", onDragStripPointerUp, true);
     const poll = window.setInterval(() => {
       trackPoll();
       run();
+      // Belt-and-suspenders restore detector: onFocusChanged (below) covers most cases, but
+      // minimizing via the taskbar doesn't always reliably fire a focus event in every Windows
+      // build/session — polling the window's actual minimized state directly can't miss it.
+      void getCurrentWindow()
+        .isMinimized()
+        .then((minimized) => {
+          if (wasMinimizedRef.current && !minimized) {
+            runSettleResync(150);
+          }
+          wasMinimizedRef.current = minimized;
+        })
+        .catch(() => {});
     }, 1000);
     let unlistenResize: UnlistenFn | undefined;
     let unlistenScale: UnlistenFn | undefined;
     let unlistenMove: UnlistenFn | undefined;
+    let unlistenFocus: UnlistenFn | undefined;
     void getCurrentWindow()
       .onResized(run)
       .then((u) => {
@@ -1154,29 +1600,62 @@ export function PlayerPage() {
       })
       .catch(() => {});
     void getCurrentWindow()
-      .onScaleChanged(run)
+      .onScaleChanged(() => {
+        // The video's cached DPI (see Rust cached_dpi) only moves on a real scale change — refresh
+        // it before the resync so the new size is computed against the correct DPI.
+        void invoke(p2cmd("player2_notify_dpi_changed")).catch(() => {});
+        run();
+      })
       .then((u) => {
         unlistenScale = u;
       })
       .catch(() => {});
-    // A pure window move (no resize) leaves the video area's rect relative to the WebView
-    // unchanged, so syncVideoBounds' dedup check would otherwise skip re-sending it — but the
-    // native video surface's on-screen position is computed from the window's absolute screen
-    // position at invoke time, so it visually lags behind (looks like it's "stuck" where the
-    // window used to be, e.g. peeking out from under the playlist) until something else forces
-    // a resync. Drop the dedup key so the next sync always re-sends.
+    // Windows/DWM does not composite a live-repositioned *sibling* child window smoothly during
+    // the parent's own modal move loop (dragging by the title bar) — no matter how quickly we
+    // reissue SetWindowPos per move tick, the video surface briefly renders at stale bounds
+    // relative to the WebView2 sibling (looks like it slides under other UI, e.g. the playlist
+    // panel, then snaps back once the loop yields). That's a DWM limitation, not something fixable
+    // by tuning our SetWindowPos calls — so instead of chasing the window's position live, hide the
+    // video surface for the duration of the drag and reposition it (still hidden) once movement
+    // settles, then reveal it in its correct spot. A short quiet-gap timer (no onMoved for
+    // DRAG_SETTLE_MS) stands in for "drag ended" since Tauri doesn't expose WM_EXITSIZEMOVE.
+    const DRAG_SETTLE_MS = 120;
     void getCurrentWindow()
       .onMoved(() => {
-        lastAppliedBoundsRef.current = null;
-        // Bypass the debounce here: run() -> scheduleSyncVideoBounds() waits 96ms and restarts
-        // on every call, so a continuous drag (which fires onMoved on every OS move tick) kept
-        // resetting the timer and never actually repositioning the native surface until the
-        // drag stopped — it visibly lagged behind, then snapped into place. A window move is a
-        // single cheap native call, not a relayout storm, so it doesn't need debouncing.
-        syncVideoBounds();
+        if (!isDraggingWindowRef.current) {
+          isDraggingWindowRef.current = true;
+          void invoke(p2cmd("player2_set_video_visible"), { visible: false }).catch(() => {});
+        }
+        if (dragQuietTimerRef.current) clearTimeout(dragQuietTimerRef.current);
+        dragQuietTimerRef.current = window.setTimeout(() => {
+          dragQuietTimerRef.current = null;
+          isDraggingWindowRef.current = false;
+          lastAppliedBoundsRef.current = null; // force the resync below to actually re-send
+          syncVideoBounds();
+          // Give the reposition invoke a beat to land (it's still hidden, so no flash of the old
+          // spot) before revealing — cheaper and simpler than plumbing a promise through
+          // syncVideoBounds' in-flight-guard/coalescing machinery just for this one caller.
+          window.setTimeout(() => {
+            void invoke(p2cmd("player2_set_video_visible"), { visible: true }).catch(() => {});
+          }, 60);
+        }, DRAG_SETTLE_MS);
       })
       .then((u) => {
         unlistenMove = u;
+      })
+      .catch(() => {});
+    // Restoring the window from the taskbar (minimized, or brought forward from behind
+    // another app) hits the same DWM sibling-recomposite gap as a live drag (see the long
+    // comment on onMoved above) — the video surface can render at its pre-minimize bounds
+    // for a frame, appearing to sit "under" the playlist panel until something else forces
+    // a resync. Apply the identical hide → resync → reveal sequence on focus regain.
+    void getCurrentWindow()
+      .onFocusChanged(({ payload: focused }) => {
+        if (!focused) return;
+        runSettleResync(80);
+      })
+      .then((u) => {
+        unlistenFocus = u;
       })
       .catch(() => {});
     return () => {
@@ -1188,14 +1667,28 @@ export function PlayerPage() {
       vv?.removeEventListener("scroll", run);
       document.removeEventListener("fullscreenchange", run);
       window.removeEventListener("__pitflix_resync_bounds", run);
+      window.removeEventListener("__pitflix_resync_bounds_settle", onSettleResyncBounds);
+      window.removeEventListener("pointerdown", onDragStripPointerDown, true);
+      window.removeEventListener("pointerup", onDragStripPointerUp, true);
+      window.removeEventListener("pointercancel", onDragStripPointerUp, true);
       clearInterval(poll);
       if (boundsSyncTimerRef.current) {
         clearTimeout(boundsSyncTimerRef.current);
         boundsSyncTimerRef.current = null;
       }
+      if (dragQuietTimerRef.current) {
+        clearTimeout(dragQuietTimerRef.current);
+        dragQuietTimerRef.current = null;
+      }
+      if (focusSettleTimerRef.current) {
+        clearTimeout(focusSettleTimerRef.current);
+        focusSettleTimerRef.current = null;
+      }
+      isDraggingWindowRef.current = false;
       void unlistenResize?.();
       void unlistenScale?.();
       void unlistenMove?.();
+      void unlistenFocus?.();
     };
   }, [embedReady, scheduleSyncVideoBounds]);
 
@@ -2009,16 +2502,15 @@ export function PlayerPage() {
       }
       void playbackPersistProgress({ historyId: launch?.historyId ?? undefined }).catch(() => {});
       void playbackCancelNextCountdown().catch(() => {});
+      // Restore window bounds/always-on-top BEFORE navigating away — this is the same window,
+      // so without this the user would land back on the library view stuck in a tiny pinned
+      // corner box. Fire-and-forget: it clears the reassert interval synchronously and the
+      // async size/position restore lands moments later, which is fine even after navigation.
+      if (isPip) void exitPip();
       navigateFromPlayer(navigate, launch?.returnTo, true);
       void invoke(p2cmd("player2_close")).catch((e) => logPlayer2InvokeFailure("player2_close", e));
     })();
-  }, [navigate, flushProgressAndStop, flushVolumePersist, refreshPlayheadIntoRefs]);
-
-  useEffect(() => {
-    if (!state || resumeChoice === "pending") return;
-    if (!ended) return;
-    void flushProgressAndStop(state.historyId);
-  }, [ended, state, resumeChoice, flushProgressAndStop]);
+  }, [navigate, flushProgressAndStop, flushVolumePersist, refreshPlayheadIntoRefs, isPip, exitPip]);
 
   useEffect(() => {
     if (!state || resumeChoice === "pending") return;
@@ -2087,16 +2579,21 @@ export function PlayerPage() {
   const activeSkipSegment: ActiveSkipSegment | null = (() => {
     if (!skipData) return null;
     const { intro, outro } = skipData;
-    // Heuristic-sourced segments (confidence 0.3, a fixed-offset guess with no real signal
-    // from this file) are too unreliable to surface — especially for unscripted/documentary
-    // content where intro/outro placement varies episode to episode. False positives (skipping
-    // into real content) are worse than false negatives, so these stay computed/stored but
-    // hidden from the UI until a higher-confidence source (chapter/AniSkip/fingerprint) exists.
-    if (outro && outro.source !== "heuristic" && !skipDismissedRef.current.outro &&
+    // Only marker-based sources (embedded chapter tags, TheIntroDB community timestamps) are
+    // trustworthy enough to surface. Heuristic (confidence 0.3, a fixed-offset guess) and the
+    // audio-fingerprint/blackframe/silence tier-3 signals have all shown false positives —
+    // fingerprint in particular has fired on unrelated scenes even at confidence >= 0.75
+    // (energy-envelope correlation fooled by similar speech rhythm). False positives (skipping
+    // into real content) are worse than false negatives, so those stay computed/stored but
+    // hidden from the UI until fingerprinting is made more discriminating.
+    const isTrustedSource = (source: string | null | undefined) =>
+      source === "chapter" || source === "anilist" || source === "theintrodb" ||
+      source === "introdb" || source === "skipdb";
+    if (outro && isTrustedSource(outro.source) && !skipDismissedRef.current.outro &&
         timePos >= outro.start && timePos < outro.end) {
       return { kind: "outro", segment: outro };
     }
-    if (intro && intro.source !== "heuristic" && !skipDismissedRef.current.intro &&
+    if (intro && isTrustedSource(intro.source) && !skipDismissedRef.current.intro &&
         timePos >= intro.start && timePos < intro.end) {
       return { kind: "intro", segment: intro };
     }
@@ -2127,15 +2624,21 @@ export function PlayerPage() {
     return () => window.removeEventListener("pagehide", onPageHide);
   }, [state?.historyId]);
 
-  const send = useCallback(async (cmd: unknown) => {
+  const send = useCallback(async (cmd: unknown, opts?: { markDeadOnFailure?: boolean }) => {
     try {
       await invoke(p2cmd("player2_send"), { cmd });
     } catch (e) {
       logPlayer2InvokeFailure("player2_send", e);
       console.warn("player_send failed", e);
       playerDebugLog(`send failed: ${e instanceof Error ? e.message : String(e)} cmd=${JSON.stringify(cmd)}`);
-      setSessionDead(true);
-      setError(e instanceof Error ? e.message : String(e));
+      // Marking the whole session dead disables every transport control (sessionBlocksTransport =
+      // ended || sessionDead) — appropriate for a failure that means mpv itself is gone, but a
+      // single transient hiccup on a minor convenience command (e.g. a speed change) shouldn't be
+      // able to take down play/pause/seek along with it. Callers for non-critical commands opt out.
+      if (opts?.markDeadOnFailure !== false) {
+        setSessionDead(true);
+        setError(e instanceof Error ? e.message : String(e));
+      }
       throw e;
     }
   }, []);
@@ -2149,7 +2652,29 @@ export function PlayerPage() {
     if (!activeSkipSegment) return;
     skipDismissedRef.current[activeSkipSegment.kind] = true;
     void send({ type: "SeekAbsolute", payload: activeSkipSegment.segment.end });
-  }, [activeSkipSegment, send]);
+
+    // Skipping the credits means the viewer is done with this episode — mark it watched the same
+    // way natural end-of-file / auto-advance already do (see tryAutoAdvanceOnEnd), so it doesn't
+    // linger "in progress" just because they jumped past the credits instead of waiting them out.
+    // Intro skips don't finish anything, so this only fires for "outro".
+    if (activeSkipSegment.kind === "outro" && state && !historyServerFinalizedRef.current) {
+      historyServerFinalizedRef.current = true;
+      void dismissHistoryEntry(state.historyId, true)
+        .then(() => {
+          qc.invalidateQueries({ queryKey: ["history"] });
+          qc.invalidateQueries({ queryKey: ["home-watching-currently"] });
+          // Matches the invalidation set every other "mark watched" path in the app uses (see
+          // SeasonDetailPage) — without these two, the episode list's watched checkmark stays
+          // stale for the rest of the session even though the server-side write succeeded (only
+          // a fresh app load, which refetches from scratch, showed it correctly).
+          if (state.libraryShowId) {
+            qc.invalidateQueries({ queryKey: ["show-season", state.libraryShowId, state.season] });
+            qc.invalidateQueries({ queryKey: ["show", state.libraryShowId] });
+          }
+        })
+        .catch((e) => console.error("[player] dismiss completed episode (skip credits)", e));
+    }
+  }, [activeSkipSegment, send, state, qc]);
 
   const setSubtitlePref = useCallback(
     <K extends keyof PlayerSubtitlePrefs>(key: K, value: PlayerSubtitlePrefs[K]) => {
@@ -2335,7 +2860,7 @@ export function PlayerPage() {
       if (ended || sessionDead) return;
       const clamped = Math.min(4, Math.max(0.25, speed));
       setPlaybackSpeedState(clamped);
-      void send({ type: "SetSpeed", payload: clamped }).catch(() => {});
+      void send({ type: "SetSpeed", payload: clamped }, { markDeadOnFailure: false }).catch(() => {});
     },
     [ended, sessionDead, send],
   );
@@ -2853,7 +3378,28 @@ export function PlayerPage() {
         playerDebugLog(startMsg);
 
         historyStopHandledRef.current = true;
-        void flushProgressAndStop(state.historyId).catch(() => {});
+        // This fires when the underlying mpv session moves on to its next queued file on its own
+        // (native playlist advance) rather than through navigateToEpisode/tryAutoAdvanceOnEnd — so
+        // without checking for that here, letting an episode play out naturally never marked it
+        // watched even though playback correctly continued to the next one. Mirror the "finished"
+        // check used for the external-close path: if the outgoing file was at/near its end, mark it
+        // watched via dismissHistoryEntry instead of just persisting position.
+        await refreshPlayheadIntoRefs();
+        const outgoingDur = durationRef.current;
+        const outgoingPos = timePosRef.current;
+        const outgoingRemaining = outgoingDur > outgoingPos ? outgoingDur - outgoingPos : 0;
+        const outgoingFinished = outgoingDur > 0 && outgoingRemaining <= FINISHED_THRESHOLD_SECONDS;
+        if (outgoingFinished && !historyServerFinalizedRef.current) {
+          historyServerFinalizedRef.current = true;
+          void dismissHistoryEntry(state.historyId, true)
+            .then(() => {
+              qc.invalidateQueries({ queryKey: ["history"] });
+              qc.invalidateQueries({ queryKey: ["home-watching-currently"] });
+            })
+            .catch((e) => console.error("[player] dismiss completed episode (canonical sync)", e));
+        } else {
+          void flushProgressAndStop(state.historyId).catch(() => {});
+        }
         // Keep whatever title the switch that got us here already set (raw filename for a
         // folder-playlist pick, "Title · SxEy" for library next/prev) — this canonical sync only
         // exists to attach library ids once mpv confirms the actual loaded path, not to swap in
@@ -2903,7 +3449,7 @@ export function PlayerPage() {
         episodeSwitchInProgressRef.current = false;
       }
     },
-    [state, navigate, flushProgressAndStop],
+    [state, navigate, flushProgressAndStop, refreshPlayheadIntoRefs, qc],
   );
 
   useEffect(() => {
@@ -2967,7 +3513,8 @@ export function PlayerPage() {
       playerDebugLog(`episode_switch command=next from=${playbackEpisodeKey(state)} target=ep:${target.id}`);
       void playbackCancelNextCountdown().catch(() => {});
       const baseTitle = state.title.split(" · ")[0] ?? state.title;
-      const title = `${baseTitle} · S${target.season}E${target.episodeNumber}`;
+      const episodeLabel = target.title?.trim() || `S${target.season}E${target.episodeNumber}`;
+      const title = `${baseTitle} · ${episodeLabel}`;
       await navigateToEpisode(target, title);
       return;
     }
@@ -2985,7 +3532,8 @@ export function PlayerPage() {
       }
       playerDebugLog(`episode_switch command=previous from=${playbackEpisodeKey(state)} target=ep:${target.id}`);
       const baseTitle = state.title.split(" · ")[0] ?? state.title;
-      const title = `${baseTitle} · S${target.season}E${target.episodeNumber}`;
+      const episodeLabel = target.title?.trim() || `S${target.season}E${target.episodeNumber}`;
+      const title = `${baseTitle} · ${episodeLabel}`;
       await navigateToEpisode(target, title);
       return;
     }
@@ -3007,12 +3555,33 @@ export function PlayerPage() {
       hasNext = Boolean(nextSibling);
     }
 
-    if (!hasNext) return false;
+    if (!hasNext) {
+      // No next episode — just persist position. Handled here (not a separate `ended`-triggered
+      // effect) so it can't race ahead of the dismissHistoryEntry finalize below and set
+      // historyServerFinalizedRef first, which used to suppress the "mark watched" call.
+      void flushProgressAndStopRef.current(state.historyId);
+      return false;
+    }
 
     autoAdvanceIssuedForRef.current = state.historyId;
     playerDebugLog(
       `autoplay_next historyId=${state.historyId} key=${playbackEpisodeKey(state)}`,
     );
+    // Reaching here means mpv/the skip-to-end flow considers this file done — finalize the
+    // outgoing episode as watched now, since navigateToEpisode only persists position (via
+    // flushProgressAndStop -> /stopped) and never calls /dismiss. Without this, auto-advancing
+    // (whether via natural EOF or the user skipping through to the end) left the finished
+    // episode stuck "in progress" instead of watched.
+    if (!historyServerFinalizedRef.current) {
+      historyServerFinalizedRef.current = true;
+      void dismissHistoryEntry(state.historyId, true)
+        .then(() => {
+          qc.invalidateQueries({ queryKey: ["history"] });
+          qc.invalidateQueries({ queryKey: ["home-watching-currently"] });
+        })
+        .catch((e) => console.error("[player] dismiss completed episode (auto-advance)", e));
+    }
+    setEpisodeFinished(true);
     await playNext();
     return true;
   }, [state, nextSibling, resolveEpisodeTarget, playNext]);
@@ -3107,6 +3676,115 @@ export function PlayerPage() {
       void un?.();
     };
   }, [state, nextEp, prevEp, navigate, onFullscreen, playNext, playPrevious, exitAndClose, browseWhilePlaying]);
+
+  // Windows taskbar thumbnail-toolbar buttons (Previous / Play-Pause / Next):
+  // this embedded engine (player2/libmpv) has no backend PlayerService session
+  // for NowPlayingBar's `sendCommand` to target, so the actual transport
+  // control lives here, wired to the same functions the N/P keyboard
+  // shortcuts use.
+  //
+  // Subscribed exactly once (empty deps) and dispatched through refs — these
+  // callbacks are recreated on nearly every render (episode switches, state
+  // changes), and re-subscribing `listen()` on every identity change raced
+  // its own async setup against cleanup, stacking up duplicate listeners so
+  // a single click fired several stale handlers at once.
+  const playNextRef = useRef(playNext);
+  const playPreviousRef = useRef(playPrevious);
+  const handlePrimaryTransportRef = useRef(handlePrimaryTransport);
+  const seekRelRef = useRef(seekRel);
+  const exitAndCloseRef = useRef(exitAndClose);
+  const onFullscreenRef = useRef(onFullscreen);
+  useEffect(() => {
+    playNextRef.current = playNext;
+  }, [playNext]);
+  useEffect(() => {
+    playPreviousRef.current = playPrevious;
+  }, [playPrevious]);
+  useEffect(() => {
+    handlePrimaryTransportRef.current = handlePrimaryTransport;
+  }, [handlePrimaryTransport]);
+  useEffect(() => {
+    seekRelRef.current = seekRel;
+  }, [seekRel]);
+  useEffect(() => {
+    exitAndCloseRef.current = exitAndClose;
+  }, [exitAndClose]);
+  useEffect(() => {
+    onFullscreenRef.current = onFullscreen;
+  }, [onFullscreen]);
+
+  useEffect(() => {
+    let un: UnlistenFn | undefined;
+    let cancelled = false;
+    void (async () => {
+      const unlisten = await listen<{
+        action: "prev" | "pause" | "next" | "rewind" | "forward" | "stop" | "fullscreen";
+      }>("taskbar-thumb-click", (event) => {
+        switch (event.payload.action) {
+          case "prev":
+            void playPreviousRef.current();
+            break;
+          case "pause":
+            void handlePrimaryTransportRef.current();
+            break;
+          case "next":
+            void playNextRef.current();
+            break;
+          case "rewind":
+            seekRelRef.current(-10);
+            break;
+          case "forward":
+            seekRelRef.current(10);
+            break;
+          case "stop":
+            exitAndCloseRef.current();
+            break;
+          case "fullscreen":
+            void onFullscreenRef.current();
+            break;
+          default:
+            break;
+        }
+      });
+      if (cancelled) {
+        void unlisten();
+        return;
+      }
+      un = unlisten;
+    })();
+    return () => {
+      cancelled = true;
+      void un?.();
+    };
+  }, []);
+
+  useEffect(() => {
+    playerDebugLog(
+      `taskbar_effect_fired isTauri=${isTauri()} hasState=${Boolean(state)} displayPaused=${displayPaused}`,
+    );
+    if (!isTauri()) return;
+    void taskbarSetPlaying(Boolean(state), Boolean(state) && !displayPaused);
+  }, [state, displayPaused]);
+
+  useEffect(() => {
+    if (!isTauri()) return;
+    return () => {
+      void taskbarSetPlaying(false, false);
+      void taskbarSetProgress(false, 0, false);
+    };
+  }, []);
+
+  const lastTaskbarProgressPctRef = useRef<number | null>(null);
+  useEffect(() => {
+    if (!isTauri()) return;
+    if (!state) return;
+    // Round to whole percent so mpv's frequent time-pos ticks don't spam a COM call on every
+    // render — the taskbar overlay only needs to visibly step, not track exact seconds.
+    const roundedPct = Math.round(pct);
+    if (roundedPct === lastTaskbarProgressPctRef.current) return;
+    lastTaskbarProgressPctRef.current = roundedPct;
+    void taskbarSetProgress(true, roundedPct / 100, displayPaused);
+  }, [state, pct, displayPaused]);
 
   useEffect(() => {
     console.info("[pitflix-player] web keydown handler mounted (capture)");
@@ -3492,6 +4170,13 @@ export function PlayerPage() {
         }
       }}
     >
+      {state.torrentInfoHash ? (
+        <TorrentStreamProgress
+          infoHash={state.torrentInfoHash}
+          label={state.title}
+          variant="overlay"
+        />
+      ) : null}
       {isCompanionOnlyMode ? (
         <PlayerCompanionView
           state={state}
@@ -3575,6 +4260,8 @@ export function PlayerPage() {
           setFolderPlaylistOpen={setFolderPlaylistOpen}
           setFolderPlaylistPinned={setFolderPlaylistPinned}
           navigateToSiblingFile={navigateToSiblingFile}
+          playlistEpisodeMetaByPath={playlistEpisodeMetaByPath}
+          moviePauseBackdropPath={moviePauseBackdropPath}
           sessionBlocksTransport={sessionBlocksTransport}
           timePos={isExternalMode && polSeq > 0 ? uiTimePos : timePos}
           duration={isExternalMode && polSeq > 0 ? uiDuration : duration}
@@ -3601,6 +4288,7 @@ export function PlayerPage() {
           seekHover={seekHover}
           setSeekHover={setSeekHover}
           scheduleHoverThumb={scheduleHoverThumb}
+          scheduleExactHoverThumb={scheduleExactHoverThumb}
           subVisible={subVisible}
           subTracks={subTracks}
           externalSubFiles={externalSubFiles}
@@ -3628,6 +4316,8 @@ export function PlayerPage() {
           audioTracks={audioTracks}
           alwaysOnTop={alwaysOnTop}
           toggleAlwaysOnTop={toggleAlwaysOnTop}
+          isPip={isPip}
+          togglePip={togglePip}
           layoutPrefs={layoutPrefs}
           nativeState={nativeState}
           embeddedSafeMode={embeddedSafeMode}
@@ -3668,6 +4358,7 @@ export function PlayerPage() {
           skipSeconds={skipSeconds}
           onSetSkipSeconds={setSkipSeconds}
           alwaysOnTop={alwaysOnTop}
+          isPip={isPip}
           isFullscreen={isFullscreen}
           hasPlaylist={Boolean(currentFolderForPlaylist)}
           playlistCount={folderPlaylistEntries.length}
@@ -3683,6 +4374,7 @@ export function PlayerPage() {
           onSetSpeed={setPlaybackSpeed}
           onSetAudioTrack={(id) => void send({ type: "SetAid", payload: id })}
           onToggleAlwaysOnTop={toggleAlwaysOnTop}
+          onTogglePip={togglePip}
           onToggleFullscreen={() => void onFullscreen()}
           onNext={() => void playNext()}
           onPrevious={() => void playPrevious()}

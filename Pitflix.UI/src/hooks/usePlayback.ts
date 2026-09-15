@@ -62,6 +62,10 @@ export type PlayContext = {
   suppressContinueWatching?: boolean;
   /** Full ordered list of live IPTV channels — populates the in-player channel playlist. */
   liveChannels?: LiveChannelEntry[];
+  /** Associates this launch with the local torrent engine for cleanup on player exit. */
+  torrentInfoHash?: string;
+  /** Explicit playlist for a device video opened from a virtual grouping — see PlaybackLaunchState. */
+  deviceCollectionEntries?: { name: string; path: string }[];
 };
 
 export function usePlayback() {
@@ -194,6 +198,10 @@ export function usePlayback() {
           ...(context.suppressContinueWatching === true ? { suppressContinueWatching: true } : {}),
           ...(useLibMpv ? { useLibMpv: true } : {}),
           ...(context.liveChannels?.length ? { liveChannels: context.liveChannels } : {}),
+          ...(context.torrentInfoHash ? { torrentInfoHash: context.torrentInfoHash } : {}),
+          ...(context.deviceCollectionEntries?.length
+            ? { deviceCollectionEntries: context.deviceCollectionEntries }
+            : {}),
         };
         if (playerMode === "remote") {
           navigate("/player-remote", { state: launchState });

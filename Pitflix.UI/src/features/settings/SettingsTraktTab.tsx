@@ -3,7 +3,7 @@ import { isTauri } from "@tauri-apps/api/core";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Clapperboard } from "lucide-react";
-import { disconnectTrakt, getTraktAuthUrl, getTraktStatus, patchTraktSettings } from "../../api/trakt";
+import { disconnectTrakt, getTraktAuthUrl, getTraktStatus, patchTraktSettings, syncTraktNow } from "../../api/trakt";
 import { formatScanOrApiError } from "./settingsTypes";
 
 const REDIRECT_URI = "http://localhost:5280/api/trakt/callback";
@@ -75,6 +75,24 @@ export function SettingsTraktTab() {
       .then(() => {
         setMessage("Disconnected from Trakt.");
         return refetch();
+      })
+      .catch((err) => setMessage(formatScanOrApiError(err)))
+      .finally(() => setBusy(false));
+  };
+
+  const handleSyncNow = () => {
+    setBusy(true);
+    setMessage(null);
+    void syncTraktNow()
+      .then((r) => {
+        if (r.success) {
+          setMessage(
+            `Synced. ${r.matched ?? 0} matched, ${r.unmatched ?? 0} unmatched, ${r.playbackApplied ?? 0} playback updates.`,
+          );
+        } else {
+          setMessage(r.error ?? "Sync failed.");
+        }
+        return qc.invalidateQueries({ queryKey: ["trakt-status"] });
       })
       .catch((err) => setMessage(formatScanOrApiError(err)))
       .finally(() => setBusy(false));
@@ -175,16 +193,31 @@ export function SettingsTraktTab() {
                     : "Trakt account linked"
                   : "Sync watch activity with Trakt.tv"}
               </p>
+              {connected ? (
+                <p className="mt-0.5 text-[10px] text-pitflix-subtle">
+                  Last synced: {data?.lastSyncedAt ? new Date(data.lastSyncedAt).toLocaleString() : "never yet"}
+                </p>
+              ) : null}
             </div>
             {connected ? (
-              <button
-                type="button"
-                disabled={busy}
-                onClick={handleDisconnect}
-                className="shrink-0 rounded-xl border border-white/[0.08] bg-pitflix-bg px-3.5 py-2 text-xs font-semibold text-white transition-all hover:border-red-500/50 disabled:opacity-50"
-              >
-                Disconnect
-              </button>
+              <div className="flex shrink-0 gap-2">
+                <button
+                  type="button"
+                  disabled={busy}
+                  onClick={handleSyncNow}
+                  className="rounded-xl border border-pitflix-card bg-pitflix-bg px-3.5 py-2 text-xs font-semibold text-white transition-all hover:border-pitflix-primary/50 disabled:opacity-50"
+                >
+                  Sync now
+                </button>
+                <button
+                  type="button"
+                  disabled={busy}
+                  onClick={handleDisconnect}
+                  className="rounded-xl border border-white/[0.08] bg-pitflix-bg px-3.5 py-2 text-xs font-semibold text-white transition-all hover:border-red-500/50 disabled:opacity-50"
+                >
+                  Disconnect
+                </button>
+              </div>
             ) : (
               <button
                 type="button"

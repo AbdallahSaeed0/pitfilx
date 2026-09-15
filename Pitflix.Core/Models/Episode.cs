@@ -18,5 +18,9 @@ public class Episode
     /// <summary>True when Completed was reached by actually finishing playback in-app (vs. a manual "mark watched" action).</summary>
     public bool CompletedFromPlayback { get; set; }
 
+    /// <summary>How many times this episode has been watched again after its first completion. Auto-increments
+    /// when playback completes on an episode already marked Completed; also manually adjustable.</summary>
+    public int RewatchCount { get; set; }
+
     public Show Show { get; set; } = null!;
 }

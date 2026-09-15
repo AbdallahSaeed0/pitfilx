@@ -1,18 +1,28 @@
 import { Eye, EyeOff, HelpCircle, Key } from "lucide-react";
+import { useState } from "react";
 import {
   saveSettings,
+  verifyFanartKey,
   verifyMdblistKey,
+  verifyOmdbKey,
   verifyOpenSubtitlesKey,
   verifySubDlKey,
   verifySubSourceKey,
   verifyTmdbKey,
   verifyTvdbKey,
+  verifyStremioAddonManifest,
 } from "../../api/settings";
 import type { SettingsPageModel } from "./useSettingsPageModel";
 
 type Props = { model: SettingsPageModel };
 
 export function SettingsProvidersTab({ model }: Props) {
+  const [stremioManifestInput, setStremioManifestInput] = useState("");
+  const [stremioManifestBusy, setStremioManifestBusy] = useState(false);
+  const [stremioManifestMsg, setStremioManifestMsg] = useState<string | null>(null);
+  const [cometManifestInput, setCometManifestInput] = useState("");
+  const [cometManifestBusy, setCometManifestBusy] = useState(false);
+  const [cometManifestMsg, setCometManifestMsg] = useState<string | null>(null);
   const {
     data,
     setApiKeyGuide,
@@ -53,6 +63,12 @@ export function SettingsProvidersTab({ model }: Props) {
     setShowMdblistKey,
     mdblistVerifyBusy,
     setMdblistVerifyBusy,
+    omdbKeyInput,
+    setOmdbKeyInput,
+    showOmdbKey,
+    setShowOmdbKey,
+    omdbVerifyBusy,
+    setOmdbVerifyBusy,
     setAddlSourcesMsg,
     tvdbKeyInput,
     setTvdbKeyInput,
@@ -60,6 +76,12 @@ export function SettingsProvidersTab({ model }: Props) {
     setShowTvdbKey,
     tvdbVerifyBusy,
     setTvdbVerifyBusy,
+    fanartKeyInput,
+    setFanartKeyInput,
+    showFanartKey,
+    setShowFanartKey,
+    fanartVerifyBusy,
+    setFanartVerifyBusy,
     addlSourcesMsg,
   } = model;
 
@@ -379,6 +401,140 @@ export function SettingsProvidersTab({ model }: Props) {
           </section>
 
           {/* ── Additional Sources ────────────────────────────────── */}
+          <section className="rounded-2xl border border-orange-500/15 bg-pitflix-surface/50 p-6 shadow-xl shadow-black/30 backdrop-blur-sm">
+            <h2 className="mb-2 text-[15px] font-bold tracking-tight text-white">Torrent stream addons</h2>
+            <p className="mb-4 text-[10px] text-pitflix-subtle">
+              Configure Torrentio and Comet independently. Both use the open Stremio addon protocol and appear as
+              separate tabs in the download picker.
+            </p>
+            <h3 className="mb-1 text-xs font-semibold text-orange-300">Torrentio</h3>
+            <p className="mb-2 truncate text-[10px] text-pitflix-subtle" title={data?.stremioAddonManifestUrl ?? ""}>
+              Active: {data?.stremioAddonManifestUrl ?? "https://torrentio.strem.fun/manifest.json"}
+            </p>
+            <input
+              value={stremioManifestInput}
+              onChange={(event) => setStremioManifestInput(event.target.value)}
+              placeholder={data?.stremioAddonManifestUrl ?? "https://…/manifest.json"}
+              className="w-full rounded-xl border border-white/10 bg-black/20 px-3 py-2 text-xs text-white outline-none placeholder:text-white/25 focus:border-orange-400/50"
+            />
+            <div className="mt-3 flex gap-2">
+              <button
+                type="button"
+                disabled={stremioManifestBusy || !stremioManifestInput.trim()}
+                className="rounded-lg border border-white/10 px-3 py-2 text-[11px] text-white hover:bg-white/5 disabled:opacity-40"
+                onClick={() => {
+                  const manifestUrl = stremioManifestInput.trim();
+                  if (!manifestUrl) return;
+                  setStremioManifestBusy(true);
+                  setStremioManifestMsg(null);
+                  void verifyStremioAddonManifest(manifestUrl)
+                    .then((result) =>
+                      setStremioManifestMsg(
+                        result.valid ? `${result.name ?? "Addon"} is compatible.` : result.error ?? "Invalid manifest.",
+                      ),
+                    )
+                    .catch((error: { response?: { data?: { error?: string } } }) =>
+                      setStremioManifestMsg(error.response?.data?.error ?? "Could not verify the addon."),
+                    )
+                    .finally(() => setStremioManifestBusy(false));
+                }}
+              >
+                Verify
+              </button>
+              <button
+                type="button"
+                disabled={stremioManifestBusy || !stremioManifestInput.trim()}
+                className="rounded-lg bg-orange-500 px-3 py-2 text-[11px] font-semibold text-black hover:bg-orange-400 disabled:opacity-40"
+                onClick={() => {
+                  const stremioAddonManifestUrl = stremioManifestInput.trim();
+                  if (!stremioAddonManifestUrl) return;
+                  setStremioManifestBusy(true);
+                  setStremioManifestMsg(null);
+                  void verifyStremioAddonManifest(stremioAddonManifestUrl)
+                    .then(() => saveSettings({ stremioAddonManifestUrl }))
+                    .then(() => {
+                      setStremioManifestMsg("Addon saved.");
+                      setStremioManifestInput("");
+                      refetchSettings();
+                    })
+                    .catch((error: { response?: { data?: { error?: string } } }) =>
+                      setStremioManifestMsg(error.response?.data?.error ?? "Could not save the addon."),
+                    )
+                    .finally(() => setStremioManifestBusy(false));
+                }}
+              >
+                {stremioManifestBusy ? "Checking…" : "Verify & save"}
+              </button>
+            </div>
+            {stremioManifestMsg ? <p className="mt-2 text-[11px] text-pitflix-muted">{stremioManifestMsg}</p> : null}
+
+            <div className="my-5 border-t border-white/[0.07]" />
+            <h3 className="mb-1 text-xs font-semibold text-cyan-300">Comet</h3>
+            <p className="mb-2 text-[10px] text-pitflix-subtle">
+              The default public manifest uses Comet's direct-torrent mode. Paste a configured manifest here for
+              another instance, custom filters, or a debrid account.
+            </p>
+            <p className="mb-2 truncate text-[10px] text-pitflix-subtle" title={data?.cometAddonManifestUrl ?? ""}>
+              Active: {data?.cometAddonManifestUrl ?? "https://comet.stremio.ru/manifest.json"}
+            </p>
+            <input
+              value={cometManifestInput}
+              onChange={(event) => setCometManifestInput(event.target.value)}
+              placeholder={data?.cometAddonManifestUrl ?? "https://comet.stremio.ru/manifest.json"}
+              className="w-full rounded-xl border border-white/10 bg-black/20 px-3 py-2 text-xs text-white outline-none placeholder:text-white/25 focus:border-cyan-400/50"
+            />
+            <div className="mt-3 flex gap-2">
+              <button
+                type="button"
+                disabled={cometManifestBusy || !cometManifestInput.trim()}
+                className="rounded-lg border border-white/10 px-3 py-2 text-[11px] text-white hover:bg-white/5 disabled:opacity-40"
+                onClick={() => {
+                  const manifestUrl = cometManifestInput.trim();
+                  if (!manifestUrl) return;
+                  setCometManifestBusy(true);
+                  setCometManifestMsg(null);
+                  void verifyStremioAddonManifest(manifestUrl)
+                    .then((result) =>
+                      setCometManifestMsg(
+                        result.valid ? `${result.name ?? "Comet"} is compatible.` : result.error ?? "Invalid manifest.",
+                      ),
+                    )
+                    .catch((error: { response?: { data?: { error?: string } } }) =>
+                      setCometManifestMsg(error.response?.data?.error ?? "Could not verify Comet."),
+                    )
+                    .finally(() => setCometManifestBusy(false));
+                }}
+              >
+                Verify
+              </button>
+              <button
+                type="button"
+                disabled={cometManifestBusy || !cometManifestInput.trim()}
+                className="rounded-lg bg-cyan-500 px-3 py-2 text-[11px] font-semibold text-black hover:bg-cyan-400 disabled:opacity-40"
+                onClick={() => {
+                  const cometAddonManifestUrl = cometManifestInput.trim();
+                  if (!cometAddonManifestUrl) return;
+                  setCometManifestBusy(true);
+                  setCometManifestMsg(null);
+                  void verifyStremioAddonManifest(cometAddonManifestUrl)
+                    .then(() => saveSettings({ cometAddonManifestUrl }))
+                    .then(() => {
+                      setCometManifestMsg("Comet saved.");
+                      setCometManifestInput("");
+                      refetchSettings();
+                    })
+                    .catch((error: { response?: { data?: { error?: string } } }) =>
+                      setCometManifestMsg(error.response?.data?.error ?? "Could not save Comet."),
+                    )
+                    .finally(() => setCometManifestBusy(false));
+                }}
+              >
+                {cometManifestBusy ? "Checking…" : "Verify & save"}
+              </button>
+            </div>
+            {cometManifestMsg ? <p className="mt-2 text-[11px] text-pitflix-muted">{cometManifestMsg}</p> : null}
+          </section>
+
           <section className="rounded-2xl border border-white/[0.09] bg-pitflix-surface/50 shadow-xl shadow-black/30 backdrop-blur-sm overflow-hidden">
             <button
               type="button"
@@ -474,6 +630,84 @@ export function SettingsProvidersTab({ model }: Props) {
                     </p>
                   </div>
 
+                  {/* OMDb */}
+                  <div>
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="flex items-center gap-1.5">
+                        <span className="text-[11px] font-medium text-pitflix-muted">OMDb API key</span>
+                        <button
+                          type="button"
+                          aria-label="How to get an OMDb API key"
+                          title="How to get this key"
+                          className="text-pitflix-subtle transition-colors hover:text-pitflix-primary"
+                          onClick={() => setApiKeyGuide("omdb")}
+                        >
+                          <HelpCircle className="h-3.5 w-3.5" />
+                        </button>
+                      </span>
+                      <span className="truncate text-[10px] text-pitflix-subtle">
+                        {(data as { omdbApiKey?: string } | undefined)?.omdbApiKey
+                          ? `Saved: ${(data as { omdbApiKey?: string }).omdbApiKey}`
+                          : "Not set"}
+                      </span>
+                    </div>
+                    <p className="mt-1 text-[10px] text-pitflix-subtle">
+                      Powers per-episode IMDb ratings on season pages — MDBList's free tier only gives show-level scores.
+                    </p>
+                    <div className="mt-1 flex gap-2">
+                      <input
+                        type={showOmdbKey ? "text" : "password"}
+                        value={omdbKeyInput}
+                        onChange={(e) => setOmdbKeyInput(e.target.value)}
+                        placeholder="Enter OMDb API key…"
+                        autoComplete="off"
+                        className="min-w-0 flex-1 rounded-lg border border-pitflix-card bg-pitflix-bg px-2.5 py-2 text-xs text-white placeholder:text-pitflix-subtle focus:border-pitflix-primary/70 focus:outline-none focus:ring-2 focus:ring-pitflix-primary/15"
+                      />
+                      <button
+                        type="button"
+                        className="shrink-0 rounded-xl border border-white/10 px-2.5 py-2 text-pitflix-muted transition-colors hover:border-white/20 hover:text-white"
+                        aria-label={showOmdbKey ? "Hide key" : "Show key"}
+                        onClick={() => setShowOmdbKey((v) => !v)}
+                      >
+                        {showOmdbKey ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                      </button>
+                    </div>
+                    <div className="mt-2 flex flex-wrap gap-2">
+                      <button
+                        type="button"
+                        disabled={omdbVerifyBusy}
+                        className="rounded-xl border border-white/10 px-3.5 py-1.5 text-[11px] text-white transition-all hover:border-pitflix-primary/50 hover:bg-pitflix-primary/10 disabled:opacity-50"
+                        onClick={() => {
+                          setAddlSourcesMsg(null);
+                          const k = omdbKeyInput.trim();
+                          if (!k) { setAddlSourcesMsg("Type a key to save & test."); return; }
+                          setOmdbVerifyBusy(true);
+                          void saveSettings({ omdbApiKey: k })
+                            .then(() => refetchSettings())
+                            .then(() => verifyOmdbKey(k))
+                            .then((r) =>
+                              setAddlSourcesMsg(
+                                r.valid
+                                  ? `Saved. OMDb connected — Shawshank IMDb: ${r.imdbRating ?? "n/a"}`
+                                  : `Saved, but key test failed: ${r.error ?? "invalid"}`,
+                              ),
+                            )
+                            .catch(() => setAddlSourcesMsg("Save or test failed."))
+                            .finally(() => { setOmdbVerifyBusy(false); setOmdbKeyInput(""); });
+                        }}
+                      >
+                        {omdbVerifyBusy ? "Saving…" : "Save & Test"}
+                      </button>
+                    </div>
+                    <p className="mt-1 text-[10px] text-pitflix-subtle">
+                      Free at{" "}
+                      <a href="https://www.omdbapi.com/apikey.aspx" target="_blank" rel="noreferrer" className="text-pitflix-primary hover:underline">
+                        omdbapi.com/apikey.aspx
+                      </a>{" "}
+                      — 1 000 req/day on the free tier.
+                    </p>
+                  </div>
+
                   {/* TVDB */}
                   <div>
                     <div className="flex items-center justify-between gap-2">
@@ -543,6 +777,79 @@ export function SettingsProvidersTab({ model }: Props) {
                       <a href="https://thetvdb.com/api-information" target="_blank" rel="noreferrer" className="text-pitflix-primary hover:underline">
                         thetvdb.com/api-information
                       </a>
+                    </p>
+                  </div>
+
+                  {/* Fanart.tv */}
+                  <div>
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="flex items-center gap-1.5">
+                        <span className="text-[11px] font-medium text-pitflix-muted">Fanart.tv API key</span>
+                        <button
+                          type="button"
+                          aria-label="How to get a Fanart.tv API key"
+                          title="How to get this key"
+                          className="text-pitflix-subtle transition-colors hover:text-pitflix-primary"
+                          onClick={() => setApiKeyGuide("fanart")}
+                        >
+                          <HelpCircle className="h-3.5 w-3.5" />
+                        </button>
+                      </span>
+                      <span className="truncate text-[10px] text-pitflix-subtle">
+                        {(data as { fanartApiKey?: string } | undefined)?.fanartApiKey
+                          ? `Saved: ${(data as { fanartApiKey?: string }).fanartApiKey}`
+                          : "Not set"}
+                      </span>
+                    </div>
+                    <div className="mt-1 flex gap-2">
+                      <input
+                        type={showFanartKey ? "text" : "password"}
+                        value={fanartKeyInput}
+                        onChange={(e) => setFanartKeyInput(e.target.value)}
+                        placeholder="Enter Fanart.tv API key…"
+                        autoComplete="off"
+                        className="min-w-0 flex-1 rounded-lg border border-pitflix-card bg-pitflix-bg px-2.5 py-2 text-xs text-white placeholder:text-pitflix-subtle focus:border-pitflix-primary/70 focus:outline-none focus:ring-2 focus:ring-pitflix-primary/15"
+                      />
+                      <button
+                        type="button"
+                        className="shrink-0 rounded-xl border border-white/10 px-2.5 py-2 text-pitflix-muted transition-colors hover:border-white/20 hover:text-white"
+                        aria-label={showFanartKey ? "Hide key" : "Show key"}
+                        onClick={() => setShowFanartKey((v) => !v)}
+                      >
+                        {showFanartKey ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                      </button>
+                    </div>
+                    <div className="mt-2 flex flex-wrap gap-2">
+                      <button
+                        type="button"
+                        disabled={fanartVerifyBusy}
+                        className="rounded-xl border border-white/10 px-3.5 py-1.5 text-[11px] text-white transition-all hover:border-pitflix-primary/50 hover:bg-pitflix-primary/10 disabled:opacity-50"
+                        onClick={() => {
+                          setAddlSourcesMsg(null);
+                          const k = fanartKeyInput.trim();
+                          if (!k) { setAddlSourcesMsg("Type a key to save & test."); return; }
+                          setFanartVerifyBusy(true);
+                          void saveSettings({ fanartApiKey: k })
+                            .then(() => refetchSettings())
+                            .then(() => verifyFanartKey(k))
+                            .then((r) =>
+                              setAddlSourcesMsg(
+                                r.valid ? "Saved. Fanart.tv connected." : `Saved, but key test failed: ${r.error ?? "invalid"}`,
+                              ),
+                            )
+                            .catch(() => setAddlSourcesMsg("Save or test failed."))
+                            .finally(() => { setFanartVerifyBusy(false); setFanartKeyInput(""); });
+                        }}
+                      >
+                        {fanartVerifyBusy ? "Saving…" : "Save & Test"}
+                      </button>
+                    </div>
+                    <p className="mt-1 text-[10px] text-pitflix-subtle">
+                      Free at{" "}
+                      <a href="https://fanart.tv/get-an-api-key" target="_blank" rel="noreferrer" className="text-pitflix-primary hover:underline">
+                        fanart.tv/get-an-api-key
+                      </a>{" "}
+                      — adds clearlogos, character art & backgrounds. TV lookups also need a TVDB key above.
                     </p>
                   </div>
 

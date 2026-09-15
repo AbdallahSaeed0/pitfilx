@@ -4,12 +4,14 @@ class SocialProfile {
   final String? username;
   final String? displayName;
   final String? avatarUrl;
+  final String? coverUrl;
 
   const SocialProfile({
     required this.id,
     this.username,
     this.displayName,
     this.avatarUrl,
+    this.coverUrl,
   });
 
   factory SocialProfile.fromJson(Map<String, dynamic> json) => SocialProfile(
@@ -17,6 +19,7 @@ class SocialProfile {
     username: json['username'] as String?,
     displayName: json['display_name'] as String?,
     avatarUrl: json['avatar_url'] as String?,
+    coverUrl: json['cover_url'] as String?,
   );
 
   String get name => displayName ?? username ?? 'Unknown';

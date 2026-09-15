@@ -33,26 +33,39 @@ export function getControlIndexInZone(prefs: PlayerLayoutPrefs, id: PlayerLayout
   return getControlsInZone(prefs, zone, { visibleOnly: false }).indexOf(id);
 }
 
-export function moveControlInZone(
+/**
+ * Drag-and-drop reorder: moves `id` into `zone` at `targetIndex`, where the index is measured
+ * against that zone's VISIBLE controls with `id` itself excluded — matching the drag preview,
+ * which only ever renders visible controls (i.e. "insert before the visible control currently at
+ * this position"). Hidden controls in the zone keep their existing relative position untouched.
+ * `targetIndex >= visible zone length` appends after the last visible control in the zone.
+ */
+export function moveControlToZoneIndex(
   prefs: PlayerLayoutPrefs,
   id: PlayerLayoutControlId,
-  direction: "earlier" | "later",
+  zone: PlayerLayoutZone,
+  targetIndex: number,
 ): PlayerLayoutPrefs {
-  const zone = prefs.zones[id];
-  const zoneControls = getControlsInZone(prefs, zone, { visibleOnly: false });
-  const idxInZone = zoneControls.indexOf(id);
-  const swapIdx = direction === "earlier" ? idxInZone - 1 : idxInZone + 1;
-  const swapWith = zoneControls[swapIdx];
-  if (!swapWith) return prefs;
+  const zones = prefs.zones[id] === zone ? prefs.zones : { ...prefs.zones, [id]: zone };
+  const order = prefs.order.filter((x) => x !== id);
+  const zoneIds = order.filter((cid) => zones[cid] === zone && prefs.visible[cid]);
+  const clampedIndex = Math.max(0, Math.min(targetIndex, zoneIds.length));
+  const anchorId = zoneIds[clampedIndex];
 
-  const order = [...prefs.order];
-  const globalIdx = order.indexOf(id);
-  const swapGlobalIdx = order.indexOf(swapWith);
-  if (globalIdx < 0 || swapGlobalIdx < 0) return prefs;
-
-  order[globalIdx] = swapWith;
-  order[swapGlobalIdx] = id;
-  return { ...prefs, order };
+  let insertAt: number;
+  if (anchorId) {
+    insertAt = order.indexOf(anchorId);
+  } else {
+    const lastInZoneIdx = order.reduce((acc, cid, i) => (zones[cid] === zone ? i : acc), -1);
+    if (lastInZoneIdx >= 0) {
+      insertAt = lastInZoneIdx + 1;
+    } else {
+      const nextZoneIdx = order.findIndex((cid) => ZONE_RANK[zones[cid]] > ZONE_RANK[zone]);
+      insertAt = nextZoneIdx === -1 ? order.length : nextZoneIdx;
+    }
+  }
+  order.splice(insertAt, 0, id);
+  return { ...prefs, zones, order };
 }
 
 export function setControlZone(

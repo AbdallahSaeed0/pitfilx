@@ -21,13 +21,19 @@ public static class PeopleEndpoints
             object? personOut = null;
             if (person != null)
             {
+                var overridePath = await reqRepo.GetSettingAsync($"PersonProfileOverride:{tmdbId}", ct)
+                    .ConfigureAwait(false);
+                var profileImageUrl = !string.IsNullOrWhiteSpace(overridePath)
+                    ? ImageUrls.ToImageUrl(overridePath)
+                    : ImageUrls.ToImageUrl(person.ProfileLocalPath);
+
                 personOut = new
                 {
                     person.Id,
                     person.Name,
                     person.Biography,
                     person.ProfilePath,
-                    profileImageUrl = ImageUrls.ToImageUrl(person.ProfileLocalPath),
+                    profileImageUrl,
                     person.Birthday,
                     person.PlaceOfBirth,
                     person.KnownFor
@@ -35,6 +41,41 @@ public static class PeopleEndpoints
             }
 
             return Results.Json(new { person = personOut, localAppearances = local.Select(ImageUrls.MapLocalSimilar).ToList() });
+        });
+
+        app.MapGet("/api/people/{tmdbId:int}/images", async (int tmdbId, ITmdbClientFactory tmdbClientFactory, CancellationToken ct) =>
+        {
+            var tmdb = tmdbClientFactory.Create();
+            if (tmdb == null)
+                return Results.Json(new { images = Array.Empty<object>() }, jsonSerializerOptions);
+
+            var paths = await tmdb.GetPersonProfilePathsAsync(tmdbId, ct).ConfigureAwait(false);
+            var images = paths.Select(p => new
+            {
+                profilePath = p,
+                url = $"https://image.tmdb.org/t/p/w500{p}"
+            }).ToList();
+            return Results.Json(new { images }, jsonSerializerOptions);
+        });
+
+        app.MapPost("/api/people/{tmdbId:int}/profile-override", async (int tmdbId, PersonProfileOverrideBody body,
+            LibraryRepository repo, ITmdbClientFactory tmdbClientFactory, CancellationToken ct) =>
+        {
+            var profilePath = body.ProfilePath?.Trim();
+            if (string.IsNullOrEmpty(profilePath))
+                return Results.Json(new { success = false, error = "profilePath is required." }, jsonSerializerOptions);
+
+            var tmdb = tmdbClientFactory.Create();
+            if (tmdb == null)
+                return Results.Json(new { success = false, error = "TMDB not configured." }, jsonSerializerOptions);
+
+            var stem = new string(profilePath.Where(char.IsLetterOrDigit).ToArray());
+            var localPath = await tmdb
+                .DownloadImageAsync(profilePath, $"person_{tmdbId}_{stem}.jpg", ct, "Person", "w500")
+                .ConfigureAwait(false);
+
+            await repo.SaveSettingAsync($"PersonProfileOverride:{tmdbId}", localPath, ct).ConfigureAwait(false);
+            return Results.Json(new { success = true, profileImageUrl = ImageUrls.ToImageUrl(localPath) }, jsonSerializerOptions);
         });
 
         app.MapGet("/api/people/{tmdbId:int}/stream-credits", async (int tmdbId, HttpContext httpContext, IMemoryCache memoryCache, IResolvedApiKeysAccessor apiKeys, CancellationToken ct) =>

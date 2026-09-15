@@ -1,31 +1,70 @@
-import { Check, RefreshCw } from "lucide-react";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { Check, ChevronRight, ListPlus, RefreshCw } from "lucide-react";
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { addListItem, getLists } from "../../api/lists";
 import { cn } from "../../utils/cn";
+import { formatListMenuLabel } from "../../utils/listMarks";
+import type { MediaContextTarget } from "./useMediaContextMenu";
 
 export type MediaContextMenuAction = "rescan" | "markWatched" | "markUnwatched";
 
 type Props = {
-  label: string;
+  target: MediaContextTarget;
   x: number;
   y: number;
-  watchStatus?: string;
   showRescan?: boolean;
   onAction: (action: MediaContextMenuAction) => void;
   onClose: () => void;
 };
 
+function targetMediaType(target: MediaContextTarget): "Movie" | "Series" {
+  if (target.kind === "streaming") return target.mediaType;
+  return target.kind === "movie" ? "Movie" : "Series";
+}
+
 export function MediaContextMenu({
-  label,
+  target,
   x,
   y,
-  watchStatus,
   showRescan = true,
   onAction,
   onClose,
 }: Props) {
+  const label = target.title;
+  const watchStatus = "watchStatus" in target ? target.watchStatus : undefined;
+  const tmdbId = target.tmdbId;
+  const mediaType = targetMediaType(target);
+  const posterUrl = target.kind === "streaming" ? target.posterUrl : undefined;
+  const imdbId = target.kind === "streaming" ? target.imdbId : undefined;
+
+  const qc = useQueryClient();
   const menuRef = useRef<HTMLDivElement>(null);
   const [pos, setPos] = useState({ x, y });
+  const [listsOpen, setListsOpen] = useState(false);
+  const [addedFlashListId, setAddedFlashListId] = useState<number | null>(null);
   const isWatched = watchStatus === "Completed";
+
+  const { data: lists } = useQuery({
+    queryKey: ["lists"],
+    queryFn: getLists,
+    enabled: listsOpen,
+    staleTime: 60_000,
+  });
+
+  const onAddToList = (listId: number) => {
+    void addListItem(listId, {
+      tmdbId,
+      mediaType,
+      title: label,
+      posterRemoteUrl: posterUrl ?? undefined,
+      imdbId: imdbId ?? undefined,
+    }).then(() => {
+      void qc.invalidateQueries({ queryKey: ["lists"] });
+      void qc.invalidateQueries({ queryKey: ["list-tmdb-ids"] });
+      setAddedFlashListId(listId);
+      window.setTimeout(() => setAddedFlashListId((cur) => (cur === listId ? null : cur)), 1000);
+    });
+  };
 
   useLayoutEffect(() => {
     const el = menuRef.current;
@@ -109,6 +148,41 @@ export function MediaContextMenu({
             {itemLabel}
           </button>
         ))}
+
+      <button
+        type="button"
+        role="menuitem"
+        onClick={() => setListsOpen((o) => !o)}
+        className="flex w-full items-center gap-2.5 px-3 py-2 text-left text-sm text-white transition hover:bg-white/8"
+      >
+        <ListPlus className="h-4 w-4 shrink-0 opacity-80" />
+        Add to playlist
+        <ChevronRight className={cn("ml-auto h-3.5 w-3.5 opacity-60 transition-transform", listsOpen && "rotate-90")} />
+      </button>
+      {listsOpen && (
+        <div className="max-h-48 overflow-y-auto border-t border-white/8 py-1">
+          {!lists ? (
+            <p className="px-3 py-2 text-xs text-pitflix-muted">Loading…</p>
+          ) : lists.length === 0 ? (
+            <p className="px-3 py-2 text-xs text-pitflix-muted">No lists yet.</p>
+          ) : (
+            lists.map((l) => (
+              <button
+                key={l.id}
+                type="button"
+                role="menuitem"
+                onClick={() => onAddToList(l.id)}
+                className="flex w-full items-center justify-between gap-2 px-3 py-1.5 pl-8 text-left text-[13px] text-white/80 transition hover:bg-white/8"
+              >
+                <span className="truncate">{formatListMenuLabel(l.name)}</span>
+                {addedFlashListId === l.id && (
+                  <span className="shrink-0 text-[10px] font-semibold text-pitflix-primary">Added</span>
+                )}
+              </button>
+            ))
+          )}
+        </div>
+      )}
     </div>
   );
 }

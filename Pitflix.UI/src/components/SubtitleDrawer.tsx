@@ -216,6 +216,7 @@ export function SubtitleDrawer({
       title: q || title,
       mediaType: mode === "movie" ? "Movie" : "Series",
       season: episodeSeason,
+      episode: episodeNumber,
     })
       .then((p) => {
         setSsRows(p.items);
@@ -223,7 +224,7 @@ export function SubtitleDrawer({
       })
       .catch(() => setSsError("SubSource search failed."))
       .finally(() => setSsLoading(false));
-  }, [ssManualQ, imdbId, mode, title, episodeSeason]);
+  }, [ssManualQ, imdbId, mode, title, episodeSeason, episodeNumber]);
 
   // Load OpenSubtitles on open
   useEffect(() => {

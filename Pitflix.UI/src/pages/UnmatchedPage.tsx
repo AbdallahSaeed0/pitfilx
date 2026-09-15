@@ -1,14 +1,17 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { Bot, ChevronDown, ChevronUp, Film, Lightbulb, Search, SkipForward, Trash2, Tv } from "lucide-react";
-import { useEffect, useMemo, useState } from "react";
+import { RowListSkeleton } from "../components/ui/Skeleton";
+import { Bot, ChevronDown, ChevronUp, Film, Lightbulb, RefreshCw, Search, SkipForward, Trash2, Tv } from "lucide-react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { API_ORIGIN } from "../api/client";
+import { rescanUnmatched } from "../api/scan";
+import { useScanProgressQuery } from "../hooks/useScanProgress";
 import { clearAllUnmatched, searchUnmatched, skipUnmatched } from "../api/unmatched";
 import { useDebounce } from "../hooks/useDebounce";
 import { useUnmatchedPage } from "../hooks/useUnmatched";
 import { Badge } from "../components/ui/Badge";
 import { DeterminateMatchBar, IndeterminateMatchBar } from "../components/ui/MatchProgressBar";
 import { Pagination } from "../components/ui/Pagination";
-import { Spinner } from "../components/ui/Spinner";
+import { BackButton } from "../components/ui/BackButton";
 import { cn } from "../utils/cn";
 import { getUnmatchedMatchHints } from "../utils/pathFolderHints";
 import { startSmartScan } from "../api/smartMatch";
@@ -427,7 +430,11 @@ export function UnmatchedPage() {
   const [bulkProgress, setBulkProgress] = useState<{ current: number; total: number } | null>(null);
   const [smartStarting, setSmartStarting] = useState(false);
   const [clearBusy, setClearBusy] = useState(false);
+  const [rescanStarting, setRescanStarting] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
+
+  const { data: scanProgress } = useScanProgressQuery();
+  const scanRunning = scanProgress?.isRunning ?? false;
 
   useEffect(() => {
     if (!actionError) return;
@@ -445,6 +452,27 @@ export function UnmatchedPage() {
     void qc.invalidateQueries({ queryKey: ["stats"] });
     void qc.invalidateQueries({ queryKey: ["home-movies"] });
     void qc.invalidateQueries({ queryKey: ["home-series"] });
+  };
+
+  // When a rescan (or any scan) finishes, refresh the unmatched list so newly matched files drop off.
+  const wasScanRunningRef = useRef(false);
+  useEffect(() => {
+    if (wasScanRunningRef.current && !scanRunning) refetchLists();
+    wasScanRunningRef.current = scanRunning;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [scanRunning]);
+
+  const runRescanUnmatched = async () => {
+    if (rescanStarting || scanRunning || globalUnmatched === 0) return;
+    setRescanStarting(true);
+    try {
+      await rescanUnmatched();
+      void qc.invalidateQueries({ queryKey: ["scanProgress"] });
+    } catch (e) {
+      reportActionError("Could not start rescan. Check the TMDB key and try again.", e);
+    } finally {
+      setRescanStarting(false);
+    }
   };
 
   const handleBulkConfirm = async () => {
@@ -544,6 +572,7 @@ export function UnmatchedPage() {
           </button>
         </div>
       ) : null}
+      <BackButton />
       {/* ── Page header ── */}
       <div className="mb-6 flex flex-wrap items-start justify-between gap-4">
         <div>
@@ -563,6 +592,16 @@ export function UnmatchedPage() {
           >
             <Bot className="h-4 w-4" strokeWidth={2} />
             {smartStarting ? "Starting…" : "Smart Auto-Match"}
+          </button>
+          <button
+            type="button"
+            disabled={rescanStarting || scanRunning || globalUnmatched === 0}
+            onClick={() => void runRescanUnmatched()}
+            title="Re-run TMDB matching for every unmatched file. Uses the same match thresholds as a normal scan, so double-check any newly matched titles."
+            className="inline-flex items-center gap-2 rounded-xl border border-pitflix-card bg-pitflix-card/60 px-4 py-2.5 text-sm font-semibold text-white hover:bg-pitflix-card disabled:opacity-50"
+          >
+            <RefreshCw className={cn("h-4 w-4", scanRunning && "animate-spin")} strokeWidth={2} />
+            {scanRunning ? "Rescanning…" : rescanStarting ? "Starting…" : "Rescan unmatched"}
           </button>
           <button
             type="button"
@@ -670,9 +709,7 @@ export function UnmatchedPage() {
       ) : null}
 
       {isLoading ? (
-        <div className="flex justify-center py-20">
-          <Spinner />
-        </div>
+        <RowListSkeleton />
       ) : (data?.total ?? 0) === 0 && !search && type === "all" ? (
         <div className="flex flex-col items-center gap-3 py-24 text-center">
           <p className="text-4xl">✅</p>

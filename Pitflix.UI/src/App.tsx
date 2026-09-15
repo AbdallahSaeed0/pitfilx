@@ -1,12 +1,19 @@
-import { lazy, Suspense, useEffect } from "react";
+import { Suspense, useEffect } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { BrowserRouter, Navigate, Route, Routes, useParams } from "react-router-dom";
 import { startPlaybackPolEventListener } from "./playback/playbackPolListener";
+import { OpenFileListenerHost } from "./features/playback/OpenFileListenerHost";
+import { FolderActionListenerHost } from "./features/playback/FolderActionListenerHost";
+import { FollowedAirDateWatcher } from "./features/nextEpisodes/FollowedAirDateWatcher";
+import { NewTrailerWatcher } from "./features/nextEpisodes/NewTrailerWatcher";
 import { getSettings } from "./api/settings";
 import { MainLayout } from "./components/layout/MainLayout";
 import { PitflixConfirmHost } from "./components/layout/PitflixConfirmHost";
+import { Sidebar } from "./components/layout/Sidebar";
+import { TitleBar } from "./components/layout/TitleBar";
 import { SetupWizard } from "./components/setup/SetupWizard";
 import { Spinner } from "./components/ui/Spinner";
+import { useAppPrefsStore } from "./store/appPrefsStore";
 import { HomePage } from "./pages/HomePage";
 import { MoviesPage } from "./pages/MoviesPage";
 import { SeriesPage } from "./pages/SeriesPage";
@@ -16,45 +23,42 @@ import { GitHubUpdaterProvider } from "./context/GitHubUpdaterContext";
 import { GitHubUpdaterHost } from "./components/updater/GitHubUpdaterHost";
 import { NowPlayingBar } from "./components/NowPlayingBar";
 
-const PlayerPage = lazy(() => import("./pages/PlayerPage").then((m) => ({ default: m.PlayerPage })));
-const MovieDetailPage = lazy(() => import("./pages/DetailPage").then((m) => ({ default: m.MovieDetailPage })));
-const ShowDetailPage = lazy(() => import("./pages/DetailPage").then((m) => ({ default: m.ShowDetailPage })));
-const UnmatchedPage = lazy(() => import("./pages/UnmatchedPage").then((m) => ({ default: m.UnmatchedPage })));
-const SettingsPage = lazy(() => import("./pages/SettingsPage").then((m) => ({ default: m.SettingsPage })));
-const MyListsPage = lazy(() => import("./pages/MyListsPage").then((m) => ({ default: m.MyListsPage })));
-const MyDevicePage = lazy(() => import("./pages/MyDevicePage").then((m) => ({ default: m.MyDevicePage })));
-const ListDetailPage = lazy(() => import("./pages/ListDetailPage").then((m) => ({ default: m.ListDetailPage })));
-const PersonPage = lazy(() => import("./pages/PersonPage").then((m) => ({ default: m.PersonPage })));
-const StatsPage = lazy(() => import("./pages/StatsPage").then((m) => ({ default: m.StatsPage })));
-const RecommendationsPage = lazy(() =>
-  import("./pages/RecommendationsPage").then((m) => ({ default: m.RecommendationsPage })),
-);
-const AwardsPage = lazy(() => import("./pages/AwardsPage").then((m) => ({ default: m.AwardsPage })));
-const AwardHubPage = lazy(() => import("./pages/AwardHubPage").then((m) => ({ default: m.AwardHubPage })));
-const AwardEditionPage = lazy(() => import("./pages/AwardEditionPage").then((m) => ({ default: m.AwardEditionPage })));
-const SeasonDetailPage = lazy(() => import("./pages/SeasonDetailPage").then((m) => ({ default: m.SeasonDetailPage })));
-const TrailersPage = lazy(() => import("./pages/TrailersPage").then((m) => ({ default: m.TrailersPage })));
-const NextEpisodesPage = lazy(() => import("./pages/NextEpisodesPage").then((m) => ({ default: m.NextEpisodesPage })));
-const RemotePlayerPage = lazy(() => import("./pages/RemotePlayerPage").then((m) => ({ default: m.RemotePlayerPage })));
-const OnlineStreamPage = lazy(() => import("./pages/OnlineStreamPage").then((m) => ({ default: m.OnlineStreamPage })));
-const StreamPlayerPage = lazy(() => import("./pages/StreamPlayerPage").then((m) => ({ default: m.StreamPlayerPage })));
-const StreamingDetailsPage = lazy(() =>
-  import("./pages/StreamingDetailsPage").then((m) => ({ default: m.StreamingDetailsPage })),
-);
-const GenreBrowsePage = lazy(() => import("./pages/GenreBrowsePage").then((m) => ({ default: m.GenreBrowsePage })));
-const AllCategoriesPage = lazy(() => import("./pages/AllCategoriesPage").then((m) => ({ default: m.AllCategoriesPage })));
-const DecadeBrowsePage = lazy(() => import("./pages/DecadeBrowsePage").then((m) => ({ default: m.DecadeBrowsePage })));
-const KeywordBrowsePage = lazy(() => import("./pages/KeywordBrowsePage").then((m) => ({ default: m.KeywordBrowsePage })));
-const StreamingCollectionPage = lazy(() =>
-  import("./pages/StreamingCollectionPage").then((m) => ({ default: m.StreamingCollectionPage })),
-);
-const StreamSeasonPage = lazy(() => import("./pages/StreamSeasonPage").then((m) => ({ default: m.StreamSeasonPage })));
-const DuplicatesPage = lazy(() => import("./pages/DuplicatesPage").then((m) => ({ default: m.DuplicatesPage })));
-const LivePage = lazy(() => import("./pages/LivePage").then((m) => ({ default: m.LivePage })));
-const TvTimeReviewPage = lazy(() =>
-  import("./pages/TvTimeReviewPage").then((m) => ({ default: m.TvTimeReviewPage })),
-); // TEMPORARY -- remove once the TV Time import review is done
-const BrowsePage = lazy(() => import("./pages/Browse/BrowsePage").then((m) => ({ default: m.BrowsePage })));
+import {
+  AllCategoriesPage,
+  AwardEditionPage,
+  AwardHubPage,
+  AwardsPage,
+  BrowsePage,
+  DecadeBrowsePage,
+  DuplicatesPage,
+  GenreBrowsePage,
+  KeywordBrowsePage,
+  ListDetailPage,
+  LivePage,
+  MovieDetailPage,
+  MyDevicePage,
+  MyListsPage,
+  NextEpisodesPage,
+  OnlineStreamPage,
+  PersonPage,
+  PlayerPage,
+  RecommendationsPage,
+  RemotePlayerPage,
+  SeasonDetailPage,
+  SettingsPage,
+  ShowDetailPage,
+  StatsPage,
+  StreamingCollectionPage,
+  StreamingDetailsPage,
+  StreamPlayerPage,
+  StreamGenrePage,
+  StreamSeasonPage,
+  StreamStudioPage,
+  TrailersPage,
+  TvTimeReviewPage,
+  UnmatchedPage,
+  warmAllRoutesWhenIdle,
+} from "./routes/lazyPages";
 
 function RouteFallback() {
   return (
@@ -64,8 +68,45 @@ function RouteFallback() {
   );
 }
 
+/**
+ * Shown while the initial `getSettings()` call is still connecting to the API sidecar on cold
+ * launch (see the retry/retryDelay comment on that query below). The sidebar and title bar don't
+ * actually need settings data to render — Sidebar fetches its own stats independently and just
+ * shows 0s until they resolve, same as it would on any other slow network — so there's no reason
+ * to hide them behind a bare full-screen spinner for the ~2-5s the API takes to come up. Only the
+ * routed page content (which genuinely can't render without knowing what to show) waits.
+ * Sidebar-layout only for now — topDock/floatingDock still fall back to the plain spinner below.
+ */
+function BootShell() {
+  const navLayout = useAppPrefsStore((s) => s.navLayout);
+  if (navLayout !== "sidebar") {
+    return (
+      <div className="flex min-h-screen items-center justify-center bg-pitflix-bg">
+        <Spinner />
+      </div>
+    );
+  }
+  return (
+    <BrowserRouter>
+      <div className="flex h-screen overflow-hidden bg-pitflix-bg">
+        <TitleBar />
+        <Sidebar />
+        <main className="flex min-h-0 flex-1 items-center justify-center overflow-y-auto px-6 pb-6 pt-12">
+          <Spinner />
+        </main>
+      </div>
+    </BrowserRouter>
+  );
+}
+
 function PlaybackPolListenerHost() {
   useEffect(() => startPlaybackPolEventListener(), []);
+  return null;
+}
+
+/** Pulls every page chunk down on idle so opening a page never waits on its code. */
+function RouteWarmHost() {
+  useEffect(() => warmAllRoutesWhenIdle(), []);
   return null;
 }
 
@@ -93,15 +134,18 @@ function App() {
     queryKey: ["settings"],
     queryFn: getSettings,
     staleTime: 120_000,
-    retry: 2,
+    // This query doubles as the API-sidecar readiness probe on cold launch (see lib.rs — Tauri's
+    // window paints immediately and leaves waiting for the API up to the frontend). The sidecar's
+    // own cold start is ~2.1-2.5s, so early attempts here are *expected* connection-refused
+    // failures, not real errors. React Query's default backoff (1s, then 2s) actively worked
+    // against that: it jumps from the 1s retry straight to the 3s one, so it almost always missed
+    // the ~2.5s window the API becomes reachable in and made the user wait for the 3s mark instead.
+    // Poll fast and constantly so the app connects within ~200ms of the API actually being ready.
+    retry: 25,
+    retryDelay: 200,
   });
 
-  if (isLoading && !data)
-    return (
-      <div className="flex min-h-screen items-center justify-center bg-pitflix-bg">
-        <Spinner />
-      </div>
-    );
+  if (isLoading && !data) return <BootShell />;
 
   if (isError || !data)
     return (
@@ -118,6 +162,11 @@ function App() {
   return (
     <BrowserRouter>
       <PlaybackPolListenerHost />
+      <OpenFileListenerHost />
+      <FolderActionListenerHost />
+      <FollowedAirDateWatcher />
+      <NewTrailerWatcher />
+      <RouteWarmHost />
       <PitflixConfirmHost />
       <GitHubUpdaterProvider>
         <GitHubUpdaterHost />
@@ -158,6 +207,8 @@ function App() {
           <Route path="browse/decade/:decade" element={<DecadeBrowsePage />} />
           <Route path="browse/keyword/:keyword" element={<KeywordBrowsePage />} />
           <Route path="stream-collection" element={<StreamingCollectionPage />} />
+          <Route path="stream-studio" element={<StreamStudioPage />} />
+          <Route path="stream-genre" element={<StreamGenrePage />} />
           <Route path="categories" element={<AllCategoriesPage />} />
           <Route path="duplicates" element={<DuplicatesPage />} />
           <Route path="live" element={<LivePage />} />

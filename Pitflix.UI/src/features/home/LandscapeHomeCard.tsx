@@ -3,7 +3,7 @@ import { useNavigate } from "react-router-dom";
 import type { MediaCard } from "../../types/media";
 import { cn } from "../../utils/cn";
 import { formatYear } from "../../utils/format";
-import { toPosterSrc } from "../../utils/posterSrc";
+import { POSTER_WIDTHS, toPosterSrc } from "../../utils/posterSrc";
 import { usePlayback } from "../../hooks/usePlayback";
 import { useHoverCard } from "../../hooks/useHoverCard";
 import { MediaImage } from "../../components/ui/MediaImage";
@@ -43,9 +43,13 @@ export function LandscapeHomeCard({
 
   const primary = item.selectedPosterPath || item.posterLocalPath;
   const remote = item.posterRemoteUrl;
-  const poster = toPosterSrc((primary ?? remote) ?? undefined);
-  const posterFb = primary && remote && remote !== primary ? toPosterSrc(remote) : undefined;
-  const backdrop = toPosterSrc(item.selectedBackdropPath || item.backdropLocalPath || undefined);
+  const poster = toPosterSrc((primary ?? remote) ?? undefined, POSTER_WIDTHS.thumb);
+  const posterFb =
+    primary && remote && remote !== primary ? toPosterSrc(remote, POSTER_WIDTHS.thumb) : undefined;
+  const backdrop = toPosterSrc(
+    item.selectedBackdropPath || item.backdropLocalPath || undefined,
+    POSTER_WIDTHS.detail,
+  );
   const playPath = item.mediaFilePath || item.filePath;
   const detailPath = mediaType === "Movie" ? `/movie/${item.id}` : `/series/${item.id}`;
   const genres = item.genresCsv?.split(",").map((g) => g.trim()).filter(Boolean).slice(0, 2) ?? [];

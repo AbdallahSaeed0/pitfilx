@@ -1,11 +1,12 @@
 import { useQuery } from "@tanstack/react-query";
+import { ArrowLeft } from "lucide-react";
+import { PosterGridSkeleton } from "../components/ui/Skeleton";
 import { useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { getMovies } from "../api/movies";
 import { getAllSeries } from "../api/series";
 import { LibraryPosterGrid } from "../components/ui/LibraryPosterGrid";
 import { PosterCard } from "../components/ui/PosterCard";
-import { Spinner } from "../components/ui/Spinner";
 import { LibraryContextMenuLayer } from "../features/library/LibraryContextMenuLayer";
 import { useLibraryPosterCards } from "../features/library/useLibraryPosterCards";
 import { toPosterSrc } from "../utils/posterSrc";
@@ -19,10 +20,15 @@ export function GenreBrowsePage() {
   const genre = decodeURIComponent(genreName ?? "");
   const [tab, setTab] = useState<Tab>("all");
 
+  // The backend endpoint's param is `pageSize` (default 40), not `limit` — sending `limit` was
+  // silently ignored by ASP.NET's query-string binding, so every genre quietly fell back to the
+  // default 40-per-type cap regardless of how many titles actually matched. This page has no
+  // pagination UI, so pageSize is set generously high instead (well above any single genre's
+  // realistic size in a personal library) to effectively show everything in one shot.
   const moviesQ = useQuery({
     queryKey: ["genre-browse-movies", genre],
     queryFn: () =>
-      getMovies({ genre, sort: "rating", limit: 60 }) as Promise<
+      getMovies({ genre, sort: "rating", pageSize: 500 }) as Promise<
         { items?: MediaCard[]; totalItems?: number } | MediaCard[]
       >,
     enabled: !!genre,
@@ -32,7 +38,7 @@ export function GenreBrowsePage() {
   const seriesQ = useQuery({
     queryKey: ["genre-browse-series", genre],
     queryFn: () =>
-      getAllSeries({ genre, sort: "rating", limit: 60 }) as Promise<
+      getAllSeries({ genre, sort: "rating", pageSize: 500 }) as Promise<
         { items?: MediaCard[]; totalItems?: number } | MediaCard[]
       >,
     enabled: !!genre,
@@ -65,8 +71,10 @@ export function GenreBrowsePage() {
 
   return (
     <div className="pb-12">
-      {/* Hero banner */}
-      <div className="relative -mx-4 mb-8 h-[220px] overflow-hidden sm:-mx-6 md:-mx-8 md:h-[280px] rounded-2xl">
+      {/* Hero banner — -mt-12 cancels MainLayout's shared top padding so the backdrop bleeds
+         right up to the window chrome instead of leaving a blank gap above it (matches
+         MovieDetailPage's hero treatment). */}
+      <div className="relative -mx-4 -mt-12 mb-8 h-[220px] overflow-hidden sm:-mx-6 md:-mx-8 md:h-[280px] rounded-2xl">
         {heroBackdrop ? (
           <img
             src={heroBackdrop}
@@ -79,14 +87,16 @@ export function GenreBrowsePage() {
         <div className="absolute inset-0 bg-gradient-to-t from-pitflix-bg via-pitflix-bg/60 to-transparent" />
         <div className="absolute inset-0 bg-gradient-to-r from-pitflix-bg/80 via-transparent to-transparent" />
 
+        <button
+          type="button"
+          onClick={() => navigate(-1)}
+          className="absolute left-6 top-6 z-20 flex items-center gap-1.5 rounded-lg border border-white/10 bg-black/[0.32] px-[18px] py-2 text-[13px] font-medium text-white shadow-lg backdrop-blur-xl transition hover:bg-black/55"
+        >
+          <ArrowLeft className="h-4 w-4" />
+          Back
+        </button>
+
         <div className="absolute bottom-0 left-0 p-6">
-          <button
-            type="button"
-            onClick={() => navigate(-1)}
-            className="mb-3 inline-flex items-center gap-1 text-sm text-pitflix-muted hover:text-white"
-          >
-            ← Back
-          </button>
           <h1 className="text-4xl font-bold tracking-tight text-white drop-shadow-lg md:text-5xl">{genre}</h1>
           <p className="mt-1 text-sm text-pitflix-muted">
             {movies.length > 0 && `${movies.length} movie${movies.length === 1 ? "" : "s"}`}
@@ -121,9 +131,7 @@ export function GenreBrowsePage() {
       </div>
 
       {isLoading && (
-        <div className="flex justify-center py-24">
-          <Spinner />
-        </div>
+        <PosterGridSkeleton />
       )}
 
       {!isLoading && displayed.length === 0 && (

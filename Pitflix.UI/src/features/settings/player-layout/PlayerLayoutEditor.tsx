@@ -4,13 +4,15 @@ import { cn } from "../../../utils/cn";
 import { ConfirmDialog } from "../../../components/ui/ConfirmDialog";
 import { usePlayerLayoutPrefs } from "../../../hooks/usePlayerLayoutPrefs";
 import { layoutPrefsEqual } from "../../player/playerLayoutStorage";
-import { moveControlInZone, setControlZone } from "../../player/playerLayoutOrder";
+import { moveControlToZoneIndex, setControlZone } from "../../player/playerLayoutOrder";
 import { CONTROL_SCALE_DEFAULT } from "../../player/playerLayoutSizes";
 import {
   DEFAULT_PLAYER_LAYOUT_PREFS,
   isLayoutControlId,
+  PLAYER_PIP_CORNER_LABELS,
   type PlayerLayoutEditorSelectionId,
   type PlayerLayoutPrefs,
+  type PlayerPipCorner,
   type PlayerSeekBarPrefs,
 } from "../../player/playerLayoutTypes";
 import { PlayerLayoutEditorInspector } from "./PlayerLayoutEditorInspector";
@@ -19,6 +21,8 @@ import { PlayerLayoutEditorPreview } from "./PlayerLayoutEditorPreview";
 type Props = {
   onClose?: () => void;
 };
+
+const PIP_CORNERS: PlayerPipCorner[] = ["top-left", "top-right", "bottom-left", "bottom-right"];
 
 export function PlayerLayoutEditor({ onClose }: Props) {
   const { layoutPrefs: saved, commitLayoutPrefs } = usePlayerLayoutPrefs();
@@ -86,7 +90,7 @@ export function PlayerLayoutEditor({ onClose }: Props) {
             Click any control to edit it
           </h2>
           <p className="mt-1 max-w-lg text-[11px] leading-relaxed text-white/40">
-            Buttons, seek bar, and time labels — position, size, and visibility. Save when you&apos;re happy.
+            Drag any button to reorder it. Click a button, the seek bar, or a time label to edit its size and visibility. Save when you&apos;re happy.
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
@@ -134,12 +138,43 @@ export function PlayerLayoutEditor({ onClose }: Props) {
         </div>
       </header>
 
+      {/* Not part of the click-to-select preview below — a mini player's screen position has no
+          visual anchor point inside a video-frame mockup, so it gets its own always-visible row. */}
+      <div className="shrink-0 border-b border-white/[0.08] px-5 py-3 md:px-6">
+        <p className="mb-2 text-[10px] font-semibold uppercase tracking-wide text-white/40">
+          Mini player position
+        </p>
+        <div className="grid max-w-xs grid-cols-2 gap-1.5">
+          {PIP_CORNERS.map((corner) => (
+            <button
+              key={corner}
+              type="button"
+              onClick={() => patchDraft({ pipCorner: corner })}
+              className={cn(
+                "rounded-lg border px-3 py-1.5 text-[11px] font-medium transition-all",
+                draft.pipCorner === corner
+                  ? "border-emerald-400/50 bg-emerald-500/10 text-emerald-200"
+                  : "border-white/[0.08] bg-white/[0.03] text-white/50 hover:border-white/20 hover:text-white/80",
+              )}
+            >
+              {PLAYER_PIP_CORNER_LABELS[corner]}
+            </button>
+          ))}
+        </div>
+        <p className="mt-1.5 text-[10px] text-white/30">
+          Which screen corner the mini player (picture-in-picture) opens in.
+        </p>
+      </div>
+
       <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
         <div className="min-h-0 flex-1 overflow-hidden p-3 md:p-4">
           <PlayerLayoutEditorPreview
             prefs={draft}
             selectedId={selectedId}
             onSelect={(id) => setSelectedId(id)}
+            onReorderDrop={(id, zone, targetIndex) =>
+              patchDraft((prev) => moveControlToZoneIndex(prev, id, zone, targetIndex))
+            }
           />
         </div>
 
@@ -175,14 +210,7 @@ export function PlayerLayoutEditor({ onClose }: Props) {
                 return { ...prev, controlScales, controlSizes };
               });
             }}
-            onMoveInZone={(direction) => {
-              if (!selectedControlId) return;
-              patchDraft((prev) => moveControlInZone(prev, selectedControlId, direction));
-            }}
             onSelect={(id) => setSelectedId(id)}
-            onReorderInZone={(id, direction) =>
-              patchDraft((prev) => moveControlInZone(prev, id, direction))
-            }
             onSeekBarChange={(patch: Partial<PlayerSeekBarPrefs>) =>
               patchDraft((prev) => ({ ...prev, seekBar: { ...prev.seekBar, ...patch } }))
             }

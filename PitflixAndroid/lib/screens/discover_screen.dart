@@ -1,9 +1,11 @@
 import 'package:flutter/material.dart';
 import '../models/social_activity_item.dart';
 import '../models/title_item.dart';
+import '../services/app_settings.dart';
 import '../services/social_service.dart';
 import '../services/tmdb_service.dart';
 import '../theme/app_theme.dart';
+import '../utils/title_actions_sheet.dart';
 import '../widgets/friend_avatar.dart';
 import '../widgets/widgets.dart';
 import 'search_screen.dart';
@@ -52,6 +54,21 @@ class _DiscoverScreenState extends State<DiscoverScreen> {
   };
 
   List<SocialActivityItem>? _watchedByFriends;
+
+  /// Genres picked in the first-run Onboarding wizard (see
+  /// AppSettings.favoriteGenreIds) sorted first, everything else after in
+  /// its original order — a one-time snapshot at load, not reactive to
+  /// later changes, since this preference is only realistically set once.
+  late final List<_DiscoverCategory> _orderedCategories = () {
+    final favorites = AppSettings.favoriteGenreIds.value;
+    if (favorites.isEmpty) return _categories;
+    final preferred = <_DiscoverCategory>[];
+    final rest = <_DiscoverCategory>[];
+    for (final c in _categories) {
+      (favorites.contains(c.movieGenreId) ? preferred : rest).add(c);
+    }
+    return [...preferred, ...rest];
+  }();
 
   @override
   void initState() {
@@ -109,25 +126,26 @@ class _DiscoverScreenState extends State<DiscoverScreen> {
     );
   }
 
-  void _openActivityTitle(SocialActivityItem item) {
+  TitleItem _activityTitleItem(SocialActivityItem item) {
     final kind = TmdbService.kindFromMediaType(item.mediaType);
-    _openTitle(
-      TitleItem(
-        id: 'tmdb-${item.tmdbId}',
-        name: item.title ?? 'Untitled',
-        kind: kind,
-        year: 0,
-        network: kind == TitleKind.movie ? 'Theaters' : 'TV',
-        rating: 0,
-        genres: const [],
-        overview: '',
-        gradientSeed: item.tmdbId % 6,
-        posterPath: item.posterPath,
-        tmdbId: item.tmdbId,
-        isSummaryOnly: true,
-      ),
+    return TitleItem(
+      id: 'tmdb-${item.tmdbId}',
+      name: item.title ?? 'Untitled',
+      kind: kind,
+      year: 0,
+      network: kind == TitleKind.movie ? 'Theaters' : 'TV',
+      rating: 0,
+      genres: const [],
+      overview: '',
+      gradientSeed: item.tmdbId % 6,
+      posterPath: item.posterPath,
+      tmdbId: item.tmdbId,
+      isSummaryOnly: true,
     );
   }
+
+  void _openActivityTitle(SocialActivityItem item) =>
+      _openTitle(_activityTitleItem(item));
 
   @override
   Widget build(BuildContext context) {
@@ -197,7 +215,7 @@ class _DiscoverScreenState extends State<DiscoverScreen> {
                     ),
                     const SizedBox(height: AppSpacing.sectionGap),
                   ],
-                  for (final category in _categories) ...[
+                  for (final category in _orderedCategories) ...[
                     SectionHeader(title: category.name),
                     SizedBox(height: 162, child: _buildCategoryRow(category)),
                     const SizedBox(height: AppSpacing.sectionGap),
@@ -231,7 +249,14 @@ class _DiscoverScreenState extends State<DiscoverScreen> {
                 subtitle: 'Watched by ${item.profile.name}',
                 gradientSeed: item.tmdbId % 6,
                 imageUrl: TmdbService.posterUrl(item.posterPath),
+                tmdbId: item.tmdbId,
+                kind: TmdbService.kindFromMediaType(item.mediaType),
                 onTap: () => _openActivityTitle(item),
+                onLongPress: () => showTitleActionsSheet(
+                  context,
+                  _activityTitleItem(item),
+                  (_) {},
+                ),
               ),
               Positioned(
                 top: 6,
@@ -312,7 +337,10 @@ class _DiscoverScreenState extends State<DiscoverScreen> {
           subtitle: t.year > 0 ? '${t.year}' : null,
           gradientSeed: t.gradientSeed,
           imageUrl: TmdbService.posterUrl(t.posterPath),
+          tmdbId: t.tmdbId,
+          kind: t.kind,
           onTap: () => _openTitle(t),
+          onLongPress: () => showTitleActionsSheet(context, t, (_) {}),
         );
       },
     );
