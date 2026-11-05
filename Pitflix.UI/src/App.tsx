@@ -1,11 +1,12 @@
-import { Suspense, useEffect } from "react";
+import { Suspense, useEffect, useLayoutEffect, useRef } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { BrowserRouter, Navigate, Route, Routes, useParams } from "react-router-dom";
+import { BrowserRouter, Navigate, Route, Routes, useLocation, useParams, type Location } from "react-router-dom";
 import { startPlaybackPolEventListener } from "./playback/playbackPolListener";
 import { OpenFileListenerHost } from "./features/playback/OpenFileListenerHost";
 import { FolderActionListenerHost } from "./features/playback/FolderActionListenerHost";
 import { FollowedAirDateWatcher } from "./features/nextEpisodes/FollowedAirDateWatcher";
 import { NewTrailerWatcher } from "./features/nextEpisodes/NewTrailerWatcher";
+import { CinemasBackgroundSync } from "./features/cinemas/CinemasBackgroundSync";
 import { getSettings } from "./api/settings";
 import { MainLayout } from "./components/layout/MainLayout";
 import { PitflixConfirmHost } from "./components/layout/PitflixConfirmHost";
@@ -22,6 +23,11 @@ import { BackgroundTasksProvider } from "./context/BackgroundTasksContext";
 import { GitHubUpdaterProvider } from "./context/GitHubUpdaterContext";
 import { GitHubUpdaterHost } from "./components/updater/GitHubUpdaterHost";
 import { NowPlayingBar } from "./components/NowPlayingBar";
+import { PersistentPlayerHost } from "./features/player/PersistentPlayerHost";
+import { isTauri } from "@tauri-apps/api/core";
+import { loadSaved } from "./features/device/deviceUtils";
+import { prewarmDeviceThumbnails } from "./utils/videoThumbnailCache";
+import { usePlayerCoverStore } from "./store/playerCoverStore";
 
 import {
   AllCategoriesPage,
@@ -29,6 +35,7 @@ import {
   AwardHubPage,
   AwardsPage,
   BrowsePage,
+  CinemasSchedulePage,
   DecadeBrowsePage,
   DuplicatesPage,
   GenreBrowsePage,
@@ -41,7 +48,6 @@ import {
   NextEpisodesPage,
   OnlineStreamPage,
   PersonPage,
-  PlayerPage,
   RecommendationsPage,
   RemotePlayerPage,
   SeasonDetailPage,
@@ -104,6 +110,19 @@ function PlaybackPolListenerHost() {
   return null;
 }
 
+/**
+ * Makes My Device thumbnails for the saved locations in the background, a little after launch so it
+ * doesn't compete with startup (the Rust job also waits whenever a video is playing).
+ */
+function DeviceThumbnailPrewarmHost() {
+  useEffect(() => {
+    if (!isTauri()) return;
+    const t = window.setTimeout(() => prewarmDeviceThumbnails(loadSaved()), 30_000);
+    return () => window.clearTimeout(t);
+  }, []);
+  return null;
+}
+
 /** Pulls every page chunk down on idle so opening a page never waits on its code. */
 function RouteWarmHost() {
   useEffect(() => warmAllRoutesWhenIdle(), []);
@@ -114,6 +133,86 @@ function LegacyShowRedirect() {
   const { id } = useParams();
   if (!id) return <Navigate to="/series" replace />;
   return <Navigate to={`/series/${id}`} replace />;
+}
+
+/**
+ * App routes. While the full player is open (/player), the page it was opened from stays mounted
+ * underneath — rendered for its own location, hidden with `visibility: hidden` (keeps layout and
+ * scroll, takes no input, and the libmpv video behind the WebView shows through) — so closing the
+ * player returns to it instantly instead of rebuilding it (My Device re-reading a whole folder,
+ * re-measuring its grid, restoring scroll...). PersistentPlayerHost draws the player on top.
+ */
+function AppRoutes() {
+  const location = useLocation();
+  const onPlayer = location.pathname === "/player";
+  const lastPageRef = useRef<Location | null>(null);
+  if (!onPlayer) lastPageRef.current = location;
+  const routesLocation: Location | string = onPlayer ? lastPageRef.current ?? "/" : location;
+  const underPathname = typeof routesLocation === "string" ? routesLocation : routesLocation.pathname;
+  const underSearch = typeof routesLocation === "string" ? "" : routesLocation.search;
+
+  useLayoutEffect(() => {
+    usePlayerCoverStore
+      .getState()
+      .set(onPlayer, onPlayer ? { pathname: underPathname, search: underSearch } : null);
+  }, [onPlayer, underPathname, underSearch]);
+
+  return (
+    <div
+      style={onPlayer ? { visibility: "hidden" } : undefined}
+      aria-hidden={onPlayer || undefined}
+      inert={onPlayer || undefined}
+    >
+      {/* Only override `location` while the player covers the page: a Routes with an explicit
+          location reports every navigation to its pages as POP, which broke "open a page at the
+          top, restore scroll only on Back" (PageTransition). */}
+      <Routes location={onPlayer ? routesLocation : undefined}>
+        {/* Rendered by PersistentPlayerHost so the player survives navigation (in-app mini player). */}
+        <Route path="/player" element={null} />
+        <Route path="/playlist-popout" element={<PlaylistPopoutPage />} />
+        <Route path="/player-remote" element={<RemotePlayerPage />} />
+        <Route path="/stream-player" element={<StreamPlayerPage />} />
+        <Route element={<MainLayout />}>
+          <Route index element={<HomePage />} />
+          <Route path="movies" element={<MoviesPage />} />
+          <Route path="series" element={<SeriesPage />} />
+          <Route path="series/:id/season/:seasonNumber" element={<SeasonDetailPage />} />
+          <Route path="series/:id" element={<ShowDetailPage />} />
+          <Route path="movie/:id" element={<MovieDetailPage />} />
+          <Route path="show/:id" element={<LegacyShowRedirect />} />
+          <Route path="recommendations" element={<RecommendationsPage />} />
+          <Route path="trailers" element={<TrailersPage />} />
+          <Route path="online-stream" element={<OnlineStreamPage />} />
+          <Route path="browse" element={<BrowsePage />} />
+          <Route path="cinemas" element={<CinemasSchedulePage />} />
+          <Route path="stream-details" element={<StreamingDetailsPage />} />
+          <Route path="stream-season" element={<StreamSeasonPage />} />
+          <Route path="next-episodes" element={<NextEpisodesPage />} />
+          <Route path="awards" element={<AwardsPage />} />
+          <Route path="awards/:awardId/:year" element={<AwardEditionPage />} />
+          <Route path="awards/:awardId" element={<AwardHubPage />} />
+          <Route path="unmatched" element={<UnmatchedPage />} />
+          <Route path="tvtime-review" element={<TvTimeReviewPage />} />
+          <Route path="lists" element={<MyListsPage />} />
+          <Route path="my-device" element={<MyDevicePage />} />
+          <Route path="lists/:id" element={<ListDetailPage />} />
+          <Route path="stats" element={<StatsPage />} />
+          <Route path="settings" element={<SettingsPage />} />
+          <Route path="person/:tmdbId" element={<PersonPage />} />
+          <Route path="genre/:genreName" element={<GenreBrowsePage />} />
+          <Route path="browse/decade/:decade" element={<DecadeBrowsePage />} />
+          <Route path="browse/keyword/:keyword" element={<KeywordBrowsePage />} />
+          <Route path="stream-collection" element={<StreamingCollectionPage />} />
+          <Route path="stream-studio" element={<StreamStudioPage />} />
+          <Route path="stream-genre" element={<StreamGenrePage />} />
+          <Route path="categories" element={<AllCategoriesPage />} />
+          <Route path="duplicates" element={<DuplicatesPage />} />
+          <Route path="live" element={<LivePage />} />
+          <Route path="*" element={<Navigate to="/" replace />} />
+        </Route>
+      </Routes>
+    </div>
+  );
 }
 
 function App() {
@@ -166,56 +265,17 @@ function App() {
       <FolderActionListenerHost />
       <FollowedAirDateWatcher />
       <NewTrailerWatcher />
+      <CinemasBackgroundSync />
       <RouteWarmHost />
+      <DeviceThumbnailPrewarmHost />
       <PitflixConfirmHost />
       <GitHubUpdaterProvider>
         <GitHubUpdaterHost />
       <BackgroundTasksProvider>
         <Suspense fallback={<RouteFallback />}>
-        <Routes>
-        <Route path="/player" element={<PlayerPage />} />
-        <Route path="/playlist-popout" element={<PlaylistPopoutPage />} />
-        <Route path="/player-remote" element={<RemotePlayerPage />} />
-        <Route path="/stream-player" element={<StreamPlayerPage />} />
-        <Route element={<MainLayout />}>
-          <Route index element={<HomePage />} />
-          <Route path="movies" element={<MoviesPage />} />
-          <Route path="series" element={<SeriesPage />} />
-          <Route path="series/:id/season/:seasonNumber" element={<SeasonDetailPage />} />
-          <Route path="series/:id" element={<ShowDetailPage />} />
-          <Route path="movie/:id" element={<MovieDetailPage />} />
-          <Route path="show/:id" element={<LegacyShowRedirect />} />
-          <Route path="recommendations" element={<RecommendationsPage />} />
-          <Route path="trailers" element={<TrailersPage />} />
-          <Route path="online-stream" element={<OnlineStreamPage />} />
-          <Route path="browse" element={<BrowsePage />} />
-          <Route path="stream-details" element={<StreamingDetailsPage />} />
-          <Route path="stream-season" element={<StreamSeasonPage />} />
-          <Route path="next-episodes" element={<NextEpisodesPage />} />
-          <Route path="awards" element={<AwardsPage />} />
-          <Route path="awards/:awardId/:year" element={<AwardEditionPage />} />
-          <Route path="awards/:awardId" element={<AwardHubPage />} />
-          <Route path="unmatched" element={<UnmatchedPage />} />
-          <Route path="tvtime-review" element={<TvTimeReviewPage />} />
-          <Route path="lists" element={<MyListsPage />} />
-          <Route path="my-device" element={<MyDevicePage />} />
-          <Route path="lists/:id" element={<ListDetailPage />} />
-          <Route path="stats" element={<StatsPage />} />
-          <Route path="settings" element={<SettingsPage />} />
-          <Route path="person/:tmdbId" element={<PersonPage />} />
-          <Route path="genre/:genreName" element={<GenreBrowsePage />} />
-          <Route path="browse/decade/:decade" element={<DecadeBrowsePage />} />
-          <Route path="browse/keyword/:keyword" element={<KeywordBrowsePage />} />
-          <Route path="stream-collection" element={<StreamingCollectionPage />} />
-          <Route path="stream-studio" element={<StreamStudioPage />} />
-          <Route path="stream-genre" element={<StreamGenrePage />} />
-          <Route path="categories" element={<AllCategoriesPage />} />
-          <Route path="duplicates" element={<DuplicatesPage />} />
-          <Route path="live" element={<LivePage />} />
-          <Route path="*" element={<Navigate to="/" replace />} />
-        </Route>
-        </Routes>
+        <AppRoutes />
         </Suspense>
+        <PersistentPlayerHost />
       </BackgroundTasksProvider>
       </GitHubUpdaterProvider>
       <NowPlayingBar />

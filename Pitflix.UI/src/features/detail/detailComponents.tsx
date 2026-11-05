@@ -56,8 +56,9 @@ function PersonPortraitCard({ name, role, imgSrc, fallbackSrc, onClick }: {
           fallbackText={name.slice(0, 2)}
         />
       </div>
-      <p className="mt-2 line-clamp-2 text-[11px] font-semibold leading-snug text-white">{name}</p>
-      {role ? <p className="mt-0.5 line-clamp-1 text-[10px] text-pitflix-subtle">{role}</p> : null}
+      {/* Shadowed + brighter role text: these sit straight on the tinted backdrop, which can be bright/red. */}
+      <p className="mt-2 line-clamp-2 text-[11px] font-semibold leading-snug text-white [text-shadow:0_1px_3px_rgba(0,0,0,0.85)]">{name}</p>
+      {role ? <p className="mt-0.5 line-clamp-1 text-[10px] font-medium text-white/75 [text-shadow:0_1px_3px_rgba(0,0,0,0.85)]">{role}</p> : null}
     </button>
   );
 }
@@ -102,7 +103,7 @@ function CastCrewSection({ cast, crew, navigate }: {
       ? cast.map((c) => ({
           name: c.name,
           role: c.character,
-          imgSrc: toPosterSrc(c.profileLocalPath ?? undefined) || c.profileRemoteUrl?.trim() || undefined,
+          imgSrc: toPosterSrc(c.profileLocalPath ?? undefined) || toPosterSrc(c.profileRemoteUrl?.trim()) || undefined,
           fallbackSrc: c.profileRemoteUrl?.trim() || undefined,
           id: c.personTmdbId,
           key: `${c.personTmdbId}-${c.name}`,
@@ -333,8 +334,8 @@ function crewAvatarSrc(c: CrewMember) {
   const local = toPosterSrc(c.profileLocalPath ?? undefined);
   if (local) return local;
   const remote = c.profileRemoteUrl?.trim();
-  if (remote) return remote;
-  if (c.profilePath) return `https://image.tmdb.org/t/p/w185${c.profilePath}`;
+  if (remote) return toPosterSrc(remote);
+  if (c.profilePath) return toPosterSrc(`https://image.tmdb.org/t/p/w185${c.profilePath}`);
   return undefined;
 }
 
@@ -374,11 +375,13 @@ function DetailHeroTitle({
  * Fetches the YouTube embed URL on demand. When multiple trailers are found,
  * shows a compact pick-list so the user can choose which to watch.
  */
-function TrailerButton({ tmdbId, mediaType, title, posterUrl }: {
+function TrailerButton({ tmdbId, mediaType, title, posterUrl, className }: {
   tmdbId: number;
   mediaType: "Movie" | "Series";
   title: string;
   posterUrl?: string | null;
+  /** Replaces the default button styling (used by the alternative detail layouts). */
+  className?: string;
 }) {
   const navigate = useNavigate();
   const [loading, setLoading] = useState(false);
@@ -438,7 +441,10 @@ function TrailerButton({ tmdbId, mediaType, title, posterUrl }: {
         type="button"
         disabled={loading}
         onClick={() => void handleClick()}
-        className="flex items-center gap-2 rounded-[9px] border border-white/[0.11] bg-white/[0.07] px-5 py-[13px] text-sm font-medium text-white/[0.62] transition hover:bg-white/[0.14] disabled:cursor-not-allowed disabled:opacity-60"
+        className={
+          className ??
+          "flex items-center gap-2 rounded-[9px] border border-white/[0.11] bg-white/[0.07] px-5 py-[13px] text-sm font-medium text-white/[0.62] transition hover:bg-white/[0.14] disabled:cursor-not-allowed disabled:opacity-60"
+        }
       >
         <Play className="h-4 w-4 fill-current" />
         {loading ? "Loading..." : trailers && trailers.length > 1 ? `Trailers (${trailers.length})` : "Trailer"}
@@ -482,14 +488,18 @@ function HeroActionIcons({
   watchStatus,
   kind,
   libraryId,
+  variant = "icons",
 }: {
   tmdbId: number;
   mediaType: "Movie" | "Series";
   watchStatus?: string;
   kind: "movie" | "series";
   libraryId: number;
+  /** "icons": compact icon-only squares. "labeled": taller buttons with a caption under the icon. */
+  variant?: "icons" | "labeled";
 }) {
   const qc = useQueryClient();
+  const labeled = variant === "labeled";
 
   // Favorite
   const { data: lists } = useQuery({
@@ -570,8 +580,9 @@ function HeroActionIcons({
     });
   };
 
-  const iconBtn =
-    "flex h-11 w-11 items-center justify-center rounded-[9px] border border-white/[0.11] bg-white/[0.07] text-white/70 transition hover:bg-white/[0.14]";
+  const iconBtn = labeled
+    ? "flex h-14 min-w-[64px] flex-col items-center justify-center gap-1 rounded-xl border border-white/[0.18] bg-white/[0.08] px-2 text-[11px] font-semibold text-white transition hover:bg-white/[0.16]"
+    : "flex h-11 w-11 items-center justify-center rounded-[9px] border border-white/[0.11] bg-white/[0.07] text-white/70 transition hover:bg-white/[0.14]";
 
   return (
     <div className="flex gap-1.5">
@@ -583,6 +594,7 @@ function HeroActionIcons({
         className={cn(iconBtn, isFavorite && "border-pink-400/30 bg-pink-400/15 text-pink-400")}
       >
         <Heart className={cn("h-4 w-4", isFavorite && "fill-current")} />
+        {labeled ? <span>Favorite</span> : null}
       </button>
 
       {/* Add to list */}
@@ -594,6 +606,7 @@ function HeroActionIcons({
           className={iconBtn}
         >
           <ListPlus className="h-4 w-4" />
+          {labeled ? <span>My List</span> : null}
         </button>
         {listOpen && lists && lists.length > 0 ? (
           <div className="absolute bottom-full left-0 z-50 mb-2 w-56 overflow-hidden rounded-xl border border-white/[0.08] bg-[#0f0f1f] shadow-[0_8px_32px_rgba(0,0,0,0.6)]">
@@ -637,6 +650,7 @@ function HeroActionIcons({
         className={cn(iconBtn, isWatched && "border-green-400/30 bg-green-500/15 text-green-400")}
       >
         <Check className="h-4 w-4" />
+        {labeled ? <span>{isWatched ? "Watched" : "Mark watched"}</span> : null}
       </button>
     </div>
   );

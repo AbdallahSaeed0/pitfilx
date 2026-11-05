@@ -5,7 +5,16 @@ import { currentMonitor, getCurrentWindow } from "@tauri-apps/api/window";
 import { LogicalPosition, LogicalSize } from "@tauri-apps/api/dpi";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { useLocation, useNavigate } from "react-router-dom";
+import { useNavigate, type NavigateFunction } from "react-router-dom";
+import {
+  clampMiniPlayerPos,
+  MINI_PLAYER_MOVED_EVENT,
+  miniPlayerHeight,
+  MINI_RESTORE_STATE,
+  useMiniPlayerStore,
+} from "../store/miniPlayerStore";
+import { usePlayerCoverStore } from "../store/playerCoverStore";
+import { bumpLibmpvOpenGeneration, currentLibmpvOpenGeneration } from "../features/player/earlyOpen";
 import { addHistory, getHistory, historyStopped, postHistoryProgress, dismissHistoryEntry } from "../api/history";
 import { taskbarSetPlaying, taskbarSetProgress } from "../api/player";
 import { trustedResumeHeadFromRow, type HistoryResumeFields } from "../utils/trustedResume";
@@ -38,10 +47,12 @@ import {
   playbackCancelNextCountdown,
   playbackGetSnapshot,
   playbackResumeHintsForKey,
+  type PlayerCommand,
 } from "../playback/playbackApi";
 import { navigateFromPlayer, restoreAppWindowFromFullscreen } from "../utils/playerExitNavigation";
 import { isNativeBackendEmbeddedLibmpv, isNativeBackendExternal } from "../utils/playerNativeBackend";
 import { PlayerCompanionView } from "../features/player/PlayerCompanionView";
+import { PlayerEndOfEpisodeScreen } from "../features/player/PlayerEndOfEpisodeScreen";
 import type { CompanionEpisodeRow } from "../features/player/PlayerCompanionEpisodeList";
 import { PlayerEmbeddedView } from "../features/player/PlayerEmbeddedView";
 import { PlayerContextMenu } from "../features/player/PlayerContextMenu";
@@ -51,6 +62,10 @@ import {
   bytesToSeekHoverUrl,
   clearSeekHoverCache,
   getSeekHoverCached,
+  getSeekHoverExact,
+  releaseSeekHoverUrl,
+  seekHoverExactSecond,
+  setSeekHoverExact,
   HOVER_PREVIEW_STEP_SEC,
   seekHoverPreviewSecond,
   setSeekHoverCached,
@@ -81,12 +96,22 @@ import {
 import { recordDeviceLastPlayedFromPlayer } from "../features/device/deviceUtils";
 import { usePlayerLayoutPrefs } from "../hooks/usePlayerLayoutPrefs";
 import type { PlayerPipCorner } from "../features/player/playerLayoutTypes";
+import type { AbLoopState, PlayerChromeZone, SeekHudState } from "../features/player/playerViewProps";
 import {
   loadEpSubPickMap,
   loadSubtitlePrefs,
   persistEpSubPick,
   saveSubtitlePrefs,
 } from "../features/player/playerStorage";
+import {
+  identityOf,
+  loadShowTrackPref,
+  matchExternal,
+  matchTrack,
+  saveShowTrackPref,
+  showTrackPrefKey,
+  subPrefFromExternal,
+} from "../features/player/showTrackPrefs";
 import type {
   DeviceFsEntry,
   MpvTrack,
@@ -96,10 +121,13 @@ import type {
   PlaylistEpisodeMeta,
 } from "../features/player/playerTypes";
 
-/** How long the pointer must rest on a new 5s seek-bar bucket before firing the accurate,
- * ffmpeg-backed `thumb_at` lookup. Buckets merely swept through only get the cheap disk-only
- * `thumb_at_quick` call (fired immediately, no debounce) — see scheduleHoverThumb. */
-const HOVER_ACCURATE_DEBOUNCE_MS = 120;
+/** How long the pointer must rest before fetching the exact frame (an ffmpeg run — 1.2-1.7 s on
+ * 1080p 10-bit HEVC). Sweeping shows the nearest saved frame instantly (thumb_at_quick, no wait);
+ * 250 ms keeps a sweep from launching ffmpeg for every second it passes over. */
+const HOVER_ACCURATE_DEBOUNCE_MS = 250;
+/** Error text from player2_libmpv_send when mpv's core died under a still-registered session —
+ * must match the string in libmpv_session.rs. */
+const LIBMPV_SESSION_ENDED = "libmpv session ended unexpectedly";
 
 // Picture-in-Picture (mini player) window geometry — module-level so computePipPosition (used
 // both when entering PiP and to live-reposition an already-open PiP window on a settings
@@ -175,11 +203,49 @@ let playlistBaseWindowWidth: number | null = null;
 let playlistBaseWindowHeight: number | null = null;
 let playlistResizeChain: Promise<void> = Promise.resolve();
 
-export function PlayerPage() {
-  const navigate = useNavigate();
-  const location = useLocation();
+/** Audio fade-out on close (embedded player) — runs underneath the shrink-back, not before it. */
+const CLOSE_OUTRO_MS = 300;
+// Open generation (guards the deferred close below) lives in earlyOpen.ts, shared with the early open
+// started from usePlayback.
+
+type PlayerPageProps = {
+  /** Supplied by PersistentPlayerHost (route state on /player, the stored session while mini). */
+  launchState?: PlaybackLaunchState;
+  /** Shrunk into the in-app mini player while the rest of the app is browsed. */
+  mini?: boolean;
+};
+
+export function PlayerPage({ launchState, mini = false }: PlayerPageProps) {
+  const routerNavigate = useNavigate();
+  const miniRef = useRef(mini);
+  miniRef.current = mini;
+  // While mini, the player's own "/player" navigations (episode switch, canonical sync) must not
+  // yank the user out of the page they're browsing — they swap the launch state in place instead.
+  const navigate = useCallback(
+    ((to: unknown, opts?: { state?: unknown }) => {
+      if (miniRef.current && to === "/player") {
+        useMiniPlayerStore.getState().setLaunchState((opts?.state as PlaybackLaunchState | undefined) ?? null);
+        return;
+      }
+      return (routerNavigate as (to: unknown, opts?: unknown) => void)(to, opts);
+    }) as NavigateFunction,
+    [routerNavigate],
+  );
+  const navigateRef = useRef(navigate);
+  navigateRef.current = navigate;
+  /** Every "leave the player" path: back to where playback started, or just close the mini player. */
+  const leavePlayer = useCallback((returnTo: PlaybackLaunchState["returnTo"]) => {
+    if (miniRef.current) {
+      useMiniPlayerStore.getState().close();
+      return;
+    }
+    const under = usePlayerCoverStore.getState().pageUnderPlayer;
+    const backToKeptPage =
+      Boolean(under && returnTo) && under!.pathname === returnTo!.pathname && under!.search === (returnTo!.search ?? "");
+    navigateFromPlayer(navigateRef.current, returnTo, true, { restoreScroll: !backToKeptPage });
+  }, []);
   const qc = useQueryClient();
-  const state = location.state as PlaybackLaunchState | undefined;
+  const state = launchState;
   const currentEpisodeKey = state ? playbackEpisodeKey(state) : "none";
   // When the user picked the "libmpv-embedded" engine in Settings, route every
   // player2_* invoke through the libmpv-backed Tauri commands. Same payloads.
@@ -297,6 +363,13 @@ export function PlayerPage() {
     }
   }, []);
   const [volumeHudVisible, setVolumeHudVisible] = useState(false);
+  const [seekHud, setSeekHud] = useState<SeekHudState | null>(null);
+  const [abLoop, setAbLoopState] = useState<AbLoopState>({ a: null, b: null });
+  const abLoopRef = useRef<AbLoopState>({ a: null, b: null });
+  const seekHudBurstRef = useRef<{ start: number; target: number; pressSeq: number } | null>(null);
+  /** Last mpv seek-completion counter seen (`seek_seq` in player2 state events). */
+  const seekSeqRef = useRef(0);
+  const seekHudTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const volumeHudTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [subVisible, setSubVisible] = useState(true);
   const [nextEp, setNextEp] = useState<NextLibraryEpisode | null | undefined>(undefined);
@@ -312,6 +385,10 @@ export function PlayerPage() {
   });
   const [tracks, setTracks] = useState<MpvTrack[]>([]);
   const [sid, setSid] = useState<number | null>(null);
+  /** Dual subtitles: mpv `secondary-sid` (shown at the top, above `sid`). */
+  const [secondarySid, setSecondarySid] = useState<number | null>(null);
+  /** External file sent with `SubAdd`, waiting for its track to appear so it can become secondary. */
+  const pendingSecondaryPathRef = useRef<string | null>(null);
   const [aid, setAid] = useState<number | null>(null);
   const [subDelay, setSubDelay] = useState(0);
   const [subtitlePrefs, setSubtitlePrefs] = useState<PlayerSubtitlePrefs>(() => loadSubtitlePrefs());
@@ -393,21 +470,38 @@ export function PlayerPage() {
     [prefetchHoverThumb],
   );
 
+  // Two stages: while sweeping, the 5 s bucket frame (disk cache, instant) is shown dimmed as an
+  // approximation; once the pointer rests, the frame at the EXACT second under it is fetched — the
+  // same second a click seeks to — and replaces it. Buckets alone were up to ~5 s off the click
+  // (2.5 s bucket rounding + up to 2.5 s for a keyframe-pass frame).
   const scheduleHoverThumb = useCallback(
     (filePath: string, seconds: number) => {
       if (!isTauri()) return;
       const previewSecond = seekHoverPreviewSecond(seconds);
+      const exactSecond = seekHoverExactSecond(seconds);
+      /** The pointer is still on this second and no exact frame has been shown for it yet. */
+      const wantsApprox = (prev: { seconds: number } | null) =>
+        Boolean(prev) &&
+        seekHoverPreviewSecond(prev!.seconds) === previewSecond &&
+        !getSeekHoverExact(filePath, seekHoverExactSecond(prev!.seconds));
 
-      const cached = getSeekHoverCached(filePath, previewSecond);
-      if (cached) {
+      const exactCached = getSeekHoverExact(filePath, exactSecond);
+      if (exactCached) {
         if (seekHoverDebounceRef.current) {
           clearTimeout(seekHoverDebounceRef.current);
           seekHoverDebounceRef.current = null;
         }
         seekHoverDebounceSecondRef.current = null;
-        setSeekHover((prev) => (prev ? { ...prev, dataUrl: cached, loading: false } : prev));
+        setSeekHover((prev) => (prev ? { ...prev, dataUrl: exactCached, loading: false } : prev));
         prefetchHoverNeighbors(filePath, previewSecond);
         return;
+      }
+
+      const cached = getSeekHoverCached(filePath, previewSecond);
+      if (cached) {
+        // Shown at full brightness: a nearby saved frame IS the preview; the exact one, if fetched,
+        // just replaces it (dimming it read as "still loading" for the 1-3 s that takes).
+        setSeekHover((prev) => (wantsApprox(prev) ? { ...prev!, dataUrl: cached, loading: false } : prev));
       }
 
       // Dedupe against in-flight quick lookups (shared with prefetchHoverThumb):
@@ -415,17 +509,14 @@ export function PlayerPage() {
       // first lookup resolves, and firing a fresh invoke each time backed up
       // the IPC channel with stale requests for positions already scrolled past.
       const quickKey = `${filePath}|${previewSecond}`;
-      if (!seekHoverPrefetchingRef.current.has(quickKey)) {
+      if (!cached && !seekHoverPrefetchingRef.current.has(quickKey)) {
         seekHoverPrefetchingRef.current.add(quickKey);
         void invoke<ArrayBuffer>("thumb_at_quick", { filePath, seconds: previewSecond })
           .then((bytes) => {
             storeHoverThumbBytes(filePath, previewSecond, bytes);
             const url = getSeekHoverCached(filePath, previewSecond);
             if (!url) return;
-            setSeekHover((prev) => {
-              if (!prev || seekHoverPreviewSecond(prev.seconds) !== previewSecond) return prev;
-              return { ...prev, dataUrl: url, loading: true };
-            });
+            setSeekHover((prev) => (wantsApprox(prev) ? { ...prev!, dataUrl: url, loading: false } : prev));
           })
           .catch(() => {})
           .finally(() => {
@@ -433,13 +524,12 @@ export function PlayerPage() {
           });
       }
 
-      // Only (re)start the accurate-frame debounce when the target bucket
-      // actually changed — restarting it on every pointermove within the same
-      // bucket kept deferring the accurate fetch for as long as the mouse moved.
-      if (seekHoverDebounceSecondRef.current === previewSecond && seekHoverDebounceRef.current) {
+      // Only (re)start the exact-frame debounce when the target second actually changed —
+      // pointermoves within the same second must not keep deferring it.
+      if (seekHoverDebounceSecondRef.current === exactSecond && seekHoverDebounceRef.current) {
         return;
       }
-      seekHoverDebounceSecondRef.current = previewSecond;
+      seekHoverDebounceSecondRef.current = exactSecond;
       if (seekHoverDebounceRef.current) clearTimeout(seekHoverDebounceRef.current);
       // 8ms used to live here — shorter than the gap between consecutive browser
       // pointermove events, so it wasn't debouncing anything in practice: a fast
@@ -451,14 +541,17 @@ export function PlayerPage() {
       // accurate fetch once the pointer actually settles on a bucket.
       seekHoverDebounceRef.current = setTimeout(() => {
         const seq = ++seekHoverFetchSeqRef.current;
-        void invoke<ArrayBuffer>("thumb_at", { filePath, seconds: previewSecond })
+        void invoke<ArrayBuffer>("thumb_at", { filePath, seconds: exactSecond })
           .then((bytes) => {
             if (seq !== seekHoverFetchSeqRef.current) return;
-            storeHoverThumbBytes(filePath, previewSecond, bytes);
-            const url = getSeekHoverCached(filePath, previewSecond);
+            if (!getSeekHoverExact(filePath, exactSecond)) {
+              const fresh = bytesToSeekHoverUrl(bytes);
+              if (fresh) setSeekHoverExact(filePath, exactSecond, fresh);
+            }
+            const url = getSeekHoverExact(filePath, exactSecond);
             if (!url) return;
             setSeekHover((prev) => {
-              if (!prev || seekHoverPreviewSecond(prev.seconds) !== previewSecond) return prev;
+              if (!prev || seekHoverExactSecond(prev.seconds) !== exactSecond) return prev;
               return { ...prev, dataUrl: url, loading: false };
             });
             prefetchHoverNeighbors(filePath, previewSecond);
@@ -490,7 +583,7 @@ export function PlayerPage() {
         if (seq !== exactHoverFetchSeqRef.current) return;
         const url = bytesToSeekHoverUrl(bytes);
         if (!url) return;
-        if (lastExactHoverUrlRef.current) URL.revokeObjectURL(lastExactHoverUrlRef.current);
+        if (lastExactHoverUrlRef.current) releaseSeekHoverUrl(lastExactHoverUrlRef.current);
         lastExactHoverUrlRef.current = url;
         setSeekHover((prev) => (prev ? { ...prev, dataUrl: url, loading: false } : prev));
       })
@@ -507,7 +600,7 @@ export function PlayerPage() {
       clearSeekHoverCache();
       seekHoverPrefetchingRef.current.clear();
       if (lastExactHoverUrlRef.current) {
-        URL.revokeObjectURL(lastExactHoverUrlRef.current);
+        releaseSeekHoverUrl(lastExactHoverUrlRef.current);
         lastExactHoverUrlRef.current = null;
       }
     };
@@ -732,6 +825,10 @@ export function PlayerPage() {
     fsControlsVisibleRef.current = fsControlsVisible;
     window.dispatchEvent(new Event("__pitflix_resync_bounds"));
   }, [fsControlsVisible]);
+  /** Which bar the pointer last woke: hovering near the top shows only the header, near the bottom
+   * only the footer, the middle neither (user request). Clicks/keys still show both ("all"). */
+  const [chromeZone, setChromeZone] = useState<PlayerChromeZone>("all");
+  const footerChromeVisible = fsControlsVisible && (chromeZone === "all" || chromeZone === "bottom");
   // Tracked separately because syncVideoBounds (a memoized callback) reads via ref.
   // The update effect lives below `currentFolderForPlaylist`'s declaration.
   const playlistVisibleRef = useRef(false);
@@ -762,6 +859,14 @@ export function PlayerPage() {
   /** External mpv: leaving `/player` to browse should not call `historyStopped` (playback continues). */
   const skipHistoryStopOnPlayerUnmountRef = useRef(false);
   const subtitlePickAppliedForEpKeyRef = useRef<string | null>(null);
+  /** `historyId|filePath` the per-show audio/sub memory was applied (or manually overridden) for. */
+  const showTrackAppliedRef = useRef<{ audio: string | null; sub: string | null; secondary: string | null }>({
+    audio: null,
+    sub: null,
+    secondary: null,
+  });
+  /** File the current `tracks` list was reported for — guards against the previous episode's list during a switch. */
+  const tracksFilePathRef = useRef<string | null>(null);
   const volumePersistTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const volumeHydratedForHistoryRef = useRef<number | null>(null);
   /** Latest launch state for IPC handlers (avoid stale closures). */
@@ -1008,6 +1113,15 @@ export function PlayerPage() {
   const pausedRef = useRef(false);
   const playerRootRef = useRef<HTMLDivElement>(null);
   const videoAreaRef = useRef<HTMLDivElement>(null);
+  /** End-of-episode screen: while it's up, the native video is sized to this box instead of videoAreaRef. */
+  const endScreenVideoBoxRef = useRef<HTMLDivElement | null>(null);
+  const endScreenActiveRef = useRef(false);
+  /** History id whose end screen the user dismissed ("Watch credits"). */
+  const [endScreenDismissedFor, setEndScreenDismissedFor] = useState<number | null>(null);
+  /** History id whose playback has been seen BEFORE its credits — see endScreenActive. */
+  const [endScreenArmedFor, setEndScreenArmedFor] = useState<number | null>(null);
+  /** One-shot override for where exitAndClose returns to ("Back to series" on the end screen). */
+  const exitReturnToOverrideRef = useRef<PlaybackLaunchState["returnTo"] | null>(null);
   /** Overlay chrome laid on top of `videoAreaRef`; native HWND must not cover these or controls are invisible (still click-through). */
   const playerHeaderChromeRef = useRef<HTMLDivElement | null>(null);
   const playerFooterChromeRef = useRef<HTMLDivElement | null>(null);
@@ -1054,6 +1168,15 @@ export function PlayerPage() {
   const isEmbedded = isNativeBackendEmbeddedLibmpv(nativeState?.backend);
   const backendKnown = nativeState != null;
   
+  /**
+   * True once player2_open has returned for the current file, i.e. the Rust side has registered
+   * the session. embedReady flips earlier (as soon as the backend type is known), and commands
+   * sent in that gap fail with "No active libmpv session" — which used to mark the whole session
+   * dead and show that text even though the video then opened fine. Also flips false→true on every
+   * episode/file switch, so per-session settings (subtitle style) get re-applied to the new core.
+   */
+  const [sessionOpen, setSessionOpen] = useState(false);
+
   // embedReady: ONLY true for embedded libmpv mode with known backend
   // External player mode should NOT run embedded lifecycle (bounds sync, etc)
   const embedReady = Boolean(
@@ -1390,7 +1513,8 @@ export function PlayerPage() {
   }, [scheduleSeekProgressFlush]);
 
   const syncVideoBounds = useCallback(() => {
-    const el = videoAreaRef.current;
+    const endBox = endScreenActiveRef.current ? endScreenVideoBoxRef.current : null;
+    const el = endBox ?? videoAreaRef.current;
     if (!el) return;
     // Without this guard, several rapid callers (ResizeObserver, resize, the poll interval, etc.)
     // could each kick off their own overlapping player2_set_video_bounds invoke — and since IPC
@@ -1406,7 +1530,8 @@ export function PlayerPage() {
     void (async () => {
       try {
         const videoRect = el.getBoundingClientRect();
-        const isFullscreenNow = isFullscreenRef.current;
+        // The end screen's corner box is a real rect even in fullscreen — don't stretch it to the window.
+        const isFullscreenNow = isFullscreenRef.current && !endBox;
 
         let top = Math.round(videoRect.top);
         let bottom = Math.round(videoRect.bottom);
@@ -1765,10 +1890,13 @@ export function PlayerPage() {
     };
   }, [state?.historyId, resumeChoice]);
 
+  /** Set by exitAndClose when it shuts mpv down itself once the close fade has finished. */
+  const closeDeferredRef = useRef(false);
   /** Always tear down the native embed on leave so HWNDs / Z-order cannot strand above the WebView. */
   useEffect(() => {
     return () => {
       if (!isTauri()) return;
+      if (closeDeferredRef.current) return;
       // In external mode, unmount/remount churn during route-state replacements can happen in dev/runtime transitions.
       // Closing external mpv here causes launch/kill loops. Let explicit close paths own external shutdown.
       if (!isNativeBackendEmbeddedLibmpv(nativeStateRef.current?.backend)) return;
@@ -1791,7 +1919,9 @@ export function PlayerPage() {
       setVideoSettling(true);
       return;
     }
-    const t = window.setTimeout(() => setVideoSettling(false), 450);
+    // Short grace after mpv reports the file loaded (first frame is up by then) — was 450 ms, then
+    // 150 ms behind the intro card; with the card gone this only has to cover a first-frame flicker.
+    const t = window.setTimeout(() => setVideoSettling(false), 60);
     return () => window.clearTimeout(t);
   }, [loading]);
 
@@ -1831,6 +1961,8 @@ export function PlayerPage() {
       setError(null);
       setEnded(false);
       setSessionDead(false);
+      setSessionOpen(false);
+      bumpLibmpvOpenGeneration();
       try {
         await invoke(p2cmd("player2_open"), {
           payload: {
@@ -1838,6 +1970,7 @@ export function PlayerPage() {
             start_seconds: startSeconds,
           },
         });
+        setSessionOpen(true);
         const ns = await getNativeState();
         setNativeState(ns);
         setLoading(false);
@@ -1875,6 +2008,18 @@ export function PlayerPage() {
 
   const openPlayer = useCallback(async () => {
     await openPlayerWithStart(effectiveStart ?? null);
+  }, [openPlayerWithStart, effectiveStart]);
+
+  // Reopen the same file when libmpv's core has died underneath a still-registered session (see
+  // LIBMPV_SESSION_ENDED). Uses the live position if playback had started, else the original
+  // resume point — at that stage timePos is still 0 and reopening at null would lose the resume.
+  const reopenAfterSessionEndRef = useRef<() => void>(() => {});
+  const lastSessionEndRecoveryAtRef = useRef(0);
+  useEffect(() => {
+    reopenAfterSessionEndRef.current = () => {
+      const t = timePosRef.current;
+      void openPlayerWithStart(t > 0.5 ? t : effectiveStart ?? null);
+    };
   }, [openPlayerWithStart, effectiveStart]);
 
   const onFullscreen = useCallback(async () => {
@@ -1921,6 +2066,7 @@ export function PlayerPage() {
   }, [syncVideoBounds]);
 
   useEffect(() => {
+    if (!isTauri()) return;
     const w = getCurrentWindow();
     let un: UnlistenFn | undefined;
     const sync = () => {
@@ -1943,6 +2089,9 @@ export function PlayerPage() {
   }, []);
 
   /** Centralized fullscreen auto-hide: one timer only. */
+  /** Pointer events before this time come from player_refresh_cursor's nudge, not the user. */
+  const ignorePointerActivityUntilRef = useRef(0);
+
   const scheduleFullscreenHide = useCallback(() => {
     if (fsHideControlsTimerRef.current) clearTimeout(fsHideControlsTimerRef.current);
     const delay = pausedRef.current ? FS_HIDE_PAUSED_MS : FS_HIDE_IDLE_MS;
@@ -1953,10 +2102,31 @@ export function PlayerPage() {
       }
       setFsControlsVisible(false);
       fsHideControlsTimerRef.current = null;
+      // The pointer is hidden with CSS, and while another app is focused Windows doesn't re-ask for
+      // the cursor until the mouse moves — so a resting pointer stayed visible over the video until
+      // a click. Once `cursor: none` has rendered, nudge it (1 px and back, native) so it updates.
+      if (isTauri() && !document.hasFocus()) {
+        requestAnimationFrame(() =>
+          requestAnimationFrame(() => {
+            ignorePointerActivityUntilRef.current = performance.now() + 300;
+            void invoke("player_refresh_cursor").catch(() => {});
+          }),
+        );
+      }
     }, delay);
   }, []);
 
   const onFullscreenPointerActivity = useCallback(() => {
+    if (performance.now() < ignorePointerActivityUntilRef.current) return;
+    setChromeZone("all");
+    setFsControlsVisible(true);
+    scheduleFullscreenHide();
+  }, [scheduleFullscreenHide]);
+
+  /** Pointer movement over the player: wakes only the bar for that zone (null = keep the current one). */
+  const onChromePointerActivity = useCallback((zone: PlayerChromeZone | null) => {
+    if (performance.now() < ignorePointerActivityUntilRef.current) return;
+    if (zone) setChromeZone(zone);
     setFsControlsVisible(true);
     scheduleFullscreenHide();
   }, [scheduleFullscreenHide]);
@@ -2130,6 +2300,19 @@ export function PlayerPage() {
           timePosRef.current = num(s.time_pos);
           durationRef.current = num(s.duration);
           pausedRef.current = Boolean(s.paused);
+
+          // A seek finished (embedded mpv bumps seek_seq on PLAYBACK_RESTART with the landed
+          // time-pos): swap the skip readout's estimate for where mpv really ended up.
+          const seekSeq = num(s.seek_seq);
+          if (seekSeq !== seekSeqRef.current) {
+            seekSeqRef.current = seekSeq;
+            const burst = seekHudBurstRef.current;
+            if (burst && seekSeq > burst.pressSeq) {
+              const landed = num(s.time_pos);
+              burst.target = landed;
+              setSeekHud({ target: landed, delta: landed - burst.start, settled: true });
+            }
+          }
           
           if (lastLoggedEventPausedRef.current !== s.paused) {
             lastLoggedEventPausedRef.current = s.paused;
@@ -2155,6 +2338,7 @@ export function PlayerPage() {
           }
           setSubVisible(Boolean(s.sub_visible));
           setSid(typeof s.sid === "number" ? s.sid : null);
+          setSecondarySid(typeof s.secondary_sid === "number" && s.secondary_sid >= 0 ? s.secondary_sid : null);
           setAid(typeof s.aid === "number" ? s.aid : null);
           if (typeof s.sub_delay === "number" && Number.isFinite(s.sub_delay)) {
             setSubDelay(s.sub_delay);
@@ -2165,6 +2349,7 @@ export function PlayerPage() {
         }
         if (e?.type === "Tracks") {
           const tracks = e.payload?.tracks ?? [];
+          tracksFilePathRef.current = launchStateRef.current?.filePath ?? null;
           setTracks(
             tracks.map((t) => ({
               id: t.id,
@@ -2172,6 +2357,7 @@ export function PlayerPage() {
               lang: t.lang,
               title: t.title,
               selected: t.selected,
+              externalFilename: t.external_filename ?? undefined,
             })),
           );
         }
@@ -2250,7 +2436,7 @@ export function PlayerPage() {
             void dismissHistoryEntry(launch.historyId, true)
               .then(() => qc.invalidateQueries({ queryKey: ["history"] }))
               .catch((e) => console.error("[player] dismiss completed episode", e));
-            navigateFromPlayer(navigate, launch?.returnTo, true);
+            leavePlayer(launch?.returnTo);
             return;
           }
 
@@ -2260,7 +2446,7 @@ export function PlayerPage() {
             void playbackPersistProgress({ historyId: launch.historyId }).catch(() => {});
           }
 
-          navigateFromPlayer(navigate, launch?.returnTo, true);
+          leavePlayer(launch?.returnTo);
           return;
         }
 
@@ -2388,9 +2574,28 @@ export function PlayerPage() {
     const flushEnd = performance.now();
     console.log("[close-lag] progress save end, total duration:", (flushEnd - flushStart).toFixed(2), "ms");
     playerDebugLog(`persist_target done key=${key} historyId=${historyId} t=${Math.floor(tPos)} d=${Math.floor(dur)}`);
-    
+
+    // The close navigates away BEFORE this save lands, so the page you land on (Home's Up Next, the
+    // season page…) usually fetched the pre-stop state and would keep it for its staleTime (45 s on
+    // Home). A stop near the end is what marks an episode watched — refresh everything derived from
+    // watch state now that the server has it.
+    void qc.invalidateQueries({ queryKey: ["home-watching-currently"] });
+    void qc.invalidateQueries({ queryKey: ["home-history"] });
+    void qc.invalidateQueries({ queryKey: ["history"] });
+    void qc.invalidateQueries({ queryKey: ["watched-tmdb-ids"] });
+    void qc.invalidateQueries({ queryKey: ["library-tmdb-index"] });
+    if (launch?.libraryShowId != null) {
+      void qc.invalidateQueries({ queryKey: ["show-season", launch.libraryShowId] });
+      void qc.invalidateQueries({ queryKey: ["show", launch.libraryShowId] });
+      void qc.invalidateQueries({ queryKey: ["series"] });
+    }
+    if (launch?.libraryMovieId != null) {
+      void qc.invalidateQueries({ queryKey: ["movie", launch.libraryMovieId] });
+      void qc.invalidateQueries({ queryKey: ["movies"] });
+    }
+
     historyStopHandledRef.current = true;
-  }, [refreshPlayheadIntoRefs]);
+  }, [refreshPlayheadIntoRefs, qc]);
 
   useEffect(() => {
     flushProgressAndStopRef.current = flushProgressAndStop;
@@ -2402,11 +2607,29 @@ export function PlayerPage() {
     userInitiatedExitRef.current = false;
     externalClosedHandledRef.current = false;
     autoAdvanceIssuedForRef.current = null;
-    openedHistoryIdRef.current = null;
+    // NOT resetting openedHistoryIdRef here: this effect runs after the open effect in the same
+    // commit, so clearing it re-armed the open and the next re-render opened the new episode a
+    // second time (two mpv startups per episode switch, seen in the log as back-to-back session
+    // ids). The ref is compared against the history id, which already lets a new episode open.
     skipHistoryStopOnPlayerUnmountRef.current = false;
     subtitlePickAppliedForEpKeyRef.current = null;
     volumeHydratedForHistoryRef.current = null;
   }, [state?.historyId]);
+
+  // Last ~45 s of an episode: warm the next file (see file_prewarm in thumbs.rs) so auto-advance or
+  // "Next" doesn't wait on a sleeping disk. Rust dedupes by path, so per-tick calls are cheap.
+  const upcomingPath = state?.libraryShowId ? nextEp?.filePath : nextSibling?.path;
+  const nearEnd = duration > 60 && duration - timePos <= 45;
+  useEffect(() => {
+    if (!nearEnd || !upcomingPath || !isTauri()) return;
+    void invoke("file_prewarm", { filePath: upcomingPath }).catch(() => {});
+  }, [nearEnd, upcomingPath]);
+  // Queue the next file's timeline-preview scan; it runs only after this file's scan is done,
+  // so its previews are instant from its first second.
+  useEffect(() => {
+    if (!upcomingPath || !isTauri()) return;
+    void invoke("thumb_note_next", { filePath: upcomingPath }).catch(() => {});
+  }, [upcomingPath]);
 
   useEffect(() => {
     if (!externalReady || loading) return;
@@ -2419,13 +2642,33 @@ export function PlayerPage() {
           if (!s.session_active && !externalClosedHandledRef.current && !episodeSwitchInProgressRef.current) {
             externalClosedHandledRef.current = true;
             console.info("[pitflix-player] external session inactive; navigating away from /player");
-            navigateFromPlayer(navigate, launchStateRef.current?.returnTo, true);
+            leavePlayer(launchStateRef.current?.returnTo);
           }
         })
         .catch(() => {});
     }, 1000);
     return () => window.clearInterval(id);
   }, [externalReady, loading, navigate]);
+
+  /**
+   * Close for the embedded Pitflix Player: a short audio fade-out via mpv `volume-gain` (the user's
+   * volume setting is untouched) that runs AFTER leaving — the page underneath is already showing
+   * (the libmpv window sits below the opaque page, so it's hidden), so this costs no wait. Returns
+   * the fade (null when there's none: external mpv, PiP, mini, nothing playing). The shrink-back
+   * title/thumbnail card that used to cover the close was removed at the user's request.
+   */
+  const playCloseOutro = useCallback((): Promise<void> | null => {
+    if (!useLibMpv || isPip || miniRef.current || sessionDeadRef.current || endedRef.current) return null;
+    return (async () => {
+      const steps = 6;
+      for (let i = 1; i <= steps; i++) {
+        // Linear in dB sounds even; -45 dB is effectively silent.
+        // Same channel `send` uses (defined further down); errors are irrelevant — we're closing anyway.
+        void invoke(p2cmd("player2_send"), { cmd: { type: "SetVolumeGain", payload: -45 * (i / steps) } }).catch(() => {});
+        await new Promise((r) => window.setTimeout(r, CLOSE_OUTRO_MS / steps));
+      }
+    })();
+  }, [useLibMpv, isPip]);
 
   const exitAndClose = useCallback(() => {
     void (async () => {
@@ -2434,7 +2677,11 @@ export function PlayerPage() {
       // the last few seconds of credits — falls just short of that, so ask before leaving
       // instead of silently leaving it "in progress" forever.
       let markWatchedOnClose = false;
-      if (!endedRef.current && durationRef.current > 0) {
+      // Only library movies/episodes have a "watched" state worth asking about — plain files from
+      // My Device (or anything else unmatched) have nothing to mark, so the prompt was just noise.
+      const launchAtClose = launchStateRef.current;
+      const isLibraryTitle = launchAtClose?.libraryMovieId != null || launchAtClose?.libraryEpisodeId != null;
+      if (isLibraryTitle && !endedRef.current && !historyServerFinalizedRef.current && durationRef.current > 0) {
         await refreshPlayheadIntoRefs();
         const dur = durationRef.current;
         const pos = timePosRef.current;
@@ -2506,11 +2753,36 @@ export function PlayerPage() {
       // so without this the user would land back on the library view stuck in a tiny pinned
       // corner box. Fire-and-forget: it clears the reassert interval synchronously and the
       // async size/position restore lands moments later, which is fine even after navigation.
+      // Progress is already saved above — cover/shrink back right away while the sound fades out.
+      const fade = playCloseOutro();
       if (isPip) void exitPip();
-      navigateFromPlayer(navigate, launch?.returnTo, true);
-      void invoke(p2cmd("player2_close")).catch((e) => logPlayer2InvokeFailure("player2_close", e));
+      let returnTo = exitReturnToOverrideRef.current ?? launch?.returnTo;
+      exitReturnToOverrideRef.current = null;
+      // Set by the info popup's actress/category chips (PlayerVideoCollectionsSection): leave for
+      // that folder's page (`?collection=<id>`, which My Device opens on) rather than wherever the
+      // video was launched from.
+      try {
+        const exitCollectionId = sessionStorage.getItem("pitflix.player.exitToCollection");
+        if (exitCollectionId) {
+          sessionStorage.removeItem("pitflix.player.exitToCollection");
+          returnTo = { pathname: "/my-device", search: `?collection=${encodeURIComponent(exitCollectionId)}` };
+        }
+      } catch { /* ignore */ }
+      const closeMpv = () =>
+        void invoke(p2cmd("player2_close")).catch((e) => logPlayer2InvokeFailure("player2_close", e));
+      if (fade) {
+        // The video is behind the WebView, so the cover card/page already hide it — mpv only has to
+        // live until the fade is done. Leaving unmounts the page, so its own teardown must skip.
+        closeDeferredRef.current = true;
+        const gen = currentLibmpvOpenGeneration();
+        void fade.then(() => {
+          if (gen === currentLibmpvOpenGeneration()) closeMpv();
+        });
+      }
+      leavePlayer(returnTo);
+      if (!fade) closeMpv();
     })();
-  }, [navigate, flushProgressAndStop, flushVolumePersist, refreshPlayheadIntoRefs, isPip, exitPip]);
+  }, [navigate, flushProgressAndStop, flushVolumePersist, refreshPlayheadIntoRefs, isPip, exitPip, playCloseOutro]);
 
   useEffect(() => {
     if (!state || resumeChoice === "pending") return;
@@ -2631,6 +2903,24 @@ export function PlayerPage() {
       logPlayer2InvokeFailure("player2_send", e);
       console.warn("player_send failed", e);
       playerDebugLog(`send failed: ${e instanceof Error ? e.message : String(e)} cmd=${JSON.stringify(cmd)}`);
+      // mpv's core shut down under a session that's still registered — every further command will
+      // fail the same way, so reopening the file is the only fix (previously the user had to close
+      // and reopen the video by hand). Several commands usually fail back-to-back when this
+      // happens (e.g. the subtitle-style batch right after open), so reopen at most once per 10s,
+      // which also stops a loop if the reopened session dies too.
+      if (String(e instanceof Error ? e.message : e).includes(LIBMPV_SESSION_ENDED)) {
+        const sinceLastRecovery = Date.now() - lastSessionEndRecoveryAtRef.current;
+        if (sinceLastRecovery > 10_000) {
+          lastSessionEndRecoveryAtRef.current = Date.now();
+          playerDebugLog("libmpv session ended unexpectedly — reopening file automatically");
+          reopenAfterSessionEndRef.current();
+          throw e;
+        }
+        // Stragglers from the same burst while the reopen is underway — marking dead here would
+        // flash the error UI over a session that's about to be fine.
+        if (sinceLastRecovery < 3_000) throw e;
+        // Otherwise the reopened session died as well: fall through and surface it normally.
+      }
       // Marking the whole session dead disables every transport control (sessionBlocksTransport =
       // ended || sessionDead) — appropriate for a failure that means mpv itself is gone, but a
       // single transient hiccup on a minor convenience command (e.g. a speed change) shouldn't be
@@ -2642,6 +2932,125 @@ export function PlayerPage() {
       throw e;
     }
   }, []);
+
+  /** Remembers a user-made track choice for the whole show (see showTrackPrefs.ts). */
+  const recordShowTrackChoice = useCallback(
+    (cmd: unknown) => {
+      const launch = launchStateRef.current;
+      const c = cmd as { type?: string; payload?: unknown };
+      if (!launch || (c.type !== "SetAid" && c.type !== "SetSid" && c.type !== "SubAddSelect")) return;
+      // Manual pick for this file — the per-show restore must not override it later.
+      const fileKey = `${launch.historyId}|${launch.filePath}`;
+      if (c.type === "SetAid") showTrackAppliedRef.current.audio = fileKey;
+      else showTrackAppliedRef.current.sub = fileKey;
+      const key = showTrackPrefKey(launch);
+      if (!key) return;
+      if (c.type === "SetAid") {
+        const audio = identityOf(tracks.find((t) => t.type === "audio" && t.id === c.payload));
+        if (audio) saveShowTrackPref(key, { audio });
+      } else if (c.type === "SetSid") {
+        const sub =
+          c.payload === -1
+            ? ({ off: true } as const)
+            : identityOf(tracks.find((t) => (t.type === "sub" || t.type === "subtitle") && t.id === c.payload));
+        if (sub) saveShowTrackPref(key, { sub });
+      } else if (typeof c.payload === "string") {
+        const sub = subPrefFromExternal(launch.filePath, c.payload);
+        if (sub) saveShowTrackPref(key, { sub });
+      }
+    },
+    [tracks],
+  );
+
+  /** `send` for UI controls the user drives directly — also feeds per-show track memory. */
+  const sendFromUser = useCallback(
+    async (cmd: unknown) => {
+      recordShowTrackChoice(cmd);
+      await send(cmd);
+    },
+    [recordShowTrackChoice, send],
+  );
+
+  // ── End-of-episode screen ────────────────────────────────────────────────
+  // Library episodes with a next episode, embedded (libmpv) engine only — the external mpv window
+  // sits ABOVE the WebView, so an HTML overlay can't cover it there. Starts at a trusted credits
+  // marker when there is one, otherwise in the last END_SCREEN_FALLBACK_SECONDS.
+  const END_SCREEN_FALLBACK_SECONDS = 30;
+  const endScreenCreditsStart = (() => {
+    if (duration <= 0) return null;
+    const outro = skipData?.outro;
+    const trustedOutro =
+      outro &&
+      ["chapter", "anilist", "theintrodb", "introdb", "skipdb"].includes(outro.source ?? "") &&
+      outro.start > duration * 0.5 &&
+      outro.start < duration - 5;
+    return trustedOutro ? outro.start : duration - END_SCREEN_FALLBACK_SECONDS;
+  })();
+  const endScreenActive = Boolean(
+    state &&
+      useLibMpv &&
+      embedReady &&
+      !mini &&
+      !isPip &&
+      !loading &&
+      !sessionDead &&
+      !ended &&
+      resumeChoice !== "pending" &&
+      state.libraryShowId &&
+      nextEp &&
+      duration >= 600 &&
+      endScreenCreditsStart != null &&
+      timePos >= endScreenCreditsStart &&
+      endScreenArmedFor === state.historyId &&
+      endScreenDismissedFor !== state.historyId,
+  );
+
+  // Arm only once THIS episode has been observed playing before its credits. On an episode switch
+  // timePos/duration still hold the previous file's values (at its credits) until the new file
+  // reports, so without this the screen would flash for the new episode and mark IT watched.
+  // A resume that lands inside the credits never arms; natural end-of-file auto-advance covers it.
+  useEffect(() => {
+    if (!state || !sessionOpen || endScreenCreditsStart == null) return;
+    if (endScreenArmedFor === state.historyId) return;
+    if (timePos > 1 && timePos < endScreenCreditsStart - 2) setEndScreenArmedFor(state.historyId);
+  }, [state, sessionOpen, timePos, endScreenCreditsStart, endScreenArmedFor]);
+
+  // Swap the native video between the full area and the end screen's corner box.
+  useEffect(() => {
+    endScreenActiveRef.current = endScreenActive;
+    if (!embedReady) return;
+    lastAppliedBoundsRef.current = null;
+    syncVideoBounds();
+    const raf = requestAnimationFrame(() => {
+      lastAppliedBoundsRef.current = null;
+      syncVideoBounds();
+    });
+    const t = window.setTimeout(() => {
+      lastAppliedBoundsRef.current = null;
+      syncVideoBounds();
+    }, 150);
+    return () => {
+      cancelAnimationFrame(raf);
+      window.clearTimeout(t);
+    };
+  }, [endScreenActive, embedReady, syncVideoBounds]);
+
+  // Reaching the credits finishes the episode — mark it watched once, the same way skipping the
+  // outro does, so "Watch credits" + close or "Back to series" don't leave it "in progress".
+  useEffect(() => {
+    if (!endScreenActive || !state || historyServerFinalizedRef.current) return;
+    historyServerFinalizedRef.current = true;
+    void dismissHistoryEntry(state.historyId, true)
+      .then(() => {
+        qc.invalidateQueries({ queryKey: ["history"] });
+        qc.invalidateQueries({ queryKey: ["home-watching-currently"] });
+        if (state.libraryShowId) {
+          qc.invalidateQueries({ queryKey: ["show-season", state.libraryShowId, state.season] });
+          qc.invalidateQueries({ queryKey: ["show", state.libraryShowId] });
+        }
+      })
+      .catch((e) => console.error("[player] dismiss completed episode (end screen)", e));
+  }, [endScreenActive, state, qc]);
 
   const dismissActiveSkipSegment = useCallback(() => {
     if (!activeSkipSegment) return;
@@ -2701,36 +3110,38 @@ export function PlayerPage() {
       saveSubtitlePrefs(subtitlePrefs);
     }
     const applySubtitlePrefs = async () => {
-      if ((!embedReady && !externalReady) || sessionDead) return;
+      if ((!embedReady && !externalReady) || !sessionOpen || sessionDead) return;
+      // Cosmetic: a failure here must not mark the session dead (see sessionOpen).
+      const style = (cmd: unknown) => send(cmd, { markDeadOnFailure: false });
       try {
-        await send({ type: "SetSubFontSize", payload: subtitlePrefs.fontSize });
-        await send({ type: "SetSubColor", payload: subtitlePrefs.textColor });
-        await send({ type: "SetSubBorderColor", payload: subtitlePrefs.borderColor });
-        await send({ type: "SetSubBorderSize", payload: subtitlePrefs.borderSize });
-        await send({ type: "SetSubBackColor", payload: subtitlePrefs.backColor });
-        await send({ type: "SetSubShadowColor", payload: subtitlePrefs.shadowColor });
-        await send({ type: "SetSubShadowOffset", payload: subtitlePrefs.shadowOffset });
-        await send({ type: "SetSubPosition", payload: subtitlePrefs.position });
+        await style({ type: "SetSubFontSize", payload: subtitlePrefs.fontSize });
+        await style({ type: "SetSubColor", payload: subtitlePrefs.textColor });
+        await style({ type: "SetSubBorderColor", payload: subtitlePrefs.borderColor });
+        await style({ type: "SetSubBorderSize", payload: subtitlePrefs.borderSize });
+        await style({ type: "SetSubBackColor", payload: subtitlePrefs.backColor });
+        await style({ type: "SetSubShadowColor", payload: subtitlePrefs.shadowColor });
+        await style({ type: "SetSubShadowOffset", payload: subtitlePrefs.shadowOffset });
+        await style({ type: "SetSubPosition", payload: subtitlePrefs.position });
         if (subtitlePrefs.fontFamily.trim().length > 0) {
-          await send({ type: "SetSubFont", payload: subtitlePrefs.fontFamily.trim() });
+          await style({ type: "SetSubFont", payload: subtitlePrefs.fontFamily.trim() });
         }
       } catch {
-        // `send` already surfaces transport failures.
+        // `send` already logs transport failures.
       }
     };
     void applySubtitlePrefs();
-  }, [subtitlePrefs, embedReady, externalReady, sessionDead, send]);
+  }, [subtitlePrefs, embedReady, externalReady, sessionOpen, sessionDead, send]);
 
   // Nudge subtitles up while the controls bar is visible so it doesn't sit under/behind it,
   // then restore the user's saved position once the bar auto-hides again.
   useEffect(() => {
-    if ((!embedReady && !externalReady) || sessionDead) return;
+    if ((!embedReady && !externalReady) || !sessionOpen || sessionDead) return;
     const raisedPosition = Math.max(40, subtitlePrefs.position - 15);
-    const target = fsControlsVisible ? raisedPosition : subtitlePrefs.position;
-    void send({ type: "SetSubPosition", payload: target }).catch(() => {
-      // `send` already surfaces transport failures.
+    const target = footerChromeVisible ? raisedPosition : subtitlePrefs.position;
+    void send({ type: "SetSubPosition", payload: target }, { markDeadOnFailure: false }).catch(() => {
+      // `send` already logs transport failures.
     });
-  }, [fsControlsVisible, subtitlePrefs.position, embedReady, externalReady, sessionDead, send]);
+  }, [footerChromeVisible, subtitlePrefs.position, embedReady, externalReady, sessionOpen, sessionDead, send]);
 
   const runConfirmedPlayback = useCallback(
     async (kind: "pause" | "resume") => {
@@ -2842,6 +3253,68 @@ export function PlayerPage() {
     },
     [send, ended, sessionDead, scheduleSeekProgressFlush],
   );
+  // Arrow-key skips: show target time / total duration by the mini progress bar. Presses within
+  // the display window stack onto the previous target (mpv's reported time-pos lags a fast burst).
+  const bumpSeekHud = useCallback((sec: number) => {
+    const dur = durationRef.current;
+    const burst = seekHudBurstRef.current;
+    const start = burst ? burst.start : timePosRef.current;
+    const raw = (burst ? burst.target : timePosRef.current) + sec;
+    const target = dur > 0 ? Math.max(0, Math.min(dur, raw)) : Math.max(0, raw);
+    seekHudBurstRef.current = { start, target, pressSeq: seekSeqRef.current };
+    setSeekHud({ target, delta: target - start, settled: false });
+    if (seekHudTimerRef.current) clearTimeout(seekHudTimerRef.current);
+    seekHudTimerRef.current = window.setTimeout(() => {
+      seekHudTimerRef.current = null;
+      seekHudBurstRef.current = null;
+      setSeekHud(null);
+    }, 1600);
+  }, []);
+  useEffect(() => () => {
+    if (seekHudTimerRef.current) clearTimeout(seekHudTimerRef.current);
+  }, []);
+  // Same guard seekRel applies — no readout for a skip that won't actually happen.
+  const bumpSeekHudIfLive = useCallback((sec: number) => {
+    if (ended || sessionDead) return;
+    bumpSeekHud(sec);
+  }, [ended, sessionDead, bumpSeekHud]);
+
+  // A-B loop (embedded player only) — mpv does the looping itself via ab-loop-a / ab-loop-b; this
+  // just tracks the points for the UI. One action cycles: set A → set B (loop on) → clear.
+  const applyAbLoop = useCallback((next: AbLoopState) => {
+    abLoopRef.current = next;
+    setAbLoopState(next);
+    void send({ type: "SetAbLoop", payload: { a: next.a, b: next.b } }, { markDeadOnFailure: false }).catch(() => {});
+  }, [send]);
+  const clearAbLoop = useCallback(() => {
+    const cur = abLoopRef.current;
+    if (cur.a == null && cur.b == null) return;
+    applyAbLoop({ a: null, b: null });
+  }, [applyAbLoop]);
+  const cycleAbLoop = useCallback(() => {
+    if (ended || sessionDead) return;
+    const t = timePosRef.current;
+    const { a, b } = abLoopRef.current;
+    if (a == null) {
+      applyAbLoop({ a: t, b: null });
+    } else if (b == null) {
+      // Less than half a second apart isn't a loop anyone meant to make — treat it as "cancel".
+      if (Math.abs(t - a) < 0.5) {
+        applyAbLoop({ a: null, b: null });
+        return;
+      }
+      // Setting B before A just means the user marked the end first — swap rather than reject.
+      applyAbLoop({ a: Math.min(a, t), b: Math.max(a, t) });
+    } else {
+      applyAbLoop({ a: null, b: null });
+    }
+  }, [ended, sessionDead, applyAbLoop]);
+  // A new file never inherits the previous one's loop (mpv keeps ab-loop-* across loads).
+  useEffect(() => {
+    clearAbLoop();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [state?.filePath]);
+
   const bumpVolumeHud = useCallback(() => {
     setVolumeHudVisible(true);
     if (volumeHudTimerRef.current) clearTimeout(volumeHudTimerRef.current);
@@ -2906,10 +3379,10 @@ export function PlayerPage() {
       if (launch && launch.libraryEpisodeId != null && launch.libraryEpisodeId > 0) {
         persistEpSubPick(playbackEpisodeKey(launch), `x:${encodeURIComponent(savedPath)}`);
       }
-      void send({ type: "SubAddSelect", payload: savedPath });
+      void sendFromUser({ type: "SubAddSelect", payload: savedPath });
       window.setTimeout(() => closeSubtitleSearch(), 1200);
     },
-    [send, closeSubtitleSearch],
+    [sendFromUser, closeSubtitleSearch],
   );
   
   // Arabic Subtitle Generation Handler
@@ -2933,6 +3406,13 @@ export function PlayerPage() {
       });
       
       await send({ type: "SubAddSelect", payload: outputPath });
+      // Dual subtitles: the Arabic file was translated from the embedded English track, so keep that
+      // English track on screen as the second subtitle (top) — Arabic below, English above.
+      const embedded = tracks.filter((t) => (t.type === "sub" || t.type === "subtitle") && !t.externalFilename);
+      const english = matchTrack(embedded, { lang: "eng" }) ?? matchTrack(embedded, { lang: "en" });
+      if (english?.id != null) {
+        void send({ type: "SetSecondarySid", payload: english.id }, { markDeadOnFailure: false }).catch(() => {});
+      }
       
       setTimeout(() => {
         setArabicSubtitleGenerating(false);
@@ -2946,7 +3426,7 @@ export function PlayerPage() {
     } finally {
       unlisten();
     }
-  }, [state?.filePath, send]);
+  }, [state?.filePath, send, tracks]);
 
   const setVolumePct = useCallback(
     (v: number, opts?: { silent?: boolean }) => {
@@ -2996,6 +3476,7 @@ export function PlayerPage() {
 
   useEffect(() => {
     setTracks([]);
+    tracksFilePathRef.current = null;
   }, [state?.filePath]);
 
   const subTracks = useMemo(
@@ -3007,6 +3488,64 @@ export function PlayerPage() {
   const subMenuValue = useMemo(
     () => resolveSubtitleMenuValue(sid, subTracks, externalSubFiles),
     [sid, subTracks, externalSubFiles],
+  );
+  const secondaryMenuValue = useMemo(
+    () => resolveSubtitleMenuValue(secondarySid, subTracks, externalSubFiles),
+    [secondarySid, subTracks, externalSubFiles],
+  );
+
+  /**
+   * Shows `value` ("" | "e:<id>" | "x:<encoded path>") as the second subtitle. An external file not
+   * loaded yet is added with `SubAdd` (not selected), then made secondary once its track appears.
+   */
+  const selectSecondarySubtitle = useCallback(
+    async (value: string) => {
+      pendingSecondaryPathRef.current = null;
+      const opts = { markDeadOnFailure: false };
+      if (value === "") return send({ type: "SetSecondarySid", payload: -1 }, opts);
+      if (value.startsWith("e:")) return send({ type: "SetSecondarySid", payload: Number(value.slice(2)) }, opts);
+      if (!value.startsWith("x:")) return;
+      const path = decodeURIComponent(value.slice(2));
+      const key = normalizeMediaPathKey(path);
+      const loaded = subTracks.find((t) => t.externalFilename && normalizeMediaPathKey(t.externalFilename) === key);
+      if (loaded?.id != null) return send({ type: "SetSecondarySid", payload: loaded.id }, opts);
+      pendingSecondaryPathRef.current = path;
+      return send({ type: "SubAdd", payload: path }, opts);
+    },
+    [send, subTracks],
+  );
+
+  // Finish a pending external secondary subtitle once mpv reports its new track.
+  useEffect(() => {
+    const pending = pendingSecondaryPathRef.current;
+    if (!pending) return;
+    const key = normalizeMediaPathKey(pending);
+    const added = subTracks.find((t) => t.externalFilename && normalizeMediaPathKey(t.externalFilename) === key);
+    if (added?.id == null) return;
+    pendingSecondaryPathRef.current = null;
+    void send({ type: "SetSecondarySid", payload: added.id }, { markDeadOnFailure: false }).catch(() => {});
+  }, [subTracks, send]);
+
+  /** User picked a second subtitle in the CC menu — apply it and remember it for the whole show. */
+  const pickSecondarySubtitle = useCallback(
+    (value: string) => {
+      const launch = launchStateRef.current;
+      if (launch) {
+        showTrackAppliedRef.current.secondary = `${launch.historyId}|${launch.filePath}`;
+        const key = showTrackPrefKey(launch);
+        if (key) {
+          const pref =
+            value === ""
+              ? ({ off: true } as const)
+              : value.startsWith("x:")
+                ? subPrefFromExternal(launch.filePath, decodeURIComponent(value.slice(2)))
+                : identityOf(subTracks.find((t) => t.id === Number(value.slice(2))));
+          if (pref) saveShowTrackPref(key, { secondary: pref });
+        }
+      }
+      void selectSecondarySubtitle(value).catch(() => {});
+    },
+    [selectSecondarySubtitle, subTracks],
   );
 
   const takeScreenshot = useCallback(async () => {
@@ -3073,6 +3612,83 @@ export function PlayerPage() {
       }
     })();
   }, [embedReady, externalReady, sessionDead, state, subTracks, externalSubFiles, send]);
+
+  // Per-show track memory: re-apply the audio/subtitle language last picked for this show once the
+  // new file's tracks are known. The per-episode pick above wins for subtitles when one exists.
+  useEffect(() => {
+    if ((!embedReady && !externalReady) || sessionDead || !state || tracks.length === 0) return;
+    if (tracksFilePathRef.current !== state.filePath) return;
+    const key = showTrackPrefKey(state);
+    const pref = key ? loadShowTrackPref(key) : null;
+    if (!pref) return;
+    const fileKey = `${state.historyId}|${state.filePath}`;
+    const applied = showTrackAppliedRef.current;
+
+    if (applied.audio !== fileKey && pref.audio && audioTracks.length > 0) {
+      applied.audio = fileKey;
+      const match = matchTrack(audioTracks, pref.audio);
+      if (match?.id != null && match.id !== aid) {
+        playerDebugLog(`show_track_memory audio -> ${match.id} (${match.lang ?? ""} ${match.title ?? ""})`);
+        void send({ type: "SetAid", payload: match.id }, { markDeadOnFailure: false }).catch(() => {});
+      }
+    }
+
+    if (applied.sub !== fileKey && pref.sub) {
+      const epKey = playbackEpisodeKey(state);
+      if (epKey.startsWith("ep:") && loadEpSubPickMap()[epKey]) {
+        applied.sub = fileKey;
+        return;
+      }
+      const sub = pref.sub;
+      let cmd: PlayerCommand | null = null;
+      if (sub.off) {
+        applied.sub = fileKey;
+        if (sid != null) cmd = { type: "SetSid", payload: -1 };
+      } else {
+        const ext = sub.extSuffix ? matchExternal(state.filePath, externalSubFiles, sub.extSuffix) : undefined;
+        const emb = ext ? undefined : matchTrack(subTracks, sub);
+        // No match yet: leave unapplied — the sidecar folder scan may still be loading.
+        if (ext) {
+          applied.sub = fileKey;
+          cmd = { type: "SubAddSelect", payload: ext };
+        } else if (emb?.id != null) {
+          applied.sub = fileKey;
+          if (emb.id !== sid) cmd = { type: "SetSid", payload: emb.id };
+        }
+      }
+      if (cmd) {
+        playerDebugLog(`show_track_memory sub -> ${JSON.stringify(cmd)}`);
+        void send(cmd, { markDeadOnFailure: false }).catch(() => {});
+      }
+    }
+  }, [embedReady, externalReady, sessionDead, state, tracks, audioTracks, subTracks, externalSubFiles, aid, sid, send]);
+
+  // Per-show memory for the second (dual) subtitle — same matching as the main one above.
+  useEffect(() => {
+    if ((!embedReady && !externalReady) || sessionDead || !state || tracks.length === 0) return;
+    if (tracksFilePathRef.current !== state.filePath) return;
+    const fileKey = `${state.historyId}|${state.filePath}`;
+    if (showTrackAppliedRef.current.secondary === fileKey) return;
+    const key = showTrackPrefKey(state);
+    const pref = key ? loadShowTrackPref(key)?.secondary : undefined;
+    if (!pref) {
+      showTrackAppliedRef.current.secondary = fileKey;
+      return;
+    }
+    if (pref.off) {
+      showTrackAppliedRef.current.secondary = fileKey;
+      if (secondarySid != null) void selectSecondarySubtitle("").catch(() => {});
+      return;
+    }
+    const ext = pref.extSuffix ? matchExternal(state.filePath, externalSubFiles, pref.extSuffix) : undefined;
+    // Never the same track as the main subtitle — mpv can't show one track twice.
+    const emb = ext ? undefined : matchTrack(subTracks.filter((t) => t.id !== sid), pref);
+    const value = ext ? `x:${encodeURIComponent(ext)}` : emb?.id != null ? `e:${emb.id}` : null;
+    if (!value) return; // sidecar scan may still be loading — try again when it lands
+    showTrackAppliedRef.current.secondary = fileKey;
+    playerDebugLog(`show_track_memory secondary -> ${value}`);
+    void selectSecondarySubtitle(value).catch(() => {});
+  }, [embedReady, externalReady, sessionDead, state, tracks, subTracks, externalSubFiles, sid, secondarySid, selectSecondarySubtitle]);
 
   useEffect(() => {
     if (typeof localStorage === "undefined") return;
@@ -3300,6 +3916,12 @@ export function PlayerPage() {
             ...(suppressCw ? { suppressContinueWatching: true } : {}),
             ...(state.useLibMpv ? { useLibMpv: true } : {}),
             ...(state.liveChannels?.length ? { liveChannels: state.liveChannels } : {}),
+            // Without this the new state forgot it was playing an actress/category folder's list:
+            // the playlist panel (and next/previous) fell back to the video's real parent folder —
+            // "the video opens in the normal folder, not the actress".
+            ...(state.deviceCollectionEntries?.length
+              ? { deviceCollectionEntries: state.deviceCollectionEntries }
+              : {}),
           },
         });
         void qc.invalidateQueries({ queryKey: ["home-history"] });
@@ -3786,9 +4408,87 @@ export function PlayerPage() {
     void taskbarSetProgress(true, roundedPct / 100, displayPaused);
   }, [state, pct, displayPaused]);
 
+  // ── In-app mini player ────────────────────────────────────────────────────
+  //
+  // Unlike PiP (which shrinks the whole window), this keeps the window as-is and shrinks only the
+  // player into a corner box while the user browses the app. PersistentPlayerHost keeps this same
+  // instance mounted across routes, so the libmpv session never restarts; the video HWND just
+  // follows the smaller video area through the normal bounds sync.
+  const enterInAppMini = useCallback(async () => {
+    const s = launchStateRef.current;
+    if (!s) return;
+    if (isPip) await exitPip();
+    if (isTauri()) {
+      try {
+        const w = getCurrentWindow();
+        if (await w.isFullscreen()) await w.setFullscreen(false);
+      } catch {
+        /* best-effort */
+      }
+    }
+    setFolderPlaylistOpen(false);
+    setFolderPlaylistPinned(false);
+    useMiniPlayerStore.getState().enter(s);
+    const rt = s.returnTo;
+    routerNavigate(rt?.pathname ? { pathname: rt.pathname, search: rt.search ?? "", hash: rt.hash ?? "" } : "/");
+  }, [isPip, exitPip, routerNavigate]);
+
+  const expandInAppMini = useCallback(() => {
+    const s = launchStateRef.current;
+    // Closing after expanding should land back on the page being browsed, not where playback
+    // started. Mutated in place: a new state object would re-run the player's [state] effects.
+    if (s) {
+      s.returnTo = {
+        pathname: window.location.pathname,
+        search: window.location.search,
+        hash: window.location.hash,
+        mainScrollTop: document.querySelector("main")?.scrollTop ?? undefined,
+      };
+    }
+    useMiniPlayerStore.getState().expand();
+    routerNavigate("/player", { state: MINI_RESTORE_STATE });
+  }, [routerNavigate]);
+
+  const miniPos = useMiniPlayerStore((s) => s.pos);
+  // Moving the box changes no sizes, so ResizeObserver never fires — follow it explicitly, and
+  // without scheduleSyncVideoBounds' debounce (it would hold the video back until the drag pauses).
+  // syncVideoBounds coalesces to one IPC call in flight, so per-frame events are fine.
+  useEffect(() => {
+    if (!mini) return;
+    const onMoved = () => syncVideoBounds();
+    window.addEventListener(MINI_PLAYER_MOVED_EVENT, onMoved);
+    return () => window.removeEventListener(MINI_PLAYER_MOVED_EVENT, onMoved);
+  }, [mini, syncVideoBounds]);
+  // A smaller window must not leave the box (partly) off-screen.
+  useEffect(() => {
+    if (!mini) return;
+    const onResize = () => {
+      const { pos, setPos } = useMiniPlayerStore.getState();
+      const clamped = clampMiniPlayerPos(pos);
+      if (clamped.right !== pos.right || clamped.bottom !== pos.bottom || clamped.width !== pos.width) setPos(clamped);
+    };
+    onResize();
+    window.addEventListener("resize", onResize);
+    return () => window.removeEventListener("resize", onResize);
+  }, [mini]);
+
+  useEffect(() => {
+    if (mini) {
+      setEpisodeInfoOpen(false);
+      closePlayerContextMenu();
+    }
+    lastAppliedBoundsRef.current = null;
+    const ids = [80, 300].map((ms) =>
+      window.setTimeout(() => window.dispatchEvent(new Event("__pitflix_resync_bounds")), ms),
+    );
+    return () => ids.forEach((id) => window.clearTimeout(id));
+  }, [mini, closePlayerContextMenu]);
+
   useEffect(() => {
     console.info("[pitflix-player] web keydown handler mounted (capture)");
     const onKey = (e: KeyboardEvent) => {
+      // The mini player shares the page with the rest of the app — its keys belong to the app.
+      if (miniRef.current) return;
       if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return;
       if (e.target instanceof HTMLSelectElement) return;
       if (
@@ -3821,11 +4521,13 @@ export function PlayerPage() {
           e.preventDefault();
           e.stopPropagation();
           seekRel(e.shiftKey ? -1 : -skipSeconds);
+          if (!ended && !sessionDead) bumpSeekHud(e.shiftKey ? -1 : -skipSeconds);
           break;
         case "ArrowRight":
           e.preventDefault();
           e.stopPropagation();
           seekRel(e.shiftKey ? 1 : skipSeconds);
+          if (!ended && !sessionDead) bumpSeekHud(e.shiftKey ? 1 : skipSeconds);
           break;
         case "ArrowUp":
           if (e.altKey && !e.ctrlKey && !e.shiftKey) {
@@ -3905,6 +4607,13 @@ export function PlayerPage() {
           }
           break;
         case "KeyB":
+          if (!e.ctrlKey && !e.shiftKey && !e.altKey && !e.metaKey) {
+            if (isExternalMode) break;
+            e.preventDefault();
+            e.stopPropagation();
+            cycleAbLoop();
+            break;
+          }
           if (!e.ctrlKey || e.shiftKey || e.altKey) break;
           e.preventDefault();
           e.stopPropagation();
@@ -3996,6 +4705,11 @@ export function PlayerPage() {
   }, [
     handlePrimaryTransport,
     seekRel,
+    bumpSeekHud,
+    cycleAbLoop,
+    isExternalMode,
+    ended,
+    sessionDead,
     skipSeconds,
     setVolumePct,
     setPlaybackSpeed,
@@ -4051,7 +4765,7 @@ export function PlayerPage() {
         <button
           type="button"
           className="rounded-lg bg-pitflix-card px-4 py-2 text-sm text-white"
-          onClick={() => navigateFromPlayer(navigate, state?.returnTo, true)}
+          onClick={() => leavePlayer(state?.returnTo)}
         >
           Back
         </button>
@@ -4110,7 +4824,7 @@ export function PlayerPage() {
           <button
             type="button"
             className="mx-auto mt-4 block text-[11px] text-pitflix-muted hover:text-white"
-            onClick={() => navigateFromPlayer(navigate, state.returnTo, true)}
+            onClick={() => leavePlayer(state.returnTo)}
           >
             ✕ Cancel
           </button>
@@ -4143,7 +4857,16 @@ export function PlayerPage() {
       data-pitflix-native-backend={nativeState?.backend ?? ""}
       data-pitflix-pol-seq={String(polSeq)}
       data-pitflix-external-shell={String(isExternalMode)}
-      className={`flex h-screen min-h-0 flex-col overflow-hidden outline-none ${useLibMpv && !videoSettling ? "bg-transparent" : "bg-pitflix-bg"}`}
+      data-pitflix-mini={mini ? "true" : undefined}
+      // MainLayout's "drag the window from empty space" listener would otherwise grab presses
+      // on the mini player and move the whole app instead of the box.
+      data-no-window-drag={mini ? "" : undefined}
+      className={`flex min-h-0 flex-col overflow-hidden outline-none ${mini ? "fixed z-[80] shadow-2xl ring-1 ring-white/15" : "h-screen"} ${useLibMpv && !videoSettling ? "bg-transparent" : "bg-pitflix-bg"}`}
+      style={
+        mini
+          ? { right: miniPos.right, bottom: miniPos.bottom, width: miniPos.width, height: miniPlayerHeight(miniPos.width) }
+          : undefined
+      }
       onContextMenu={(e) => {
         const owned = Boolean((e.target as HTMLElement)?.closest?.('[data-own-context-menu="true"]'));
         console.info(`[pitflix-player] [ctxmenu:root-contextmenu] target=${(e.target as HTMLElement)?.tagName}${owned ? " OWNED->skip" : " ->open-main"}`);
@@ -4233,9 +4956,14 @@ export function PlayerPage() {
           isMaximized={isMaximized}
           onToggleMaximize={onToggleMaximize}
           fsControlsVisible={fsControlsVisible}
+          chromeZone={chromeZone}
           onFullscreenPointerActivity={onFullscreenPointerActivity}
+          onChromePointerActivity={onChromePointerActivity}
           onPlayerRightClick={openPlayerContextMenu}
-          onFullscreen={onFullscreen}
+          onFullscreen={mini ? async () => expandInAppMini() : onFullscreen}
+          inAppMini={mini}
+          onEnterInAppMini={() => void enterInAppMini()}
+          onExpandInAppMini={expandInAppMini}
           videoSettling={videoSettling}
           letterboxInsets={letterboxInsets}
           loading={loading}
@@ -4280,7 +5008,7 @@ export function PlayerPage() {
           setResumeOptimistic={setResumeOptimistic}
           handlePrimaryTransport={handlePrimaryTransport}
           seekRel={seekRel}
-          send={send}
+          send={sendFromUser}
           setTimePos={setTimePos}
           seekToAbsolute={seekToAbsolute}
           uiTimePos={uiTimePos}
@@ -4293,6 +5021,8 @@ export function PlayerPage() {
           subTracks={subTracks}
           externalSubFiles={externalSubFiles}
           subMenuValue={subMenuValue}
+          secondaryMenuValue={secondaryMenuValue}
+          onPickSecondary={pickSecondarySubtitle}
           toggleSub={toggleSub}
           subAppearanceOpen={subAppearanceOpen}
           setSubAppearanceOpen={setSubAppearanceOpen}
@@ -4309,6 +5039,10 @@ export function PlayerPage() {
           toggleMute={toggleMute}
           setVolumePct={setVolumePct}
           volumeHudVisible={volumeHudVisible}
+          seekHud={seekHud}
+          bumpSeekHud={bumpSeekHudIfLive}
+          abLoop={abLoop}
+          onClearAbLoop={clearAbLoop}
           playbackSpeed={playbackSpeed}
           setPlaybackSpeed={setPlaybackSpeed}
           skipSeconds={skipSeconds}
@@ -4372,7 +5106,7 @@ export function PlayerPage() {
           onSearchSubtitles={openSubtitleSearch}
           onOpenPlaylist={() => setFolderPlaylistOpen(true)}
           onSetSpeed={setPlaybackSpeed}
-          onSetAudioTrack={(id) => void send({ type: "SetAid", payload: id })}
+          onSetAudioTrack={(id) => void sendFromUser({ type: "SetAid", payload: id })}
           onToggleAlwaysOnTop={toggleAlwaysOnTop}
           onTogglePip={togglePip}
           onToggleFullscreen={() => void onFullscreen()}
@@ -4381,7 +5115,38 @@ export function PlayerPage() {
           onOpenEpisodeDetails={() => setEpisodeInfoOpen(true)}
           onScreenshot={() => void takeScreenshot()}
           onSaveClip={openClipExport}
+          abLoop={isExternalMode ? null : abLoop}
+          onCycleAbLoop={cycleAbLoop}
           onClosePlayer={() => void exitAndClose()}
+        />
+      ) : null}
+      {endScreenActive && state?.libraryShowId && nextEp ? (
+        <PlayerEndOfEpisodeScreen
+          key={state.historyId}
+          showId={state.libraryShowId}
+          showTitle={state.seriesName?.trim() || state.title.split(/\s*[·•]\s*/)[0] || state.title}
+          currentSeason={state.season ?? null}
+          currentEpisode={state.episodeNumber ?? null}
+          currentTitle={(() => {
+            const parts = state.title.split(/\s*[·•]\s*/);
+            return parts.length > 1 ? parts.slice(1).join(" · ") : null;
+          })()}
+          remainingSeconds={Math.max(0, duration - timePos)}
+          paused={paused}
+          nextEp={nextEp}
+          videoBoxRef={endScreenVideoBoxRef}
+          onPlayNext={() => {
+            const hid = state.historyId;
+            void tryAutoAdvanceOnEnd().then((advanced) => {
+              if (!advanced) setEndScreenDismissedFor(hid);
+            });
+          }}
+          onWatchCredits={() => setEndScreenDismissedFor(state.historyId)}
+          onBackToSeries={() => {
+            exitReturnToOverrideRef.current = { pathname: `/series/${state.libraryShowId}` };
+            exitAndClose();
+          }}
+          onClose={() => exitAndClose()}
         />
       ) : null}
       {playerExportBusy ? (

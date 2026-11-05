@@ -14,6 +14,8 @@
           "device_entry_details",
           "device_paths_exist",
           "device_find_files",
+          "device_search_entries",
+          "device_video_durations",
           "device_create_folder"
         ],
         "deny": []

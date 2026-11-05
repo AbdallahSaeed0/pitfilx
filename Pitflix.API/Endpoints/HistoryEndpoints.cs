@@ -150,7 +150,7 @@ public static class HistoryEndpoints
             return Results.Json(new { id });
         });
 
-        app.MapPost("/api/history/{id:int}/stopped", async (int id, StoppedBody body, LibraryRepository repo, LibraryContext db, CancellationToken ct) =>
+        app.MapPost("/api/history/{id:int}/stopped", async (int id, StoppedBody body, LibraryRepository repo, LibraryContext db, Microsoft.Extensions.Caching.Memory.IMemoryCache memoryCache, CancellationToken ct) =>
         {
             var stopped = body.StoppedAt.Kind == DateTimeKind.Unspecified
                 ? DateTime.SpecifyKind(body.StoppedAt, DateTimeKind.Utc)
@@ -185,6 +185,9 @@ public static class HistoryEndpoints
             }
 
             FireTraktScrobble(app.Services, id, "stop");
+            // A stopped session can be what finalizes an episode as watched (position near the end) —
+            // see the /api/episodes/{id}/watch comment for why Home's "Up Next" row needs this cleared.
+            HomeEndpoints.InvalidateHomeCaches(memoryCache);
             return Results.Ok();
         });
 
@@ -210,10 +213,12 @@ public static class HistoryEndpoints
         });
 
         app.MapPost("/api/history/{id:int}/dismiss", async (int id, HistoryDismissBody? body, LibraryRepository repo,
-            CancellationToken ct) =>
+            Microsoft.Extensions.Caching.Memory.IMemoryCache memoryCache, CancellationToken ct) =>
         {
             var mark = body?.MarkCompleted == true;
             var ok = await repo.ContinueWatchingDismissAsync(id, mark, ct).ConfigureAwait(false);
+            if (mark)
+                HomeEndpoints.InvalidateHomeCaches(memoryCache);
             return ok
                 ? Results.Json(new { success = true }, jsonSerializerOptions)
                 : Results.NotFound();
@@ -242,7 +247,7 @@ public static class HistoryEndpoints
                 estimatedSeconds: body.RuntimeMinutes > 0 ? body.RuntimeMinutes * 60 : 0,
                 ct: ct,
                 watchedAtUtc: body.WatchedAt?.ToUniversalTime()).ConfigureAwait(false);
-            memoryCache.Remove("home:watching-currently");
+            HomeEndpoints.InvalidateHomeCaches(memoryCache);
 
             return Results.Json(new { success = true }, jsonSerializerOptions);
         });
@@ -260,7 +265,7 @@ public static class HistoryEndpoints
                 seasonNumber: body.SeasonNumber,
                 episodeNumber: body.EpisodeNumber,
                 ct: ct).ConfigureAwait(false);
-            memoryCache.Remove("home:watching-currently");
+            HomeEndpoints.InvalidateHomeCaches(memoryCache);
 
             return Results.Json(new { success = true }, jsonSerializerOptions);
         });

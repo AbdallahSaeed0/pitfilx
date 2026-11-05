@@ -9,6 +9,9 @@ public sealed class ScanPipelineResult
 
     /// <summary>Saved TMDB calls: path still Unmatched but clean title unchanged vs last scan.</summary>
     public int SkippedUnchangedUnmatched { get; set; }
+
+    /// <summary>Library files found again at a new path (moved/renamed) and re-pointed, keeping their match.</summary>
+    public int Relinked { get; set; }
 }
 
 /// <summary>One row of a non-destructive unmatched-rescan preview (see <c>ScanPipeline.PreviewUnmatchedAsync</c>).</summary>

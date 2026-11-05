@@ -129,15 +129,22 @@ public static class CatalogEndpoints
             }
 
             string? EpStill(Episode e) => ImageUrls.ToImageUrl(e.StillLocalPath);
-            var todayStr = DateOnly.FromDateTime(DateTime.UtcNow).ToString("yyyy-MM-dd");
+            var todayStr = Pitflix.Core.Services.AirDates.LocalToday();
+            // Same rule as Up Next (AirDates): out from the day after the air date, local time.
             static bool IsEpisodeAired(string? airDate, string today) =>
-                !string.IsNullOrWhiteSpace(airDate) &&
-                string.Compare(airDate.Trim(), today, StringComparison.Ordinal) <= 0;
+                Pitflix.Core.Services.AirDates.HasAired(airDate, today);
 
             var localByNumber = inSeason.ToDictionary(e => e.EpisodeNumber);
             var durationByPath = await repo.GetMaxFileDurationSecondsByPathsAsync(
                 inSeason.Select(e => e.FilePath), ct).ConfigureAwait(false);
             var virtuallyWatched = await repo.GetVirtuallyWatchedEpisodeNumbersAsync(show.TmdbId, season, ct)
+                .ConfigureAwait(false);
+            // Partly-watched episodes → progress bar on the episode card (same head as Continue Watching).
+            var episodeByFilePath = localByNumber
+                .Where(kv => !string.IsNullOrWhiteSpace(kv.Value.FilePath))
+                .GroupBy(kv => kv.Value.FilePath!, StringComparer.OrdinalIgnoreCase)
+                .ToDictionary(g => g.Key, g => g.First().Key, StringComparer.OrdinalIgnoreCase);
+            var resumeByEpisode = await repo.GetEpisodeResumeProgressAsync(show.TmdbId, season, episodeByFilePath, ct)
                 .ConfigureAwait(false);
             var allEpisodeNumbers = new SortedSet<int>(localByNumber.Keys);
             if (tmdbMap != null)
@@ -185,6 +192,17 @@ public static class CatalogEndpoints
                 // downloading) — surface it the same as a completed library episode.
                 var watchStatus = localEp?.WatchStatus ??
                     (virtuallyWatched.Contains(epNum) ? WatchStatuses.Completed : null);
+                int? resumeSeconds = null;
+                int? progressPercent = null;
+                if (!string.Equals(watchStatus, WatchStatuses.Completed, StringComparison.OrdinalIgnoreCase) &&
+                    resumeByEpisode.TryGetValue(epNum, out var resume))
+                {
+                    // Prefer the duration recorded with the watch; fall back to the episode's runtime.
+                    var totalSeconds = resume.DurationSeconds > 0 ? resume.DurationSeconds : (runtimeMinutes ?? 0) * 60;
+                    resumeSeconds = resume.ResumeSeconds;
+                    if (totalSeconds > 0)
+                        progressPercent = Math.Clamp((int)Math.Round(resume.ResumeSeconds * 100.0 / totalSeconds), 1, 99);
+                }
                 return (object)new
                 {
                     id = localEp?.Id,
@@ -195,6 +213,8 @@ public static class CatalogEndpoints
                     filePath = localEp?.FilePath,
                     subtitlePath = localEp?.SubtitlePath,
                     watchStatus,
+                    resumeSeconds,
+                    progressPercent,
                     rewatchCount = localEp?.RewatchCount ?? 0,
                     stillLocalPath = localEp != null ? EpStill(localEp) : null,
                     stillUrl,
@@ -318,12 +338,15 @@ public static class CatalogEndpoints
             return Results.Json(new { success = true }, jsonSerializerOptions);
         });
 
-        app.MapPost("/api/series/{id:int}/watch", async (int id, MediaWatchStatusBody body, LibraryRepository repo, CancellationToken ct) =>
+        app.MapPost("/api/series/{id:int}/watch", async (int id, MediaWatchStatusBody body, LibraryRepository repo, Microsoft.Extensions.Caching.Memory.IMemoryCache memoryCache, CancellationToken ct) =>
         {
             var status = body.WatchStatus ?? "";
             if (!WatchStatuses.IsValid(status))
                 return Results.BadRequest(new { error = "Invalid watch status." });
             await repo.UpdateShowWatchStatusAsync(id, status, ct).ConfigureAwait(false);
+            // See the /api/episodes/{id}/watch comment — Home's "Up Next" row won't reflect this
+            // until its 3-minute memory cache is cleared.
+            HomeEndpoints.InvalidateHomeCaches(memoryCache);
             return Results.Json(new { success = true }, jsonSerializerOptions);
         });
 

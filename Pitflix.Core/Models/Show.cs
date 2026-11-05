@@ -42,6 +42,10 @@ public class Show
     /// <summary>Originating TV network/streaming service from TMDB (e.g. "Netflix", "HBO"). Populated lazily by Statistics.</summary>
     public string? Network { get; set; }
 
+    /// <summary>JSON array of production companies/networks from TMDB (the detail page's Studio row),
+    /// cached lazily on first detail page visit.</summary>
+    public string? CompaniesJson { get; set; }
+
     /// <summary>MyAnimeList id, used by AniSkip for op/ed timestamp lookup. Nullable and never
     /// auto-resolved today — populating this mapping is a separate future task.</summary>
     public int? MalId { get; set; }

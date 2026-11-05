@@ -1,5 +1,6 @@
 using Pitflix.Core.Api;
 using Pitflix.Core.Config;
+using Pitflix.Core.Database;
 using Pitflix.Core.Net;
 
 namespace Pitflix.API.Services;
@@ -18,7 +19,23 @@ public interface ITmdbClientFactory
 
 public sealed class TmdbClientFactory : ITmdbClientFactory
 {
-    private static readonly HttpClient Http = PitflixHttp.CreateClient();
+    /// <summary>
+    /// Every TMDB API answer is saved to <c>tmdb-cache.db</c> (next to pitflix.db): answers under 6 h
+    /// old are served from disk, and offline / on network failure the saved answer is used — this is
+    /// what lets library pages render without internet. 10 s per network attempt instead of
+    /// HttpClient's 100 s default, so a dead connection fails over to saved data quickly.
+    /// </summary>
+    public static readonly PersistentHttpCacheHandler ResponseCache = new(
+        PitflixHttp.CreateHandler(),
+        Path.Combine(Path.GetDirectoryName(LibraryPaths.DatabaseFilePath)!, "tmdb-cache.db"),
+        "api.themoviedb.org",
+        freshFor: TimeSpan.FromHours(6),
+        networkTimeout: TimeSpan.FromSeconds(10));
+
+    private static readonly HttpClient Http = new(ResponseCache) { Timeout = TimeSpan.FromSeconds(30) };
+
+    /// <summary>The cached TMDB HttpClient, for the few endpoints that call TMDB without <see cref="TmdbClient"/>.</summary>
+    public static HttpClient SharedHttp => Http;
     private readonly IResolvedApiKeysAccessor _apiKeys;
 
     public TmdbClientFactory(IResolvedApiKeysAccessor apiKeys) => _apiKeys = apiKeys;

@@ -1,4 +1,4 @@
-import { List, Minus, Pin, Square, Maximize, X } from "lucide-react";
+import { List, Minimize2, Minus, Pin, Square, X } from "lucide-react";
 import { cn } from "../../utils/cn";
 
 type Props = {
@@ -10,15 +10,15 @@ type Props = {
   onMinimize: () => void;
   isMaximized: boolean;
   onToggleMaximize: () => void;
-  isFullscreen: boolean;
-  onToggleFullscreen: () => void;
+  /** Shrink the player into a corner of the app so it can be browsed while the video plays. */
+  onMiniInApp: () => void;
   onClose: () => void;
 };
 
 const chromeBtn =
   "flex h-8 w-8 items-center justify-center rounded-md text-white/80 transition hover:bg-white/15 hover:text-white";
 
-/** Top-right window controls: pin, playlist, minimize, maximize, fullscreen, close. */
+/** Top-right window controls: pin, playlist, minimize, maximize, mini player (in app), close. */
 export function PlayerWindowChrome({
   alwaysOnTop,
   onToggleAlwaysOnTop,
@@ -28,8 +28,7 @@ export function PlayerWindowChrome({
   onMinimize,
   isMaximized,
   onToggleMaximize,
-  isFullscreen,
-  onToggleFullscreen,
+  onMiniInApp,
   onClose,
 }: Props) {
   return (
@@ -70,11 +69,11 @@ export function PlayerWindowChrome({
       </button>
       <button
         type="button"
-        title={isFullscreen ? "Exit fullscreen" : "Fullscreen"}
-        className={cn(chromeBtn, isFullscreen && "bg-white/15 text-pitflix-primary")}
-        onClick={onToggleFullscreen}
+        title="Mini player — keep watching while you browse the app"
+        className={chromeBtn}
+        onClick={onMiniInApp}
       >
-        <Maximize className="h-4 w-4" />
+        <Minimize2 className="h-4 w-4" />
       </button>
       <button type="button" title="Close player" className={cn(chromeBtn, "hover:bg-red-500/25 hover:text-red-200")} onClick={onClose}>
         <X className="h-4 w-4" />

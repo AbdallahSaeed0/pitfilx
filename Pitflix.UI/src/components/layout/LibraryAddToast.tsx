@@ -1,8 +1,9 @@
 import { AnimatePresence, motion } from "framer-motion";
 import { CheckCircle2, AlertTriangle, X } from "lucide-react";
-import { useEffect } from "react";
+import { useEffect, useRef } from "react";
 import { useScanStore } from "../../store/scanStore";
 import { cn } from "../../utils/cn";
+import { useLiquidGlass } from "../ui/liquidGlass/useLiquidGlass";
 
 function kindLabel(kind: string) {
   if (kind === "movie") return "Movie";
@@ -14,6 +15,8 @@ function kindLabel(kind: string) {
 export function LibraryAddToast() {
   const visible = useScanStore((s) => s.libraryToastVisible);
   const dismiss = useScanStore((s) => s.dismissLibraryToast);
+  const toastRef = useRef<HTMLDivElement>(null);
+  const glass = useLiquidGlass(toastRef, { radius: 12, bezel: 12, strength: 14 });
 
   useEffect(() => {
     if (!visible) return;
@@ -31,8 +34,16 @@ export function LibraryAddToast() {
           animate={{ opacity: 1, y: 0, scale: 1 }}
           exit={{ opacity: 0, y: 8, scale: 0.98 }}
           transition={{ duration: 0.2 }}
-          className="pointer-events-auto fixed bottom-6 right-6 z-[220] w-[min(22rem,calc(100vw-2rem))] overflow-hidden rounded-xl border border-pitflix-card bg-pitflix-surface/95 pl-4 pr-2 py-3 shadow-xl shadow-black/50 backdrop-blur-md"
+          ref={toastRef}
+          className={cn(
+            "pointer-events-auto fixed bottom-6 right-6 z-[220] w-[min(22rem,calc(100vw-2rem))] overflow-hidden rounded-xl border pl-4 pr-2 py-3",
+            glass.active
+              ? "liquid-glass bg-[rgba(14,12,28,0.66)]"
+              : "border-pitflix-card bg-pitflix-surface/95 shadow-xl shadow-black/50 backdrop-blur-md",
+          )}
+          style={glass.style}
         >
+          {glass.filter}
           <button
             type="button"
             onClick={() => dismiss()}

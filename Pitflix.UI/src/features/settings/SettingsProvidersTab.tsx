@@ -13,6 +13,7 @@ import {
   verifyStremioAddonManifest,
 } from "../../api/settings";
 import type { SettingsPageModel } from "./useSettingsPageModel";
+import { SettingsLetterboxdWatchlistSection } from "./SettingsLetterboxdWatchlistSection";
 
 type Props = { model: SettingsPageModel };
 
@@ -858,6 +859,10 @@ export function SettingsProvidersTab({ model }: Props) {
               </div>
             )}
           </section>
+
+          <div className="mt-4">
+            <SettingsLetterboxdWatchlistSection />
+          </div>
 
     </>
   );

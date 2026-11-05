@@ -1,4 +1,7 @@
+import 'dart:async';
+import 'dart:collection';
 import 'dart:convert';
+import 'package:http/http.dart' as http;
 import 'http_client.dart';
 import '../config/app_config.dart';
 import '../models/cast_member.dart';
@@ -8,6 +11,7 @@ import '../models/person_credit.dart';
 import '../models/person_profile.dart';
 import '../models/season.dart';
 import '../models/title_item.dart';
+import '../utils/disk_ttl_store.dart';
 import '../utils/persistent_json_cache.dart';
 import '../utils/ttl_cache.dart';
 
@@ -28,23 +32,31 @@ class TmdbService {
     TitleKind.show: TtlCache<List<TitleItem>>(),
   };
 
-  // Per-show cache for fetchEpisodeCount — a show's total episode count
-  // barely ever changes mid-season, but this was being re-fetched from TMDB
-  // (one call per currently-watching show, every single Home load/refresh)
-  // with no caching at all, which is most of why that section was slow.
-  static final Map<int, int?> _episodeCountCache = {};
-  static final Map<int, DateTime> _episodeCountCachedAt = {};
-  static const _episodeCountTtl = Duration(hours: 6);
+  // Compact per-show facts from `tv/{id}` (episode count, next/last episode,
+  // name, poster, status), shared by fetchEpisodeCount / fetchNextEpisode /
+  // fetchLastEpisode / fetchShowSummary and Coming Soon's season-premiere
+  // scan. Those used to each call `tv/{id}` themselves — Home asked TMDB about
+  // the same show up to three times per load, and Next Episodes' lookup (one
+  // per series in the library) had no cache at all, so it re-ran in full on
+  // every Home load including RootShell's 5-minute auto-sync. Persisted to
+  // disk so a cold start doesn't re-ask about the whole library either.
+  static final _showFacts = DiskTtlStore('tmdb_show_facts_v1.json', maxEntries: 3000);
+  static const _showFactsTtl = Duration(hours: 6);
+  // An ended/canceled show's facts don't change; no need to re-check 4x a day.
+  static const _endedShowFactsTtl = Duration(days: 7);
+  static final Map<int, Future<Map<String, dynamic>?>> _showFactsInFlight = {};
 
-  // Per-(show, season) cache for fetchSeasonAirDates — UserLibraryService
-  // .fetchCurrentlyWatching calls this up to 3x per candidate show on every
-  // Home load to find the next unwatched aired episode, and a season's air
-  // dates don't change once the season has finished airing. Uncached, this
-  // was the dominant cost of a cold-start Currently Watching load (N shows x
-  // up to 3 sequential TMDB round trips each, every single time).
-  static final Map<String, Map<int, String>> _seasonAirDatesCache = {};
-  static final Map<String, DateTime> _seasonAirDatesCachedAt = {};
+  // Per-(show, season) air dates for fetchSeasonAirDates —
+  // UserLibraryService.fetchCurrentlyWatching asks for 2-3 seasons of every
+  // show the account has started, on every Home load. Persisted, and a
+  // season whose every episode has already aired is kept far longer since
+  // its dates won't change. Nonexistent seasons (TMDB 404 — the "maybe a
+  // next season exists" probe for every caught-up show) are cached as empty
+  // too; they used to be retried on every single load.
+  static final _seasonAirDates = DiskTtlStore('tmdb_season_air_dates_v1.json', maxEntries: 4000);
   static const _seasonAirDatesTtl = Duration(hours: 6);
+  static const _finishedSeasonAirDatesTtl = Duration(days: 30);
+  static final Map<String, Future<Map<int, String>>> _seasonAirDatesInFlight = {};
 
   // Per-title cache for fetchDetails — Title Detail's own full lookup (main
   // detail call + credits + every season's episode list for shows). That's
@@ -61,11 +73,12 @@ class TmdbService {
     for (final cache in _trendingCache.values) {
       cache.clear();
     }
-    _episodeCountCache.clear();
-    _episodeCountCachedAt.clear();
-    _seasonAirDatesCache.clear();
-    _seasonAirDatesCachedAt.clear();
+    _showFacts.clear();
+    _showFactsInFlight.clear();
+    _seasonAirDates.clear();
+    _seasonAirDatesInFlight.clear();
     _detailsCache.clear();
+    _comingSoonSnapshot.clear();
     // Otherwise "clear cache" would leave the on-disk copies behind and the next launch would
     // restore exactly what the user just cleared.
     PersistentJsonCache.clear();
@@ -278,24 +291,68 @@ class TmdbService {
     }
   }
 
+  /// The fields of `tv/{id}` that Home needs, fetched at most once per show
+  /// per TTL (see [_showFacts]) and shared by concurrent callers — Currently
+  /// Watching, Next Episodes and Coming Soon all ask about overlapping shows
+  /// in the same burst. Null on failure (not cached, so the next load retries).
+  static Future<Map<String, dynamic>?> _fetchShowFacts(int tmdbId) async {
+    final cached = await _showFacts.read('$tmdbId');
+    final value = cached?.value;
+    if (cached != null && value is Map<String, dynamic>) {
+      final status = value['status'] as String?;
+      final ended = status == 'Ended' || status == 'Canceled';
+      if (cached.age < (ended ? _endedShowFactsTtl : _showFactsTtl)) {
+        return value;
+      }
+    }
+    return _showFactsInFlight[tmdbId] ??= () async {
+      try {
+        final json = await _get('tv/$tmdbId');
+        Map<String, dynamic>? episodeRef(Object? raw) {
+          if (raw is! Map<String, dynamic>) return null;
+          return {
+            'name': raw['name'],
+            'season_number': raw['season_number'],
+            'episode_number': raw['episode_number'],
+            'air_date': raw['air_date'],
+          };
+        }
+
+        final facts = <String, dynamic>{
+          'name': json['name'],
+          'poster_path': json['poster_path'],
+          'status': json['status'],
+          'number_of_episodes': json['number_of_episodes'],
+          'next_episode_to_air': episodeRef(json['next_episode_to_air']),
+          'last_episode_to_air': episodeRef(json['last_episode_to_air']),
+        };
+        _showFacts.set('$tmdbId', facts);
+        return facts;
+      } catch (_) {
+        return null;
+      } finally {
+        _showFactsInFlight.remove(tmdbId);
+      }
+    }();
+  }
+
+  static ({String? episodeName, int? season, int? episode, DateTime? airDate})?
+  _episodeRef(Object? raw) {
+    if (raw is! Map<String, dynamic>) return null;
+    return (
+      episodeName: raw['name'] as String?,
+      season: (raw['season_number'] as num?)?.toInt(),
+      episode: (raw['episode_number'] as num?)?.toInt(),
+      airDate: DateTime.tryParse(raw['air_date'] as String? ?? ''),
+    );
+  }
+
   /// Total episode count for a show — used to turn Home's "N episodes
   /// watched" Currently Watching text into a watched/total progress bar.
   /// Null on failure (progress bar just doesn't show for that card).
   static Future<int?> fetchEpisodeCount(int tmdbId) async {
-    final cachedAt = _episodeCountCachedAt[tmdbId];
-    if (cachedAt != null &&
-        DateTime.now().difference(cachedAt) < _episodeCountTtl) {
-      return _episodeCountCache[tmdbId];
-    }
-    try {
-      final json = await _get('tv/$tmdbId');
-      final count = (json['number_of_episodes'] as num?)?.toInt();
-      _episodeCountCache[tmdbId] = count;
-      _episodeCountCachedAt[tmdbId] = DateTime.now();
-      return count;
-    } catch (_) {
-      return null;
-    }
+    final facts = await _fetchShowFacts(tmdbId);
+    return (facts?['number_of_episodes'] as num?)?.toInt();
   }
 
   /// This show's next scheduled episode straight from TMDB's
@@ -305,46 +362,16 @@ class TmdbService {
   static Future<
     ({String? episodeName, int? season, int? episode, DateTime? airDate})?
   >
-  fetchNextEpisode(int tmdbId) async {
-    try {
-      final json = await _get('tv/$tmdbId');
-      final next = json['next_episode_to_air'] as Map<String, dynamic>?;
-      if (next == null) return null;
-      return (
-        episodeName: next['name'] as String?,
-        season: (next['season_number'] as num?)?.toInt(),
-        episode: (next['episode_number'] as num?)?.toInt(),
-        airDate: DateTime.tryParse(next['air_date'] as String? ?? ''),
-      );
-    } catch (_) {
-      return null;
-    }
-  }
+  fetchNextEpisode(int tmdbId) async =>
+      _episodeRef((await _fetchShowFacts(tmdbId))?['next_episode_to_air']);
 
   /// This show's most recently aired episode straight from TMDB's
-  /// `last_episode_to_air` — used to detect "a new episode just dropped" for
-  /// a show the account already finished (see
-  /// UserLibraryService.fetchCurrentlyWatching), so it resurfaces there
-  /// instead of staying hidden as "completed" forever. Null when TMDB has
-  /// nothing, or on failure.
+  /// `last_episode_to_air`. Null when TMDB has nothing, or on failure.
   static Future<
     ({String? episodeName, int? season, int? episode, DateTime? airDate})?
   >
-  fetchLastEpisode(int tmdbId) async {
-    try {
-      final json = await _get('tv/$tmdbId');
-      final last = json['last_episode_to_air'] as Map<String, dynamic>?;
-      if (last == null) return null;
-      return (
-        episodeName: last['name'] as String?,
-        season: (last['season_number'] as num?)?.toInt(),
-        episode: (last['episode_number'] as num?)?.toInt(),
-        airDate: DateTime.tryParse(last['air_date'] as String? ?? ''),
-      );
-    } catch (_) {
-      return null;
-    }
-  }
+  fetchLastEpisode(int tmdbId) async =>
+      _episodeRef((await _fetchShowFacts(tmdbId))?['last_episode_to_air']);
 
   /// Episode number → air date for one season — a leaner cousin of
   /// [_fetchTvSeason] (which also pulls title/runtime/still for the full
@@ -352,35 +379,65 @@ class TmdbService {
   /// UserLibraryService.fetchCurrentlyWatching to find the first aired-but-
   /// unwatched episode, mirroring the desktop app's
   /// `FindNextUndownloadedAiredEpisodeAsync`. Null episodes with no air date
-  /// are simply omitted (can't tell if they've aired). Empty map on failure.
+  /// are simply omitted (can't tell if they've aired). Empty map on failure,
+  /// and for a season TMDB doesn't have (404).
   static Future<Map<int, String>> fetchSeasonAirDates(
     int tvId,
     int seasonNumber,
   ) async {
     final key = '$tvId-$seasonNumber';
-    final cachedAt = _seasonAirDatesCachedAt[key];
-    if (cachedAt != null &&
-        DateTime.now().difference(cachedAt) < _seasonAirDatesTtl) {
-      return _seasonAirDatesCache[key]!;
+    final cached = await _seasonAirDates.read(key);
+    final value = cached?.value;
+    if (cached != null && value is Map<String, dynamic>) {
+      final dates = {
+        for (final e in value.entries) int.parse(e.key): e.value as String,
+      };
+      final ttl = _isFinishedSeason(dates)
+          ? _finishedSeasonAirDatesTtl
+          : _seasonAirDatesTtl;
+      if (cached.age < ttl) return dates;
     }
-    try {
-      final json = await _get('tv/$tvId/season/$seasonNumber');
-      final episodesJson = (json['episodes'] as List? ?? [])
-          .cast<Map<String, dynamic>>();
-      final result = <int, String>{};
-      for (final e in episodesJson) {
-        final number = (e['episode_number'] as num?)?.toInt();
-        final airDate = e['air_date'] as String?;
-        if (number != null && airDate != null && airDate.isNotEmpty) {
-          result[number] = airDate;
+    return _seasonAirDatesInFlight[key] ??= () async {
+      try {
+        final json = await _get('tv/$tvId/season/$seasonNumber');
+        final episodesJson = (json['episodes'] as List? ?? [])
+            .cast<Map<String, dynamic>>();
+        final result = <int, String>{};
+        for (final e in episodesJson) {
+          final number = (e['episode_number'] as num?)?.toInt();
+          final airDate = e['air_date'] as String?;
+          if (number != null && airDate != null && airDate.isNotEmpty) {
+            result[number] = airDate;
+          }
         }
+        _seasonAirDates.set(key, {
+          for (final e in result.entries) '${e.key}': e.value,
+        });
+        return result;
+      } on TmdbHttpException catch (e) {
+        // No such season — remember that rather than asking again next load.
+        // (Only within the short TTL: a new season can get announced.)
+        if (e.statusCode == 404) _seasonAirDates.set(key, <String, String>{});
+        return const <int, String>{};
+      } catch (_) {
+        return const <int, String>{};
+      } finally {
+        _seasonAirDatesInFlight.remove(key);
       }
-      _seasonAirDatesCache[key] = result;
-      _seasonAirDatesCachedAt[key] = DateTime.now();
-      return result;
-    } catch (_) {
-      return const {};
-    }
+    }();
+  }
+
+  /// Every listed episode aired more than two weeks ago — TMDB occasionally
+  /// shuffles dates around a finale, so a just-finished season still gets the
+  /// short TTL for a while. An empty map (unknown/nonexistent season) is never
+  /// "finished": a next season can be announced at any time.
+  static bool _isFinishedSeason(Map<int, String> dates) {
+    if (dates.isEmpty) return false;
+    final cutoff = DateTime.now().subtract(const Duration(days: 14));
+    return dates.values.every((d) {
+      final parsed = DateTime.tryParse(d);
+      return parsed != null && parsed.isBefore(cutoff);
+    });
   }
 
   /// Bare name/poster for a show — used to backfill Currently Watching rows
@@ -390,15 +447,12 @@ class TmdbService {
   static Future<({String title, String? posterPath})?> fetchShowSummary(
     int tmdbId,
   ) async {
-    try {
-      final json = await _get('tv/$tmdbId');
-      return (
-        title: json['name'] as String? ?? 'Untitled',
-        posterPath: json['poster_path'] as String?,
-      );
-    } catch (_) {
-      return null;
-    }
+    final facts = await _fetchShowFacts(tmdbId);
+    if (facts == null) return null;
+    return (
+      title: facts['name'] as String? ?? 'Untitled',
+      posterPath: facts['poster_path'] as String?,
+    );
   }
 
   /// Cast for a movie or show, via TMDB's own `/credits` endpoint — works
@@ -635,17 +689,13 @@ class TmdbService {
         batch.map((show) async {
           final id = (show['id'] as num).toInt();
           try {
-            final json = await _get('tv/$id');
-            final next = json['next_episode_to_air'] as Map<String, dynamic>?;
+            final next = await fetchNextEpisode(id);
             if (next == null) return null;
-            final seasonNum = (next['season_number'] as num?)?.toInt();
-            final episodeNum = (next['episode_number'] as num?)?.toInt();
-            if (seasonNum == null || seasonNum < 2 || episodeNum != 1) {
+            final seasonNum = next.season;
+            if (seasonNum == null || seasonNum < 2 || next.episode != 1) {
               return null;
             }
-            final airDate = DateTime.tryParse(
-              next['air_date'] as String? ?? '',
-            );
+            final airDate = next.airDate;
             if (airDate == null || !inWindow(airDate)) return null;
             return ComingSoonItem(
               tmdbId: id,
@@ -669,7 +719,37 @@ class TmdbService {
     final tv = [...newSeries, ...returning].take(40).toList();
     final combined = [...movies.take(30), ...tv];
     _comingSoonCache.set(combined);
+    _comingSoonSnapshot.set('coming_soon', [
+      for (final item in combined) item.toJson(),
+    ]);
     return combined;
+  }
+
+  /// The last Coming Soon list, kept on disk so Home can paint it on a cold
+  /// start while [fetchComingSoon] rebuilds it (dozens of TMDB calls when its
+  /// caches are cold). Anything that has since been released is dropped.
+  static final _comingSoonSnapshot = DiskTtlStore(
+    'coming_soon_snapshot_v1.json',
+    maxEntries: 1,
+  );
+
+  static Future<List<ComingSoonItem>?> cachedComingSoon() async {
+    try {
+      final cached = await _comingSoonSnapshot.read('coming_soon');
+      final list = cached?.value;
+      if (list is! List) return null;
+      final now = DateTime.now();
+      final today = DateTime(now.year, now.month, now.day);
+      return [
+        for (final raw in list.cast<Map<String, dynamic>>())
+          if (ComingSoonItem.fromJson(raw) case final item
+              when item.releaseDate != null &&
+                  !item.releaseDate!.isBefore(today))
+            item,
+      ];
+    } catch (_) {
+      return null;
+    }
   }
 
   /// Actor bio + "known for" filmography, straight from TMDB (`/person/{id}`
@@ -760,6 +840,36 @@ class TmdbService {
   /// the whole run staying rate-limited.
   static DateTime? _rateLimitedUntil;
 
+  /// Cap on TMDB requests in flight at once. Home's cold load fans out per
+  /// show (Currently Watching's season probes, Next Episodes, Coming Soon's
+  /// premiere scan) and used to fire them all simultaneously — hundreds of
+  /// requests for a real library, which tripped TMDB's rate limit, and then
+  /// [_rateLimitedUntil] stalled *every* request (trending included) behind
+  /// the cooldown. Queued requests run in arrival order, so whatever a screen
+  /// asked for first still lands first.
+  static const _maxConcurrentRequests = 8;
+  static int _activeRequests = 0;
+  static final Queue<Completer<void>> _requestWaiters = Queue();
+
+  static Future<void> _acquireRequestSlot() {
+    if (_activeRequests < _maxConcurrentRequests) {
+      _activeRequests++;
+      return Future.value();
+    }
+    final waiter = Completer<void>();
+    _requestWaiters.add(waiter);
+    return waiter.future;
+  }
+
+  static void _releaseRequestSlot() {
+    if (_requestWaiters.isNotEmpty) {
+      // Hand the slot straight to the next waiter; the active count is unchanged.
+      _requestWaiters.removeFirst().complete();
+    } else {
+      _activeRequests--;
+    }
+  }
+
   static Future<Map<String, dynamic>> _get(
     String path, {
     Map<String, String>? params,
@@ -791,15 +901,21 @@ class TmdbService {
       ...?params,
     };
     final url = Uri.parse('$_base/$path').replace(queryParameters: queryParams);
-    final res = await PitflixHttp.client.get(
-      url,
-      headers: useBearer
-          ? {
-              'Authorization': 'Bearer ${AppConfig.tmdbReadAccessToken}',
-              'Accept': 'application/json',
-            }
-          : {'Accept': 'application/json'},
-    );
+    await _acquireRequestSlot();
+    final http.Response res;
+    try {
+      res = await PitflixHttp.client.get(
+        url,
+        headers: useBearer
+            ? {
+                'Authorization': 'Bearer ${AppConfig.tmdbReadAccessToken}',
+                'Accept': 'application/json',
+              }
+            : {'Accept': 'application/json'},
+      );
+    } finally {
+      _releaseRequestSlot();
+    }
 
     if (res.statusCode == 429) {
       // Respect TMDB's own Retry-After if it sent one; otherwise a

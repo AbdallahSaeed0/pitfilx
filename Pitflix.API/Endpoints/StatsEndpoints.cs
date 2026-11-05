@@ -144,7 +144,7 @@ public static class StatsEndpoints
             }, jsonSerializerOptions);
         });
 
-        app.MapPost("/api/episodes/{id:int}/watch", async (int id, EpisodeWatchBody body, LibraryRepository repo, CancellationToken ct) =>
+        app.MapPost("/api/episodes/{id:int}/watch", async (int id, EpisodeWatchBody body, LibraryRepository repo, Microsoft.Extensions.Caching.Memory.IMemoryCache memoryCache, CancellationToken ct) =>
         {
             var status = string.IsNullOrWhiteSpace(body.WatchStatus)
                 ? WatchStatuses.Unwatched
@@ -153,6 +153,10 @@ public static class StatsEndpoints
                 return Results.BadRequest();
 
             await repo.UpdateEpisodeWatchStatusAsync(id, status, ct).ConfigureAwait(false);
+            // Home's "Up Next" row is served from a 3-minute memory cache (see HomeEndpoints.cs) —
+            // without clearing it here, marking an episode watched wouldn't show up there until that
+            // cache naturally expired, no matter how promptly the frontend refetches.
+            memoryCache.Remove("home:watching-currently");
             return Results.Json(new { success = true }, jsonSerializerOptions);
         });
 

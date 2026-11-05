@@ -86,9 +86,15 @@ pub struct PlayerState {
     pub volume: f64,
     pub sub_visible: bool,
     pub sid: i64,
+    /// mpv `secondary-sid` — the second subtitle shown alongside `sid` (dual subtitles); -1 = off.
+    pub secondary_sid: i64,
     pub aid: i64,
     /// Seconds; mpv `sub-delay` (display sync offset).
     pub sub_delay: f64,
+    /// Bumped each time mpv finishes a seek (`MPV_EVENT_PLAYBACK_RESTART`, embedded player only),
+    /// with `time_pos` refreshed to where it actually landed — keyframe seeks don't land exactly
+    /// on the requested time, so the UI uses this to show the real position after a skip.
+    pub seek_seq: u64,
 }
 
 impl Default for PlayerState {
@@ -108,8 +114,10 @@ impl Default for PlayerState {
             volume: 0.0,
             sub_visible: true,
             sid: -1,
+            secondary_sid: -1,
             aid: -1,
             sub_delay: 0.0,
+            seek_seq: 0,
         }
     }
 }
@@ -126,4 +134,7 @@ pub struct PlayerTrack {
     pub lang: Option<String>,
     pub title: Option<String>,
     pub selected: Option<bool>,
+    /// mpv `external-filename` for subtitles loaded from a file — lets the UI find the track a
+    /// `SubAdd` just created (to make it the secondary subtitle).
+    pub external_filename: Option<String>,
 }

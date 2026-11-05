@@ -1,4 +1,5 @@
 import { useEffect, type RefObject } from "react";
+import { isPlayerCovering } from "../../store/playerCoverStore";
 
 type KeyboardState = {
   currentPath: string | null;
@@ -56,11 +57,14 @@ export function useDeviceKeyboardShortcuts(
   filterInputRef: RefObject<HTMLInputElement | null>,
   onOpenShortcuts: () => void,
   enabled: boolean,
+  globalSearchInputRef?: RefObject<HTMLInputElement | null>,
 ) {
   useEffect(() => {
     if (!enabled) return;
 
     const onKeyDown = (e: KeyboardEvent) => {
+      // Hidden under the full player (kept alive, see AppRoutes): its keys belong to the player.
+      if (isPlayerCovering()) return;
       const s = stateRef.current;
       const a = actionsRef.current;
       if (!s || !a) return;
@@ -101,8 +105,10 @@ export function useDeviceKeyboardShortcuts(
       if (e.ctrlKey && e.code === "KeyF") {
         e.preventDefault();
         e.stopPropagation();
-        filterInputRef.current?.focus();
-        filterInputRef.current?.select();
+        // Ctrl+Shift+F → the sidebar's "search all locations" box; plain Ctrl+F → this folder's filter.
+        const target = e.shiftKey && globalSearchInputRef?.current ? globalSearchInputRef.current : filterInputRef.current;
+        target?.focus();
+        target?.select();
         return;
       }
 

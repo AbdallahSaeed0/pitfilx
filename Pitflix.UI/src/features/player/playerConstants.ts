@@ -18,6 +18,9 @@ export function loadPlayerVolume(): number {
 }
 export const EPISODE_SUB_PICK_STORAGE_KEY = "pitflix.player.episodeSubtitlePick.v1";
 export const MAX_EPISODE_SUB_PICKS = 200;
+/** Per-show audio/subtitle track memory (language-based, carries across episodes). */
+export const SHOW_TRACK_PREFS_STORAGE_KEY = "pitflix.player.showTrackPrefs.v1";
+export const MAX_SHOW_TRACK_PREFS = 300;
 
 /** Emergency-only kill switch for the intro/outro skip button — normally the source
  *  whitelist in PlayerPage.tsx's `activeSkipSegment` (chapter/anilist only) is what keeps

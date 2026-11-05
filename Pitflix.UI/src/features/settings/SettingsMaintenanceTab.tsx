@@ -2,8 +2,11 @@ import axios from "axios";
 import { useState } from "react";
 import { Link } from "react-router-dom";
 import { Wrench } from "lucide-react";
+import { invoke, isTauri } from "@tauri-apps/api/core";
+import { open, save } from "@tauri-apps/plugin-dialog";
 import { cleanupLibrary, cleanupMissingFiles, refreshLibraryArtwork } from "../../api/library";
 import { clearImageCache, clearRatingsCache } from "../../api/maintenance";
+import { fetchLibraryBackupJson, importLibraryBackupJson } from "../../api/backup";
 import { runTrailerIngestion } from "../../api/homeDiscover";
 import { queueRatingsLibraryBackfill, queueRatingsStaleSweep } from "../../api/ratings";
 import { startScan } from "../../api/scan";
@@ -14,6 +17,9 @@ type Props = { model: SettingsPageModel };
 export function SettingsMaintenanceTab({ model }: Props) {
   const [ratingsCacheClearBusy, setRatingsCacheClearBusy] = useState(false);
   const [ratingsCacheClearMsg, setRatingsCacheClearMsg] = useState<string | null>(null);
+  const [backupExportBusy, setBackupExportBusy] = useState(false);
+  const [backupImportBusy, setBackupImportBusy] = useState(false);
+  const [backupMsg, setBackupMsg] = useState<string | null>(null);
   const {
     data,
     scanBusy,
@@ -513,6 +519,81 @@ export function SettingsMaintenanceTab({ model }: Props) {
               >
                 🔁 Reset DB
               </button>
+              <div className="col-span-2 flex flex-col gap-2.5 rounded-xl border border-sky-500/20 bg-sky-950/15 px-4 py-3.5">
+                <p className="mb-0.5 text-[10px] font-semibold uppercase tracking-wide text-pitflix-muted">
+                  Backup &amp; restore
+                </p>
+                <p className="text-[11px] leading-snug text-pitflix-muted">
+                  Export saves your library, lists, watch history, cast data and file paths to a JSON file — no
+                  images or video files, just the data needed to rebuild your library. Import merges a backup back
+                  in: it only fills in what's missing and never overwrites or deletes anything already here.
+                </p>
+                <div className="grid grid-cols-2 gap-2">
+                  <button
+                    type="button"
+                    disabled={backupExportBusy}
+                    className="h-10 rounded-xl border border-sky-400/35 bg-pitflix-bg text-xs font-medium text-sky-100 transition-all hover:border-sky-400/55 hover:bg-sky-500/15 disabled:opacity-50"
+                    onClick={() => {
+                      setBackupMsg(null);
+                      setBackupExportBusy(true);
+                      void (async () => {
+                        if (!isTauri()) {
+                          setBackupMsg("Backup export is only available in the desktop app.");
+                          return;
+                        }
+                        const targetPath = await save({
+                          defaultPath: `pitflix-backup-${new Date().toISOString().slice(0, 10)}.json`,
+                          filters: [{ name: "Pitflix backup", extensions: ["json"] }],
+                        });
+                        if (!targetPath) return;
+                        const json = await fetchLibraryBackupJson();
+                        await invoke("backup_write_text_file", { path: targetPath, contents: json });
+                        setBackupMsg(`Backup saved to ${targetPath}.`);
+                      })()
+                        .catch((err) => setBackupMsg(formatScanOrApiError(err)))
+                        .finally(() => setBackupExportBusy(false));
+                    }}
+                  >
+                    {backupExportBusy ? "Exporting…" : "⬇️ Export backup"}
+                  </button>
+                  <button
+                    type="button"
+                    disabled={backupImportBusy}
+                    className="h-10 rounded-xl border border-sky-400/25 bg-pitflix-bg text-xs font-medium text-sky-100/95 transition-all hover:border-sky-400/45 hover:bg-sky-500/12 disabled:opacity-50"
+                    onClick={() => {
+                      setBackupMsg(null);
+                      setBackupImportBusy(true);
+                      void (async () => {
+                        if (!isTauri()) {
+                          setBackupMsg("Backup import is only available in the desktop app.");
+                          return;
+                        }
+                        const sourcePath = await open({
+                          multiple: false,
+                          filters: [{ name: "Pitflix backup", extensions: ["json"] }],
+                        });
+                        if (!sourcePath || Array.isArray(sourcePath)) return;
+                        const json = await invoke<string>("backup_read_text_file", { path: sourcePath });
+                        const r = await importLibraryBackupJson(json);
+                        setBackupMsg(
+                          `Restored: ${r.moviesAdded} movies, ${r.showsAdded} series, ${r.episodesAdded} episodes ` +
+                            `added (+${r.moviesUpdated + r.showsUpdated + r.episodesUpdated} progress updates), ` +
+                            `${r.castMembersAdded} cast rows, ${r.libraryFoldersAdded} library folders, ` +
+                            `${r.listsAdded} lists (+${r.listItemsAdded} items), ${r.watchHistoryAdded} history rows, ` +
+                            `${r.ratingsAdded} ratings, ${r.settingsAdded} settings` +
+                            `${r.traktRestored ? ", Trakt connection" : ""}.`,
+                        );
+                        void qc.invalidateQueries();
+                      })()
+                        .catch((err) => setBackupMsg(formatScanOrApiError(err)))
+                        .finally(() => setBackupImportBusy(false));
+                    }}
+                  >
+                    {backupImportBusy ? "Importing…" : "⬆️ Import backup"}
+                  </button>
+                </div>
+                {backupMsg ? <p className="text-[11px] leading-snug text-sky-100/90">{backupMsg}</p> : null}
+              </div>
               <div className="col-span-2 flex flex-col gap-2.5 rounded-xl border border-emerald-500/15 bg-emerald-950/10 px-4 py-3">
                 <p className="text-[11px] leading-snug text-pitflix-muted">
                   Only downloads metadata for titles that have never completed a prefetch (empty{" "}

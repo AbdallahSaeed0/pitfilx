@@ -1,4 +1,5 @@
 import { motion } from "framer-motion";
+import { AnimatedNavIcon } from "./AnimatedNavIcons";
 import { useState } from "react";
 import { NavLink, useLocation } from "react-router-dom";
 import { cn } from "../../../utils/cn";
@@ -32,14 +33,20 @@ export function TopDockItem({ item, offlineMode }: Props) {
       animate={{ scale: hovered && !blocked ? 1.06 : 1 }}
       transition={{ type: "spring", stiffness: 450, damping: 26 }}
     >
-      <motion.span
-        className="inline-flex shrink-0"
-        style={item.anim.style}
-        animate={hovered && !blocked ? item.anim.hover : {}}
-        transition={item.anim.trans ?? { type: "spring", stiffness: 350, damping: 12 }}
-      >
-        {item.rawIcon}
-      </motion.span>
+      {item.iconId ? (
+        <span className="inline-flex shrink-0">
+          <AnimatedNavIcon id={item.iconId} hovered={hovered && !blocked} className="h-4 w-4" />
+        </span>
+      ) : (
+        <motion.span
+          className="inline-flex shrink-0"
+          style={item.anim.style}
+          animate={hovered && !blocked ? item.anim.hover : {}}
+          transition={item.anim.trans ?? { type: "spring", stiffness: 350, damping: 12 }}
+        >
+          {item.rawIcon}
+        </motion.span>
+      )}
       <span className="whitespace-nowrap">{item.label}</span>
     </motion.span>
   );

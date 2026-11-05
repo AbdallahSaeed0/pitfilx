@@ -2,6 +2,7 @@ import { useQuery } from "@tanstack/react-query";
 import { ChevronRight, CirclePlay, Film } from "lucide-react";
 import { useState } from "react";
 import { Link } from "react-router-dom";
+import { HOME_COLD_START_RETRY } from "../../api/client";
 import { getUpcomingTrailers, type TrailerCard } from "../../api/homeDiscover";
 import { TrailerModal } from "../../components/trailers/TrailerModal";
 import { HorizontalScrollRow } from "../../components/ui/HorizontalScrollRow";
@@ -18,6 +19,7 @@ export function ComingSoonTrailersSection({ embedded = false }: Props) {
     staleTime: 5 * 60_000,
     gcTime: 30 * 60_000,
     refetchInterval: 10 * 60_000,
+    ...HOME_COLD_START_RETRY,
   });
 
   const refreshing = q.isFetching && !q.isPending;

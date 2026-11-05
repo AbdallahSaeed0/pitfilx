@@ -2,6 +2,7 @@ import { useQuery } from "@tanstack/react-query";
 import { ChevronRight, CirclePlay, Play } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { Link } from "react-router-dom";
+import { HOME_COLD_START_RETRY } from "../../api/client";
 import { getLatestTrailers, type TrailerCard } from "../../api/homeDiscover";
 import { TrailerModal } from "../../components/trailers/TrailerModal";
 import { HorizontalScrollRow } from "../../components/ui/HorizontalScrollRow";
@@ -58,6 +59,7 @@ export function LatestTrailersSection({ embedded = false }: LatestTrailersProps)
     // unmounts — so closing/reopening the app before 30 continuous minutes elapsed meant Home
     // never saw new trailers even though ingestion had produced them server-side.
     refetchOnMount: 'always',
+    ...HOME_COLD_START_RETRY,
   });
 
   // Persist every successful fetch, and flag genuinely new trailers for a brief highlight

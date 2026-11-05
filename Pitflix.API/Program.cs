@@ -27,6 +27,7 @@ using Pitflix.Core.Migrations;
 using Pitflix.Core.Models;
 using Pitflix.Core.Parser;
 using Pitflix.Core.Scanner;
+using Pitflix.Core.Net;
 using Pitflix.Core.Services;
 
 var builder = WebApplication.CreateBuilder(args);
@@ -98,6 +99,8 @@ builder.Services.AddHostedService<NextAiringRefreshHostedService>();
 builder.Services.AddScoped<LibraryRecommendationsService>();
 builder.Services.AddHostedService<LibraryRecommendationsHostedService>();
 builder.Services.AddMemoryCache();
+// Every IHttpClientFactory client fails fast while offline instead of waiting out its timeout.
+builder.Services.ConfigureHttpClientDefaults(b => b.AddHttpMessageHandler(() => new OfflineGateHandler()));
 builder.Services.AddHttpClient();
 builder.Services.AddHttpClient("Wikidata", c =>
 {
@@ -105,8 +108,23 @@ builder.Services.AddHttpClient("Wikidata", c =>
     c.Timeout = TimeSpan.FromSeconds(30);
     c.DefaultRequestHeaders.Add("User-Agent", "PitFlix/1.0 (awards lookup; contact via github)");
     c.DefaultRequestHeaders.Add("Accept", "application/sparql-results+json");
-});
+})
+// Awards were a live SPARQL query on every detail-page open (1-3.5 s each, measured). Saved to disk
+// like TMDB answers: served instantly, refreshed in the background once older than 30 days.
+.AddHttpMessageHandler(() => new PersistentHttpCacheHandler(
+    Path.Combine(Path.GetDirectoryName(LibraryPaths.DatabaseFilePath)!, "wikidata-cache.db"),
+    "query.wikidata.org", freshFor: TimeSpan.FromDays(30), networkTimeout: TimeSpan.FromSeconds(30)));
 builder.Services.AddSingleton<WikidataAwardsService>();
+// Season pages on Rotten Tomatoes / Metacritic (SeasonRatingsService) — both serve the full page to
+// a normal browser identity.
+builder.Services.AddHttpClient(nameof(SeasonRatingsService), c =>
+{
+    c.Timeout = TimeSpan.FromSeconds(15);
+    c.DefaultRequestHeaders.Add("User-Agent",
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0 Safari/537.36");
+    c.DefaultRequestHeaders.Add("Accept-Language", "en-US,en;q=0.9");
+});
+builder.Services.AddSingleton<SeasonRatingsService>();
 builder.Services.AddSingleton<IResolvedApiKeysAccessor, ResolvedApiKeysAccessor>();
 builder.Services.AddSingleton<ITmdbClientFactory, TmdbClientFactory>();
 builder.Services.AddSingleton<PhpImdbGrabberClient>();
@@ -132,6 +150,11 @@ builder.Services.AddScoped<ImdbParentsGuideService>();
 builder.Services.AddHostedService<ParentsGuidePrewarmHostedService>();
 builder.Services.AddSingleton<RatingsRefreshQueue>();
 builder.Services.AddHostedService<RatingsRefreshHostedService>();
+builder.Services.AddHostedService<EpisodeRatingsBackfillHostedService>();
+builder.Services.AddSingleton<ImdbDatasetService>();
+builder.Services.AddHostedService(sp => sp.GetRequiredService<ImdbDatasetService>());
+builder.Services.AddSingleton<OfflineLibraryPreloadService>();
+builder.Services.AddHostedService(sp => sp.GetRequiredService<OfflineLibraryPreloadService>());
 builder.Services.AddSingleton<IAwardsDataProvider, FileAwardsDataProvider>();
 builder.Services.AddScoped<AwardNomineeCacheRepository>();
 builder.Services.AddSingleton<AwardsService>();
@@ -154,6 +177,8 @@ builder.Services.AddSingleton<OmdbRatingClient>();
 builder.Services.AddSingleton<TvdbService>();
 builder.Services.AddSingleton<FanartClient>();
 builder.Services.AddSingleton<Pitflix.API.Services.Letterboxd.LetterboxdService>();
+builder.Services.AddSingleton<Pitflix.API.Services.Letterboxd.LetterboxdWatchlistSyncService>();
+builder.Services.AddHostedService(sp => sp.GetRequiredService<Pitflix.API.Services.Letterboxd.LetterboxdWatchlistSyncService>());
 builder.Services.AddSingleton(sp =>
 {
     var cfg = sp.GetRequiredService<IConfiguration>();
@@ -174,6 +199,7 @@ builder.Services.AddScoped<SupabaseSyncService>();
 builder.Services.AddSingleton<SupabaseRestClient>();
 builder.Services.AddHostedService<SupabaseSyncHostedService>();
 builder.Services.AddScoped<LibraryExportBuilder>();
+builder.Services.AddScoped<LibraryBackupService>();
 builder.Services.AddSingleton<SupabaseAuthClient>();
 builder.Services.AddSingleton<SupabaseUserClient>();
 builder.Services.AddScoped<MobileAccountSyncService>();
@@ -196,6 +222,7 @@ await using (var scope = app.Services.CreateAsyncScope())
     await repo.EnsureSelectedImageColumnsAsync();
     await repo.EnsureEpisodeStillLocalPathColumnAsync();
     await repo.EnsureShowDroppedColumnAsync();
+    await repo.EnsureFileSizeColumnsAsync();
     await repo.EnsureListItemMetadataColumnsAsync();
     await repo.EnsureWatchHistoryResumeColumnsAsync();
     await repo.EnsureWatchStatusColumnsAsync();
@@ -244,9 +271,13 @@ await using (var scope = app.Services.CreateAsyncScope())
     await AddSupabaseSyncTablesMigration.RunIfNeededAsync(repo);
     await AddNextAiringCacheMigration.RunIfNeededAsync(repo);
     await AddRecommendationEngineMigration.RunIfNeededAsync(repo);
+    await AddTvdbArtworkCacheMigration.RunIfNeededAsync(repo);
+    await AddCompaniesJsonMigration.RunIfNeededAsync(repo);
     var awardNomineeCacheRepo = scope.ServiceProvider.GetRequiredService<AwardNomineeCacheRepository>();
     await awardNomineeCacheRepo.EnsureTableAsync(CancellationToken.None).ConfigureAwait(false);
     AppSettings.ResolveTmdbApiKeyFromSources(repo);
+    NetworkStatus.SetForcedOffline(
+        await repo.GetSettingAsync(OfflineEndpoints.OfflineModeSettingKey, CancellationToken.None).ConfigureAwait(false) == "1");
     AppSettings.ResolveOpenSubtitlesFromSources(repo);
     AppSettings.ResolveTraktCredentialsFromSources(repo);
     AppSettings.ResolveSupabaseCredentialsFromSources(repo);
@@ -363,6 +394,7 @@ app.MapLibraryDetailEndpoints(jsonSerializerOptions);
 
 app.MapLibraryEndpoints(jsonSerializerOptions);
 app.MapLibraryExportEndpoints(jsonSerializerOptions);
+app.MapLibraryBackupEndpoints(jsonSerializerOptions);
 app.MapMobileSyncEndpoints(jsonSerializerOptions);
 
 app.MapUnmatchedEndpoints(jsonSerializerOptions);
@@ -395,12 +427,14 @@ app.MapPsaEndpoints(jsonSerializerOptions);
 app.MapEztvEndpoints(jsonSerializerOptions);
 app.MapStremioAddonEndpoints(jsonSerializerOptions);
 app.MapRatingsEndpoints(jsonSerializerOptions);
+app.MapOfflineEndpoints(jsonSerializerOptions);
 app.MapAwardsEndpoints(jsonSerializerOptions);
 
 
 app.MapHomeEndpoints(jsonSerializerOptions);
 
 app.MapTrailersEndpoints(jsonSerializerOptions);
+app.MapCinemasEndpoints(jsonSerializerOptions);
 
 
 

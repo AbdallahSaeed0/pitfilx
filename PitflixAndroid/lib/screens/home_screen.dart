@@ -125,11 +125,21 @@ class _HomeScreenState extends State<HomeScreen> {
 
   Future<void> _loadNextEpisodes() async {
     setState(() => _nextEpisodesError = null);
+
+    // Instant stale paint from last session, like _loadCurrentlyWatching.
+    if (_nextEpisodes == null) {
+      final cached = await UserLibraryService.cachedNextEpisodes();
+      if (cached != null && mounted && _nextEpisodes == null) {
+        setState(() => _nextEpisodes = _excludeDropped(cached));
+      }
+    }
+
     try {
       final items = await UserLibraryService.fetchNextEpisodes();
       if (!mounted) return;
       final healed = await UserLibraryService.applyCustomArtwork(items);
       if (!mounted) return;
+      UserLibraryService.saveNextEpisodesSnapshot(healed);
       setState(() => _nextEpisodes = _excludeDropped(healed));
     } catch (e) {
       if (!mounted) return;
@@ -139,15 +149,25 @@ class _HomeScreenState extends State<HomeScreen> {
 
   Future<void> _loadComingSoon() async {
     setState(() => _comingSoonError = null);
+    List<ComingSoonItem> withoutDismissed(List<ComingSoonItem> items) {
+      final dismissed = AppSettings.dismissedComingSoonIds.value;
+      return items
+          .where((i) => !dismissed.contains('${i.tmdbId}-${i.mediaType}'))
+          .toList();
+    }
+
+    // Instant stale paint from last session while the live list rebuilds.
+    if (_comingSoon == null) {
+      final cached = await TmdbService.cachedComingSoon();
+      if (cached != null && mounted && _comingSoon == null) {
+        setState(() => _comingSoon = withoutDismissed(cached));
+      }
+    }
+
     try {
       final items = await TmdbService.fetchComingSoon();
       if (!mounted) return;
-      final dismissed = AppSettings.dismissedComingSoonIds.value;
-      setState(
-        () => _comingSoon = items
-            .where((i) => !dismissed.contains('${i.tmdbId}-${i.mediaType}'))
-            .toList(),
-      );
+      setState(() => _comingSoon = withoutDismissed(items));
     } catch (e) {
       if (!mounted) return;
       setState(() => _comingSoonError = e.toString());
@@ -203,12 +223,15 @@ class _HomeScreenState extends State<HomeScreen> {
       );
       if (!mounted) return;
 
-      final items = [
+      // Carries over the custom artwork already looked up for the first
+      // paint (same rows, same order) instead of asking Supabase again.
+      final healed = [
         for (var i = 0; i < rows.length; i++)
-          _currentlyWatchingItem(rows[i], episodeCounts[i]),
+          _currentlyWatchingItem(rows[i], episodeCounts[i]).copyWith(
+            posterPath: healedInitial[i].posterPath,
+            backdropPath: healedInitial[i].backdropPath,
+          ),
       ];
-      final healed = await UserLibraryService.applyCustomArtwork(items);
-      if (!mounted) return;
       setState(() => _currentlyWatching = _excludeDropped(healed));
     } catch (e) {
       if (!mounted) return;

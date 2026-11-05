@@ -18,6 +18,7 @@ import {
   nativePickFolder,
   saveSettings,
 } from "../../api/settings";
+import { setBackendOfflineMode } from "../../api/offline";
 import { getStats } from "../../api/stats";
 import { useDebounce } from "../../hooks/useDebounce";
 import { normalizePlayerEngine, type PlayerEngineId } from "../../playback/playerEngine";
@@ -178,9 +179,18 @@ export function useSettingsPageModel() {
   const [autostartMessage, setAutostartMessage] = useState<string | null>(null);
   const [settingsTab, setSettingsTab] = useState<SettingsTab>("library");
   const offlineMode = useAppPrefsStore((s) => s.offlineMode);
-  const setOfflineMode = useAppPrefsStore((s) => s.setOfflineMode);
+  const setOfflineModePref = useAppPrefsStore((s) => s.setOfflineMode);
+  /** The backend does the real work: with Offline mode on it serves saved data instead of calling out. */
+  const setOfflineMode = (value: boolean) => {
+    setOfflineModePref(value);
+    void setBackendOfflineMode(value)
+      .catch(() => {})
+      .finally(() => void qc.invalidateQueries({ queryKey: ["offline-status"] }));
+  };
   const liveTvEnabled = useAppPrefsStore((s) => s.liveTvEnabled);
   const setLiveTvEnabled = useAppPrefsStore((s) => s.setLiveTvEnabled);
+  const cinemasEnabled = useAppPrefsStore((s) => s.cinemasEnabled);
+  const setCinemasEnabled = useAppPrefsStore((s) => s.setCinemasEnabled);
   const defaultSpoilerProtection = useAppPrefsStore((s) => s.defaultSpoilerProtection);
   const setDefaultSpoilerProtection = useAppPrefsStore((s) => s.setDefaultSpoilerProtection);
   const browseAdBlockEnabled = useAppPrefsStore((s) => s.browseAdBlockEnabled);
@@ -704,6 +714,7 @@ export function useSettingsPageModel() {
     settingsTab, setSettingsTab,
     offlineMode, setOfflineMode,
     liveTvEnabled, setLiveTvEnabled,
+    cinemasEnabled, setCinemasEnabled,
     defaultSpoilerProtection, setDefaultSpoilerProtection,
     browseAdBlockEnabled, setBrowseAdBlockEnabled,
     autostartStatus,

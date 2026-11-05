@@ -8,6 +8,11 @@ public sealed class CurrentlyWatchingRow
     public int ShowTmdbId { get; init; }
     public string? PosterLocalPath { get; init; }
     public string? SelectedPosterPath { get; init; }
+    /// <summary>Show backdrop (user-selected first) — landscape art for the Home layouts.</summary>
+    public string? BackdropPath { get; init; }
+    /// <summary>Next episode's title / still, only when that episode is in the local library.</summary>
+    public string? NextEpisodeTitle { get; init; }
+    public string? NextEpisodeStillPath { get; init; }
 
     public int LastWatchedSeason { get; init; }
     public int LastWatchedEpisode { get; init; }

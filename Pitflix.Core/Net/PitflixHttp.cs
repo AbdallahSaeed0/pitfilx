@@ -15,7 +15,7 @@ public static class PitflixHttp
 
     public static HttpClient CreateClient(TimeSpan? timeout = null)
     {
-        var client = new HttpClient(CreateHandler(), disposeHandler: true);
+        var client = new HttpClient(new OfflineGateHandler(CreateHandler()), disposeHandler: true);
         if (timeout is { } t)
             client.Timeout = t;
         return client;

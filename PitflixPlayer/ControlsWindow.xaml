@@ -1095,6 +1095,18 @@
             </Border>
         </Popup>
 
+        <!-- ══ SKIP AMOUNT POPUP ═══════════════════════════════════════════ -->
+        <Popup x:Name="SkipSecondsPopup"
+               Placement="Absolute"
+               AllowsTransparency="True"
+               StaysOpen="False"
+               PopupAnimation="None">
+            <Border Background="#F01A1A1A" BorderBrush="#55444444" BorderThickness="1"
+                    CornerRadius="8" Padding="4" MinWidth="160">
+                <StackPanel x:Name="SkipSecondsMenuItems"/>
+            </Border>
+        </Popup>
+
         <!-- ══ AUDIO TRACKS POPUP ════════════════════════════════════════════ -->
         <Popup x:Name="AudioPopup"
                Placement="Absolute"

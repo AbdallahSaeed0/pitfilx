@@ -4,6 +4,7 @@ import { NavLink } from "react-router-dom";
 import { preloadRoute } from "../../../routes/lazyPages";
 import { cn } from "../../../utils/cn";
 import type { AppNavItemDef } from "./appNavItems";
+import { AnimatedNavIcon } from "./AnimatedNavIcons";
 import { SidebarCollapsedFlyout } from "./SidebarCollapsedFlyout";
 
 export type AppNavVariant = "sidebar" | "topDock" | "floatingDock";
@@ -36,7 +37,11 @@ function CollapsedSidebarRow({
   const anchorRef = useRef<HTMLDivElement>(null);
   const flyoutLabel = blocked ? `${item.label} — offline mode` : item.label;
 
-  const iconEl = (
+  const iconEl = item.iconId ? (
+    <span className="inline-flex shrink-0">
+      <AnimatedNavIcon id={item.iconId} hovered={hovered && !blocked} className="h-[22px] w-[22px]" />
+    </span>
+  ) : (
     <motion.div
       className="inline-flex shrink-0"
       style={item.anim.style}
@@ -140,7 +145,11 @@ export function AppNavItemRow({ item, variant, collapsed = false, offlineMode }:
     "text-pitflix-muted",
   );
 
-  const iconEl = (
+  const iconEl = item.iconId ? (
+    <span className="inline-flex shrink-0">
+      <AnimatedNavIcon id={item.iconId} hovered={hovered && !blocked} className="h-4 w-4" />
+    </span>
+  ) : (
     <motion.div
       className="inline-flex shrink-0"
       style={item.anim.style}

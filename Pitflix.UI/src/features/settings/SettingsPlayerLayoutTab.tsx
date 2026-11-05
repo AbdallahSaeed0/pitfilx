@@ -4,6 +4,7 @@ import { usePlayerLayoutPrefs } from "../../hooks/usePlayerLayoutPrefs";
 import { PlayerLayoutEditorModal } from "./player-layout/PlayerLayoutEditorModal";
 import { SettingsAppNavLayoutSection } from "./SettingsAppNavLayoutSection";
 import { SettingsLibrarySectionsSection } from "./SettingsLibrarySectionsSection";
+import { SettingsDetailLayoutSection } from "./SettingsDetailLayoutSection";
 
 function capitalizeSize(size: string): string {
   return size.charAt(0).toUpperCase() + size.slice(1);
@@ -32,6 +33,8 @@ export function SettingsPlayerLayoutTab() {
       <SettingsAppNavLayoutSection />
 
       <SettingsLibrarySectionsSection />
+
+      <SettingsDetailLayoutSection />
 
       <section
         id="settings-player-layout"

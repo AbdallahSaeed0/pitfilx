@@ -1,0 +1,18 @@
+{
+  "default": null,
+  "permission": [
+    {
+      "identifier": "allow-stream-player",
+      "description": "Online stream player: open/navigate/resize/close the embedded child webview",
+      "commands": {
+        "allow": [
+          "stream_player_open",
+          "stream_player_navigate",
+          "stream_player_resize",
+          "stream_player_close"
+        ],
+        "deny": []
+      }
+    }
+  ]
+}

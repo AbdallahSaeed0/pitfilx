@@ -687,6 +687,89 @@ public sealed class LetterboxdService
         return people;
     }
 
+    // ── Watchlist ────────────────────────────────────────────────────────────
+
+    public sealed record WatchlistEntry(string Slug, string Name);
+
+    /// <summary>Configured Letterboxd username, or null.</summary>
+    public Task<string?> GetConfiguredUsernameAsync(CancellationToken ct) => GetSettingAsync("LetterboxdUsername", ct);
+
+    /// <summary>True when the last request to Letterboxd came back 403/429 (Cloudflare block / rate limit).</summary>
+    public bool LastRequestWasBlocked => _rateLimitHit;
+
+    /// <summary>
+    /// Every film on the user's watchlist (slug + "Title (Year)"), walking all pages. <c>Complete</c> is
+    /// true only when pagination genuinely ended — a partial walk (block, fetch/parse failure) must never
+    /// be treated as the whole watchlist, or callers would "remove" everything past the break.
+    /// </summary>
+    public async Task<(bool Complete, List<WatchlistEntry> Items)> FetchWatchlistAsync(string username, CancellationToken ct)
+    {
+        _rateLimitHit = false;
+        var items = new List<WatchlistEntry>();
+        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        string? nextUrl = $"{BaseUrl}/{Uri.EscapeDataString(username)}/watchlist/";
+        var pages = 0;
+        while (nextUrl != null && pages < 80)
+        {
+            string? html = null;
+            for (var attempt = 0; attempt < 3 && html == null; attempt++)
+            {
+                if (attempt > 0)
+                    await Task.Delay(TimeSpan.FromSeconds(4 * attempt), ct).ConfigureAwait(false);
+                html = await GetHtmlAsync(nextUrl, ct).ConfigureAwait(false);
+            }
+            if (html == null) return (false, items);
+
+            string? nextHref;
+            try
+            {
+                using var doc = await Parser.ParseDocumentAsync(html, ct).ConfigureAwait(false);
+                var grid = doc.QuerySelectorAll("li.griditem");
+                foreach (var li in grid)
+                {
+                    var node = li.QuerySelector("[data-item-slug]");
+                    var slug = node?.GetAttribute("data-item-slug");
+                    if (string.IsNullOrWhiteSpace(slug) || !seen.Add(slug)) continue;
+                    items.Add(new WatchlistEntry(slug, node!.GetAttribute("data-item-name") ?? slug));
+                }
+                // A 200 with no grid on page 1 is an interstitial/blocked page, not an empty watchlist
+                // (an empty watchlist still renders, just without items — distinguish by the grid container).
+                if (grid.Length == 0 && pages == 0 && doc.QuerySelector(".poster-grid, ul.grid") == null &&
+                    !html.Contains("watchlist", StringComparison.OrdinalIgnoreCase))
+                    return (false, items);
+                nextHref = doc.QuerySelector("a.next")?.GetAttribute("href");
+            }
+            catch (Exception ex)
+            {
+                _log.LogWarning(ex, "Letterboxd: watchlist page parse failed at {Url}", nextUrl);
+                return (false, items);
+            }
+
+            pages++;
+            nextUrl = string.IsNullOrWhiteSpace(nextHref) ? null : new Uri(new Uri(BaseUrl), nextHref).ToString();
+        }
+        return (nextUrl == null, items);
+    }
+
+    /// <summary>TMDB id + type for a Letterboxd film slug, read from the film page's body attributes.</summary>
+    public async Task<(int TmdbId, string MediaType)?> ResolveSlugToTmdbAsync(string slug, CancellationToken ct)
+    {
+        var html = await GetHtmlAsync($"{BaseUrl}/film/{Uri.EscapeDataString(slug)}/", ct).ConfigureAwait(false);
+        if (html == null) return null;
+        // The page's TMDB link is the most reliable signal: TV miniseries Letterboxd lists as "films"
+        // (Chernobyl, When They See Us…) carry an EMPTY data-tmdb-id and data-tmdb-type="movie", but
+        // still link to themoviedb.org/tv/{id}.
+        var link = Regex.Match(html, @"themoviedb\.org/(movie|tv)/(\d+)");
+        if (link.Success && int.TryParse(link.Groups[2].Value, out var linkedId) && linkedId > 0)
+            return (linkedId, link.Groups[1].Value == "tv" ? "Series" : "Movie");
+
+        var id = Regex.Match(html, @"data-tmdb-id=""(\d+)""");
+        if (!id.Success || !int.TryParse(id.Groups[1].Value, out var tmdbId) || tmdbId <= 0) return null;
+        var type = Regex.Match(html, @"data-tmdb-type=""(\w+)""");
+        var mediaType = type.Success && type.Groups[1].Value.Equals("tv", StringComparison.OrdinalIgnoreCase) ? "Series" : "Movie";
+        return (tmdbId, mediaType);
+    }
+
     private async Task<string?> GetHtmlAsync(string url, CancellationToken ct)
     {
         try

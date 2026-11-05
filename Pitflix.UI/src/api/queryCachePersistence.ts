@@ -12,7 +12,11 @@ import { dehydrate, hydrate, type QueryClient } from "@tanstack/react-query";
  * Deliberately hand-rolled on react-query's own dehydrate/hydrate rather than pulling in
  * @tanstack/query-persist-client-core — it's ~40 lines and avoids another dependency in the bundle.
  */
-const STORAGE_KEY = "pitflix.query-cache.v1";
+// v2: bumped because v1 payloads can have Map/Set-shaped query data (e.g. useLibraryTmdbIndex)
+// silently flattened to plain "{}" by JSON.stringify before the replacer/reviver pair below
+// existed — those old payloads have no way to recover the real Map, so they're discarded outright
+// rather than partially restored into a broken shape.
+const STORAGE_KEY = "pitflix.query-cache.v2";
 
 /** Anything older than this is dropped rather than shown — a day-old Continue Watching row is noise. */
 const MAX_AGE_MS = 24 * 60 * 60_000;
@@ -25,9 +29,10 @@ const MAX_BYTES = 3_000_000;
 
 /**
  * Query keys never worth restoring: playback/session state that must reflect reality right now, and
- * scan progress that's meaningless once the process is gone.
+ * scan progress that's meaningless once the process is gone. Premiere showtimes keep their own
+ * 1-hour cache (`api/cinemas.ts`); a 24h-restored copy would outlive it.
  */
-const EXCLUDED_KEY_PREFIXES = ["scan", "player", "player-state", "now-playing", "api-health"];
+const EXCLUDED_KEY_PREFIXES = ["scan", "player", "player-state", "now-playing", "api-health", "premiere-times"];
 
 type PersistedPayload = {
   savedAt: number;
@@ -39,12 +44,33 @@ function isPersistable(queryKey: readonly unknown[]): boolean {
   return typeof head !== "string" || !EXCLUDED_KEY_PREFIXES.includes(head);
 }
 
+/**
+ * `JSON.stringify`/`JSON.parse` don't round-trip `Map`/`Set` — a plain `JSON.stringify(new Map(...))`
+ * silently produces `{}`, which then restores as a plain object with no `.get`/`.has`/etc., breaking
+ * any code that expected the real thing (e.g. `useLibraryTmdbIndex`'s `Map<number, number>` indexes).
+ * Tag them on the way out and reconstruct on the way in so cached query data survives intact.
+ */
+function replacer(_key: string, value: unknown): unknown {
+  if (value instanceof Map) return { __type: "Map", value: Array.from(value.entries()) };
+  if (value instanceof Set) return { __type: "Set", value: Array.from(value.values()) };
+  return value;
+}
+
+function reviver(_key: string, value: unknown): unknown {
+  if (value && typeof value === "object" && "__type" in value) {
+    const tagged = value as { __type: string; value: unknown };
+    if (tagged.__type === "Map" && Array.isArray(tagged.value)) return new Map(tagged.value as [unknown, unknown][]);
+    if (tagged.__type === "Set" && Array.isArray(tagged.value)) return new Set(tagged.value);
+  }
+  return value;
+}
+
 /** Restores a previous session's cache. Call before the first render; safe to call when nothing is stored. */
 export function restoreQueryCache(client: QueryClient): void {
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
     if (!raw) return;
-    const payload = JSON.parse(raw) as PersistedPayload;
+    const payload = JSON.parse(raw, reviver) as PersistedPayload;
     if (!payload?.state || typeof payload.savedAt !== "number") return;
     if (Date.now() - payload.savedAt > MAX_AGE_MS) {
       localStorage.removeItem(STORAGE_KEY);
@@ -73,7 +99,10 @@ export function startQueryCachePersistence(client: QueryClient): () => void {
           isPersistable(query.queryKey),
         shouldDehydrateMutation: () => false,
       });
-      const serialized = JSON.stringify({ savedAt: Date.now(), state } satisfies PersistedPayload);
+      const serialized = JSON.stringify(
+        { savedAt: Date.now(), state } satisfies PersistedPayload,
+        replacer,
+      );
       if (serialized.length > MAX_BYTES) return;
       localStorage.setItem(STORAGE_KEY, serialized);
     } catch {

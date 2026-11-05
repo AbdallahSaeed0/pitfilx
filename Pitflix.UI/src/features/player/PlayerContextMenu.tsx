@@ -1,4 +1,5 @@
 import {
+  Repeat,
   Camera,
   ChevronLeft,
   ChevronRight,
@@ -22,8 +23,11 @@ import {
 import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import { PassthroughStatusBadge } from "../../components/player/PassthroughStatusBadge";
 import { cn } from "../../utils/cn";
+import { useLiquidGlass } from "../../components/ui/liquidGlass/useLiquidGlass";
 import { PLAYER_SKIP_SECONDS_MAX, PLAYER_SKIP_SECONDS_MIN } from "./playerConstants";
 import type { MpvTrack } from "./playerTypes";
+import type { AbLoopState } from "./playerViewProps";
+import { fmtTime } from "./playerFormat";
 import { formatPlaybackSpeed, PLAYBACK_SPEED_PRESETS } from "./PlayerSpeedControl";
 
 const SKIP_SECONDS_PRESETS = [1, 2, 3, 5, 10, 15, 30, 60];
@@ -66,6 +70,9 @@ type Props = {
   onOpenEpisodeDetails: () => void;
   onScreenshot: () => void;
   onSaveClip: () => void;
+  /** Null hides the A-B loop row (external player can't loop). */
+  abLoop: AbLoopState | null;
+  onCycleAbLoop: () => void;
   onClosePlayer: () => void;
 };
 
@@ -142,9 +149,12 @@ export function PlayerContextMenu({
   onOpenEpisodeDetails,
   onScreenshot,
   onSaveClip,
+  abLoop,
+  onCycleAbLoop,
   onClosePlayer,
 }: Props) {
   const menuRef = useRef<HTMLDivElement>(null);
+  const glass = useLiquidGlass(menuRef, { radius: 12, bezel: 12, strength: 14 });
   const [pos, setPos] = useState({ x, y });
   const [panel, setPanel] = useState<Panel>("main");
   const [customSkipInput, setCustomSkipInput] = useState(String(skipSeconds));
@@ -198,10 +208,14 @@ export function PlayerContextMenu({
       ref={menuRef}
       role="menu"
       aria-label="Player menu"
-      className="fixed z-[120] min-w-[13.5rem] overflow-hidden rounded-xl border border-white/10 bg-[rgba(14,12,26,0.97)] py-1 shadow-2xl backdrop-blur-xl"
-      style={{ left: pos.x, top: pos.y }}
+      className={cn(
+        "fixed z-[120] min-w-[13.5rem] overflow-hidden rounded-xl border border-white/10 py-1",
+        glass.active ? "liquid-glass bg-[rgba(14,12,26,0.74)]" : "bg-[rgba(14,12,26,0.97)] shadow-2xl backdrop-blur-xl",
+      )}
+      style={{ left: pos.x, top: pos.y, ...glass.style }}
       onContextMenu={(e) => e.preventDefault()}
     >
+      {glass.filter}
       {panel === "main" ? (
         <>
           <p className="truncate border-b border-white/8 px-3 py-2 text-[11px] font-medium text-pitflix-muted">
@@ -307,6 +321,22 @@ export function PlayerContextMenu({
             disabled={transportDisabled}
             onClick={() => run(onSaveClip)}
           />
+          {abLoop ? (
+            <MenuRow
+              label={
+                abLoop.a == null
+                  ? "A-B loop: set start here"
+                  : abLoop.b == null
+                    ? `A-B loop: set end here (start ${fmtTime(Math.round(abLoop.a))})`
+                    : `Clear A-B loop (${fmtTime(Math.round(abLoop.a))} – ${fmtTime(Math.round(abLoop.b))})`
+              }
+              icon={Repeat}
+              checked={abLoop.a != null && abLoop.b != null}
+              disabled={transportDisabled}
+              trailing={<span className="text-[10px] font-semibold text-white/35">B</span>}
+              onClick={() => run(onCycleAbLoop)}
+            />
+          ) : null}
           <MenuSeparator />
           <MenuRow label="Close player" icon={X} onClick={() => run(onClosePlayer)} />
         </>

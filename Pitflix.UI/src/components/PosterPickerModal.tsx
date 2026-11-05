@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { AnimatePresence, motion } from "framer-motion";
+import { useQueryClient, type QueryClient } from "@tanstack/react-query";
 import { API_ORIGIN } from "../api/client";
 import { getTvdbArtworks, TVDB_ARTWORK, type TvdbArtwork } from "../api/tvdb";
 import { getFanartArtwork, type FanartResponse } from "../api/fanart";
@@ -10,6 +11,23 @@ type TmdbImageRow = {
 };
 
 type PickerTab = "poster" | "backdrop" | "logo";
+
+/** Query families that render a title's poster/backdrop/logo outside its own detail page. */
+const ARTWORK_QUERY_PREFIXES = ["home", "history", "movies", "series", "movie", "show", "library", "lists", "next-episodes"];
+
+/**
+ * New artwork has a new URL (the API saves every pick under a fresh file name), so every list that
+ * embeds the old URL — Home's Continue Watching / Up Next and the rest — must refetch to pick it up,
+ * not just the detail page that opened the picker.
+ */
+function invalidateArtworkQueries(qc: QueryClient) {
+  void qc.invalidateQueries({
+    predicate: (q) => {
+      const head = q.queryKey[0];
+      return typeof head === "string" && ARTWORK_QUERY_PREFIXES.some((p) => head === p || head.startsWith(`${p}-`));
+    },
+  });
+}
 
 type PickerRow = {
   key: string;
@@ -79,6 +97,7 @@ export function PosterPickerModal({
   onClose,
   onApplied,
 }: PosterPickerModalProps) {
+  const qc = useQueryClient();
   const [tmdbImages, setTmdbImages] = useState<TmdbImageRow[]>([]);
   const [tvdbArtworks, setTvdbArtworks] = useState<TvdbArtwork[] | null>(null);
   const [fanart, setFanart] = useState<FanartResponse | null>(null);
@@ -157,6 +176,7 @@ export function PosterPickerModal({
         body: JSON.stringify(body),
       });
       if (!res.ok) return;
+      invalidateArtworkQueries(qc);
       onApplied();
       onClose();
     } finally {

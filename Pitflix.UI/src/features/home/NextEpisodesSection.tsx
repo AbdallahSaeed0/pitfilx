@@ -3,6 +3,7 @@ import { Link } from "react-router-dom";
 import { CalendarClock, Search, Tv } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { getNextEpisodesAirScoped, type NextEpisodeAir } from "../../api/homeDiscover";
+import { HOME_COLD_START_RETRY } from "../../api/client";
 import { NextEpisodeAirRowLink } from "../nextEpisodes/nextEpisodeAirUi";
 import { Spinner } from "../../components/ui/Spinner";
 import { useDebounce } from "../../hooks/useDebounce";
@@ -47,6 +48,7 @@ export function NextEpisodesSection({ embedded = false, variant = "priority" }: 
     // backend's own cache/persisted next-airing data make this cheap now, so there's no reason
     // to make a fresh app open wait on it.
     refetchOnMount: "always",
+    ...HOME_COLD_START_RETRY,
   });
 
   useEffect(() => {

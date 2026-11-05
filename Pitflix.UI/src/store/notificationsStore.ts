@@ -9,6 +9,7 @@ export type PitflixNotificationKind =
   | "watched"
   | "airdate"
   | "trailer"
+  | "tickets"
   | "info";
 
 export type PitflixNotification = {

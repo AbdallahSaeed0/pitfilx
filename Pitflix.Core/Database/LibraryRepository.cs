@@ -7,7 +7,9 @@ using Microsoft.EntityFrameworkCore;
 using Pitflix.Core.Api;
 using Pitflix.Core;
 using Pitflix.Core.Models;
+using Pitflix.Core.Parser;
 using Pitflix.Core.Playback;
+using Pitflix.Core.Scanner;
 
 namespace Pitflix.Core.Database;
 
@@ -153,12 +155,14 @@ public sealed class LibraryRepository
             existing.VoteAverage = movie.VoteAverage;
             existing.Runtime = movie.Runtime;
             existing.FilePath = movie.FilePath;
+            existing.FileSize = TryGetFileSize(movie.FilePath) ?? existing.FileSize;
             existing.IsArabic = movie.IsArabic;
             existing.IsMatched = movie.IsMatched;
             await _db.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
             return existing;
         }
 
+        movie.FileSize ??= TryGetFileSize(movie.FilePath);
         _db.Movies.Add(movie);
         await _db.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
         return movie;
@@ -491,6 +495,8 @@ public sealed class LibraryRepository
         string? sortDir = null,
         CancellationToken cancellationToken = default)
     {
+        await PruneUnmatchedRowsForMissingFilesAsync(cancellationToken).ConfigureAwait(false);
+
         var q = _db.ScanLogs.AsNoTracking().Where(x => x.Status == "Unmatched");
         if (!string.IsNullOrWhiteSpace(search))
         {
@@ -539,6 +545,35 @@ public sealed class LibraryRepository
         return new PagedResult<ScanLog>(rows, total);
     }
 
+    /// <summary>
+    /// Deletes any "Unmatched" scan-log row whose file no longer exists on disk. A row is written
+    /// once, at scan time — if the file is later moved out of the scanned folders (reorganized by
+    /// hand, moved to a different drive, deleted, etc.) nothing ever re-checks it, so it would
+    /// otherwise sit in the Unmatched list forever pointing at a dead path. Run at the top of every
+    /// Unmatched page fetch so the list self-heals without needing a background job or a manual
+    /// "clear" click.
+    /// </summary>
+    private async Task PruneUnmatchedRowsForMissingFilesAsync(CancellationToken cancellationToken)
+    {
+        var candidates = await _db.ScanLogs.AsNoTracking()
+            .Where(x => x.Status == "Unmatched")
+            .Select(x => new { x.Id, x.FilePath })
+            .ToListAsync(cancellationToken)
+            .ConfigureAwait(false);
+
+        var missingIds = candidates
+            .Where(x => !string.IsNullOrWhiteSpace(x.FilePath) && !File.Exists(x.FilePath))
+            .Select(x => x.Id)
+            .ToList();
+
+        if (missingIds.Count == 0)
+            return;
+
+        await _db.ScanLogs.Where(x => missingIds.Contains(x.Id))
+            .ExecuteDeleteAsync(cancellationToken)
+            .ConfigureAwait(false);
+    }
+
     public async Task<string?> GetFirstEpisodeFilePathByShowIdAsync(int showId, CancellationToken cancellationToken = default)
     {
         return await _db.Episodes.AsNoTracking()
@@ -555,20 +590,96 @@ public sealed class LibraryRepository
         var existing = await _db.Episodes.FirstOrDefaultAsync(
             e => e.ShowId == ep.ShowId && e.Season == ep.Season && e.EpisodeNumber == ep.EpisodeNumber,
             cancellationToken).ConfigureAwait(false);
+        string? movedFrom = null;
         if (existing != null)
         {
+            // The episode's old file is gone and a scan found it again elsewhere: carry its history over.
+            if (!string.Equals(existing.FilePath, ep.FilePath, StringComparison.OrdinalIgnoreCase) &&
+                MovedFileMatcher.IsMissingOnReachableVolume(existing.FilePath))
+                movedFrom = existing.FilePath;
             existing.Title = ep.Title;
             existing.FilePath = ep.FilePath;
+            existing.FileSize = TryGetFileSize(ep.FilePath) ?? existing.FileSize;
             existing.SubtitlePath = ep.SubtitlePath;
             if (!string.IsNullOrWhiteSpace(ep.StillLocalPath))
                 existing.StillLocalPath = ep.StillLocalPath;
         }
         else
         {
+            ep.FileSize ??= TryGetFileSize(ep.FilePath);
             _db.Episodes.Add(ep);
         }
 
         await _db.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
+        if (movedFrom != null)
+            await MoveFilePathReferencesAsync(movedFrom, ep.FilePath, cancellationToken).ConfigureAwait(false);
+    }
+
+    private static long? TryGetFileSize(string? path)
+    {
+        if (string.IsNullOrWhiteSpace(path))
+            return null;
+        try
+        {
+            var info = new FileInfo(path);
+            return info.Exists ? info.Length : null;
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    /// <summary>
+    /// One pass over every library movie/episode file: records sizes not yet known (so a later move can be
+    /// recognized by size), and returns the rows whose file is missing while its drive is reachable — the
+    /// candidates a scan can re-point at a file it finds elsewhere.
+    /// </summary>
+    public async Task<List<MissingLibraryFile>> SnapshotMissingLibraryFilesAsync(
+        CancellationToken cancellationToken = default)
+    {
+        var missing = new List<MissingLibraryFile>();
+        var roots = new Dictionary<string, bool>(StringComparer.OrdinalIgnoreCase);
+
+        // No-tracking reads + targeted updates: this runs inside a scan, whose context would otherwise drag
+        // the whole library through change detection on every later SaveChanges.
+        var movies = await _db.Movies.AsNoTracking().Where(m => m.FilePath != "")
+            .Select(m => new { m.Id, m.FilePath, m.FileSize })
+            .ToListAsync(cancellationToken).ConfigureAwait(false);
+        foreach (var m in movies)
+        {
+            if (MovedFileMatcher.IsMissingOnReachableVolume(m.FilePath, roots))
+                missing.Add(new MissingLibraryFile(false, m.Id, m.FilePath, m.FileSize));
+            else if (m.FileSize == null && TryGetFileSize(m.FilePath) is { } size)
+                await _db.Movies.Where(x => x.Id == m.Id)
+                    .ExecuteUpdateAsync(s => s.SetProperty(x => x.FileSize, (long?)size), cancellationToken)
+                    .ConfigureAwait(false);
+        }
+
+        var episodes = await _db.Episodes.AsNoTracking().Where(e => e.FilePath != "")
+            .Select(e => new { e.Id, e.FilePath, e.FileSize })
+            .ToListAsync(cancellationToken).ConfigureAwait(false);
+        foreach (var e in episodes)
+        {
+            if (MovedFileMatcher.IsMissingOnReachableVolume(e.FilePath, roots))
+                missing.Add(new MissingLibraryFile(true, e.Id, e.FilePath, e.FileSize));
+            else if (e.FileSize == null && TryGetFileSize(e.FilePath) is { } size)
+                await _db.Episodes.Where(x => x.Id == e.Id)
+                    .ExecuteUpdateAsync(s => s.SetProperty(x => x.FileSize, (long?)size), cancellationToken)
+                    .ConfigureAwait(false);
+        }
+
+        return missing;
+    }
+
+    public async Task EnsureFileSizeColumnsAsync(CancellationToken cancellationToken = default)
+    {
+        if (!await SqliteColumnExistsAsync("Movies", "FileSize", cancellationToken).ConfigureAwait(false))
+            await _db.Database.ExecuteSqlRawAsync("ALTER TABLE Movies ADD COLUMN FileSize INTEGER", cancellationToken)
+                .ConfigureAwait(false);
+        if (!await SqliteColumnExistsAsync("Episodes", "FileSize", cancellationToken).ConfigureAwait(false))
+            await _db.Database.ExecuteSqlRawAsync("ALTER TABLE Episodes ADD COLUMN FileSize INTEGER", cancellationToken)
+                .ConfigureAwait(false);
     }
 
     public async Task<IReadOnlyList<Episode>> GetEpisodesForShowAsync(int showId,
@@ -870,6 +981,8 @@ public sealed class LibraryRepository
 
     public async Task<IReadOnlyList<ScanLog>> GetUnmatchedFilesAsync(CancellationToken cancellationToken = default)
     {
+        await PruneUnmatchedRowsForMissingFilesAsync(cancellationToken).ConfigureAwait(false);
+
         return await _db.ScanLogs.AsNoTracking()
             .Where(x => x.Status == "Unmatched")
             .OrderBy(x => x.FilePath)
@@ -1192,7 +1305,8 @@ public sealed class LibraryRepository
                 .ConfigureAwait(false))
             .Select(h => (TmdbId: h.TmdbId!.Value, Season: h.SeasonNumber!.Value, Episode: h.EpisodeNumber!.Value))
             .ToHashSet();
-        var todayStr = DateTime.UtcNow.ToString("yyyy-MM-dd");
+        // Local date, and "aired" means the air date has passed — see AirDates for why.
+        var todayStr = Pitflix.Core.Services.AirDates.LocalToday();
 
         // Phase 1: pure-local pass (no network) — figures out which shows have a library episode ready
         // to go, and which are fully caught up locally and need a TMDB fallback check.
@@ -1321,6 +1435,9 @@ public sealed class LibraryRepository
                 ShowTmdbId = show.TmdbId,
                 PosterLocalPath = show.PosterLocalPath,
                 SelectedPosterPath = show.SelectedPosterPath,
+                BackdropPath = show.SelectedBackdropPath ?? show.BackdropLocalPath,
+                NextEpisodeTitle = nextIsDownloaded ? next?.Title : null,
+                NextEpisodeStillPath = nextIsDownloaded ? next?.StillLocalPath : null,
                 LastWatchedSeason = lastWatchedEp.Season,
                 LastWatchedEpisode = lastWatchedEp.EpisodeNumber,
                 NextSeason = nextSeasonNum,
@@ -1368,8 +1485,7 @@ public sealed class LibraryRepository
         var newAired = seasonEpisodes
             .Where(kv => !inLibrary.Contains(kv.Key))
             .Where(kv => !watchedVirtual.Contains((show.TmdbId, season, kv.Key)))
-            .Where(kv => !string.IsNullOrWhiteSpace(kv.Value.AirDate) &&
-                         string.Compare(kv.Value.AirDate!.Trim(), todayStr, StringComparison.Ordinal) <= 0)
+            .Where(kv => Pitflix.Core.Services.AirDates.HasAired(kv.Value.AirDate, todayStr))
             .OrderBy(kv => kv.Key)
             .ToList();
         if (newAired.Count == 0)
@@ -2049,6 +2165,89 @@ public sealed class LibraryRepository
                 .ToListAsync(cancellationToken)
                 .ConfigureAwait(false))
             .ToHashSet();
+    }
+
+    /// <summary>
+    /// Partly-watched episodes of one season: episode number → (resume seconds, duration seconds), from
+    /// the newest unfinished history row per episode — the same resume head Continue Watching uses
+    /// (<see cref="Pitflix.Core.Playback.TrustedResumePolicy"/>). Rows under 30 s are ignored (a peek, not progress).
+    /// </summary>
+    /// <param name="episodeByFilePath">This season's local files → episode number, for history rows
+    /// written before TMDB ids/season numbers were recorded on them (matched by file path instead).</param>
+    public async Task<Dictionary<int, (int ResumeSeconds, int DurationSeconds)>> GetEpisodeResumeProgressAsync(
+        int showTmdbId, int season, IReadOnlyDictionary<string, int> episodeByFilePath,
+        CancellationToken cancellationToken = default)
+    {
+        var paths = episodeByFilePath.Keys.ToList();
+        var raw = await _db.WatchHistories.AsNoTracking()
+            .Where(h => h.MediaType == "Series" && !h.IsCompleted &&
+                        ((showTmdbId > 0 && h.TmdbId == showTmdbId && h.SeasonNumber == season && h.EpisodeNumber != null) ||
+                         paths.Contains(h.FilePath)))
+            .Select(h => new
+            {
+                h.FilePath,
+                h.TmdbId,
+                h.SeasonNumber,
+                h.EpisodeNumber,
+                h.MaxKnownPositionSeconds,
+                h.LastExplicitPositionSeconds,
+                h.EstimatedSeconds,
+                h.FileDurationSeconds,
+                When = h.LastHeartbeatAtUtc ?? h.StoppedAt ?? h.OpenedAt,
+            })
+            .ToListAsync(cancellationToken).ConfigureAwait(false);
+
+        var rows = raw
+            .Select(h => new
+            {
+                Episode = showTmdbId > 0 && h.TmdbId == showTmdbId && h.SeasonNumber == season && h.EpisodeNumber != null
+                    ? h.EpisodeNumber.Value
+                    : episodeByFilePath.TryGetValue(h.FilePath, out var n) ? n : 0,
+                h.MaxKnownPositionSeconds,
+                h.LastExplicitPositionSeconds,
+                h.EstimatedSeconds,
+                h.FileDurationSeconds,
+                h.When,
+            })
+            .Where(h => h.Episode > 0)
+            .ToList();
+
+        var result = new Dictionary<int, (int, int)>();
+        foreach (var g in rows.GroupBy(r => r.Episode))
+        {
+            var r = g.OrderByDescending(x => x.When).First();
+            var resume = Pitflix.Core.Playback.TrustedResumePolicy.ComputeSeconds(
+                r.MaxKnownPositionSeconds, r.LastExplicitPositionSeconds, r.EstimatedSeconds, r.FileDurationSeconds);
+            if (resume >= 30) result[g.Key] = (resume, r.FileDurationSeconds);
+        }
+        return result;
+    }
+
+    /// <summary>
+    /// Where you stopped in a partly-watched movie: the newest unfinished history row for it (matched by
+    /// TMDB id, or by file path for rows written without one), as the same resume head Continue Watching
+    /// uses. Null when unstarted, finished, or under 30 s.
+    /// </summary>
+    public async Task<(int ResumeSeconds, int DurationSeconds)?> GetMovieResumeProgressAsync(
+        int tmdbId, string? filePath, CancellationToken cancellationToken = default)
+    {
+        var path = filePath ?? "";
+        var row = await _db.WatchHistories.AsNoTracking()
+            .Where(h => h.MediaType == "Movie" && !h.IsCompleted &&
+                        ((tmdbId > 0 && h.TmdbId == tmdbId) || (path != "" && h.FilePath == path)))
+            .OrderByDescending(h => h.LastHeartbeatAtUtc ?? h.StoppedAt ?? h.OpenedAt)
+            .Select(h => new
+            {
+                h.MaxKnownPositionSeconds,
+                h.LastExplicitPositionSeconds,
+                h.EstimatedSeconds,
+                h.FileDurationSeconds,
+            })
+            .FirstOrDefaultAsync(cancellationToken).ConfigureAwait(false);
+        if (row is null) return null;
+        var resume = Pitflix.Core.Playback.TrustedResumePolicy.ComputeSeconds(
+            row.MaxKnownPositionSeconds, row.LastExplicitPositionSeconds, row.EstimatedSeconds, row.FileDurationSeconds);
+        return resume >= 30 ? (resume, row.FileDurationSeconds) : null;
     }
 
     /// <summary>Distinct TMDB ids with at least one completed watch entry for the given media type —
@@ -4660,6 +4859,189 @@ public sealed class LibraryRepository
             ? $"Moved the video and {movedSiblings} subtitle file(s) into \"{folderName}\"."
             : $"Moved the video into \"{folderName}\".";
         return new WrapResult(true, message, 1, targetDir);
+    }
+
+    /// <summary>
+    /// Points a movie at a file that was moved or renamed outside Pitflix, keeping its watch state,
+    /// history, artwork and lists. A stray movie row a later scan created for the new path (usually a
+    /// wrong match) is dropped so the file isn't listed twice.
+    /// </summary>
+    public async Task<(bool Ok, string? Error)> RelocateMovieFileAsync(int movieId, string newPath,
+        CancellationToken cancellationToken = default)
+    {
+        if (string.IsNullOrWhiteSpace(newPath))
+            return (false, "No file chosen.");
+        newPath = MediaPathNormalizer.PreferredPhysicalPath(newPath.Trim());
+        if (!File.Exists(newPath))
+            return (false, "That file doesn't exist.");
+
+        var movie = await _db.Movies.FirstOrDefaultAsync(m => m.Id == movieId, cancellationToken)
+            .ConfigureAwait(false);
+        if (movie == null)
+            return (false, "Movie not found.");
+
+        var oldPath = movie.FilePath;
+        if (string.Equals(oldPath, newPath, StringComparison.OrdinalIgnoreCase))
+            return (true, null);
+
+        var newLower = newPath.ToLowerInvariant();
+        if (await _db.Episodes.AsNoTracking().AnyAsync(e => e.FilePath.ToLower() == newLower, cancellationToken)
+                .ConfigureAwait(false))
+            return (false, "That file is already linked to a series episode.");
+
+        var strays = await _db.Movies.Where(m => m.Id != movieId && m.FilePath.ToLower() == newLower)
+            .ToListAsync(cancellationToken).ConfigureAwait(false);
+        foreach (var stray in strays)
+        {
+            if (stray.TmdbId != movie.TmdbId)
+                await _db.CastMembers.Where(c => c.MediaId == stray.TmdbId && c.MediaType == "Movie")
+                    .ExecuteDeleteAsync(cancellationToken).ConfigureAwait(false);
+            _db.Movies.Remove(stray);
+        }
+
+        movie.FilePath = newPath;
+        movie.FileSize = TryGetFileSize(newPath) ?? movie.FileSize;
+        await _db.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
+        await MoveFilePathReferencesAsync(oldPath, newPath, cancellationToken).ConfigureAwait(false);
+        return (true, null);
+    }
+
+    /// <summary>
+    /// Points an episode at its file's new location (moved/renamed outside Pitflix), keeping watch state and
+    /// history. A show whose folder no longer exists follows the episode to its new folder.
+    /// </summary>
+    public async Task<(bool Ok, string? Error)> RelocateEpisodeFileAsync(int episodeId, string newPath,
+        CancellationToken cancellationToken = default)
+    {
+        if (string.IsNullOrWhiteSpace(newPath))
+            return (false, "No file chosen.");
+        newPath = MediaPathNormalizer.PreferredPhysicalPath(newPath.Trim());
+        if (!File.Exists(newPath))
+            return (false, "That file doesn't exist.");
+
+        var ep = await _db.Episodes.Include(e => e.Show).FirstOrDefaultAsync(e => e.Id == episodeId, cancellationToken)
+            .ConfigureAwait(false);
+        if (ep == null)
+            return (false, "Episode not found.");
+
+        var oldPath = ep.FilePath;
+        if (string.Equals(oldPath, newPath, StringComparison.OrdinalIgnoreCase))
+            return (true, null);
+
+        var newLower = newPath.ToLowerInvariant();
+        if (await _db.Movies.AsNoTracking().AnyAsync(m => m.FilePath.ToLower() == newLower, cancellationToken)
+                .ConfigureAwait(false) ||
+            await _db.Episodes.AsNoTracking().AnyAsync(e => e.Id != episodeId && e.FilePath.ToLower() == newLower,
+                cancellationToken).ConfigureAwait(false))
+            return (false, "That file is already linked to another library entry.");
+
+        ep.FilePath = newPath;
+        ep.FileSize = TryGetFileSize(newPath) ?? ep.FileSize;
+        if (ep.SubtitlePath != null && !File.Exists(ep.SubtitlePath))
+        {
+            // A sidecar subtitle usually travels with its video under the same name.
+            var moved = Path.Combine(Path.GetDirectoryName(newPath) ?? "", Path.GetFileName(ep.SubtitlePath));
+            ep.SubtitlePath = File.Exists(moved) ? moved : null;
+        }
+        if (string.IsNullOrWhiteSpace(ep.Show.FolderPath) || !Directory.Exists(ep.Show.FolderPath))
+            ep.Show.FolderPath = NameParser.GetShowFolderFullPath(newPath);
+
+        await _db.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
+        await MoveFilePathReferencesAsync(oldPath, newPath, cancellationToken).ConfigureAwait(false);
+        return (true, null);
+    }
+
+    /// <summary>
+    /// Points a series at a folder it was moved to. <paramref name="episodePaths"/> maps episode ids to
+    /// their file in the new folder; episodes not in the map keep their current path.
+    /// </summary>
+    public async Task<(bool Ok, string? Error)> RelocateShowFolderAsync(int showId, string newFolder,
+        IReadOnlyDictionary<int, string> episodePaths, CancellationToken cancellationToken = default)
+    {
+        var show = await _db.Shows.FirstOrDefaultAsync(s => s.Id == showId, cancellationToken)
+            .ConfigureAwait(false);
+        if (show == null)
+            return (false, "Series not found.");
+
+        show.FolderPath = newFolder;
+        var moves = new List<(string Old, string New)>();
+        var episodes = await _db.Episodes.Where(e => e.ShowId == showId).ToListAsync(cancellationToken)
+            .ConfigureAwait(false);
+        foreach (var ep in episodes)
+        {
+            if (!episodePaths.TryGetValue(ep.Id, out var np) ||
+                string.Equals(ep.FilePath, np, StringComparison.OrdinalIgnoreCase))
+                continue;
+            moves.Add((ep.FilePath, np));
+            ep.FilePath = np;
+        }
+
+        await _db.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
+        foreach (var (oldPath, newPath) in moves)
+            await MoveFilePathReferencesAsync(oldPath, newPath, cancellationToken).ConfigureAwait(false);
+        return (true, null);
+    }
+
+    /// <summary>
+    /// Turns a file wrongly matched as a movie into an episode of a series already in the library:
+    /// the episode row must already exist (created by the caller). Carries a finished watch over,
+    /// re-labels the file's history rows as that episode, then removes the movie row.
+    /// </summary>
+    public async Task FinishMovieToEpisodeRelinkAsync(int movieId, int episodeId, CancellationToken cancellationToken = default)
+    {
+        var movie = await _db.Movies.AsNoTracking().FirstOrDefaultAsync(m => m.Id == movieId, cancellationToken)
+            .ConfigureAwait(false);
+        var ep = await _db.Episodes.AsNoTracking().Include(e => e.Show)
+            .FirstOrDefaultAsync(e => e.Id == episodeId, cancellationToken).ConfigureAwait(false);
+        if (movie == null || ep == null)
+            return;
+
+        var variants = MediaPathNormalizer.EquivalenceVariants(ep.FilePath);
+        var variantsLower = variants.Select(v => v.ToLowerInvariant()).Distinct().ToList();
+        await _db.WatchHistories
+            .Where(h => h.FilePath != null && (variants.Contains(h.FilePath) || variantsLower.Contains(h.FilePath.ToLower())))
+            .ExecuteUpdateAsync(s => s
+                .SetProperty(h => h.MediaType, "Series")
+                .SetProperty(h => h.Title, ep.Show.Title)
+                .SetProperty(h => h.TmdbId, (int?)ep.Show.TmdbId)
+                .SetProperty(h => h.SeasonNumber, (int?)ep.Season)
+                .SetProperty(h => h.EpisodeNumber, (int?)ep.EpisodeNumber), cancellationToken)
+            .ConfigureAwait(false);
+
+        await DeleteMovieByIdAsync(movieId, cancellationToken).ConfigureAwait(false);
+
+        if (movie.WatchStatus == WatchStatuses.Completed && ep.WatchStatus != WatchStatuses.Completed)
+            await UpdateEpisodeWatchStatusAsync(episodeId, WatchStatuses.Completed, cancellationToken)
+                .ConfigureAwait(false);
+    }
+
+    /// <summary>Re-keys path-based rows (watch history, scan log) after a library file moved.</summary>
+    private async Task MoveFilePathReferencesAsync(string oldPath, string newPath, CancellationToken cancellationToken)
+    {
+        if (string.IsNullOrWhiteSpace(oldPath))
+            return;
+
+        var oldVariants = MediaPathNormalizer.EquivalenceVariants(oldPath);
+        var oldLower = oldVariants.Select(v => v.ToLowerInvariant()).Distinct().ToList();
+        await _db.WatchHistories
+            .Where(h => h.FilePath != null && (oldVariants.Contains(h.FilePath) || oldLower.Contains(h.FilePath.ToLower())))
+            .ExecuteUpdateAsync(s => s.SetProperty(h => h.FilePath, newPath), cancellationToken)
+            .ConfigureAwait(false);
+
+        // ScanLog.FilePath is unique: drop whatever a scan already logged for the new path, then move the old row.
+        var newVariants = MediaPathNormalizer.EquivalenceVariants(newPath);
+        var newLower = newVariants.Select(v => v.ToLowerInvariant()).Distinct().ToList();
+        await _db.ScanLogs
+            .Where(x => newVariants.Contains(x.FilePath) || newLower.Contains(x.FilePath.ToLower()))
+            .ExecuteDeleteAsync(cancellationToken).ConfigureAwait(false);
+        var oldLogs = await _db.ScanLogs
+            .Where(x => oldVariants.Contains(x.FilePath) || oldLower.Contains(x.FilePath.ToLower()))
+            .ToListAsync(cancellationToken).ConfigureAwait(false);
+        if (oldLogs.Count == 0)
+            return;
+        _db.ScanLogs.RemoveRange(oldLogs.Skip(1));
+        oldLogs[0].FilePath = newPath;
+        await _db.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
     }
 
     private static int? ParseYearFromTmdbDate(string? releaseDate)

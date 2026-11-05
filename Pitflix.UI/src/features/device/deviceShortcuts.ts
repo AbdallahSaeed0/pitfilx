@@ -33,6 +33,7 @@ export const DEVICE_SHORTCUT_SECTIONS: DeviceShortcutSection[] = [
     rows: [
       { label: "Go back", keys: "Backspace" },
       { label: "Focus filter", keys: "Ctrl + F" },
+      { label: "Search all locations", keys: "Ctrl + Shift + F" },
       { label: "Open context menu", keys: "Right-click" },
       { label: "Show keyboard shortcuts", keys: "?" },
     ],

@@ -3,6 +3,7 @@ import { ChevronRight, CloudDownload, Play, X } from "lucide-react";
 import { Link, useNavigate } from "react-router-dom";
 import { getWatchingCurrently, type WatchingCurrentlyCard } from "../../api/homeDiscover";
 import { setShowDropped } from "../../api/series";
+import { HOME_COLD_START_RETRY } from "../../api/client";
 import { HorizontalScrollRow } from "../../components/ui/HorizontalScrollRow";
 import { MediaImage } from "../../components/ui/MediaImage";
 import { Spinner } from "../../components/ui/Spinner";
@@ -144,6 +145,7 @@ export function WatchingCurrentlySection({ embedded = false, excludeShowId }: Pr
     queryKey: ["home-watching-currently"],
     queryFn: getWatchingCurrently,
     staleTime: 45_000,
+    ...HOME_COLD_START_RETRY,
   });
 
   const dismissMut = useMutation({

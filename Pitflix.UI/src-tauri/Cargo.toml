@@ -61,5 +61,8 @@ windows = { version = "0.61", features = [
   "Win32_UI_HiDpi",
   "Win32_UI_WindowsAndMessaging",
   "Win32_System_Com",
+  "Win32_System_Com_StructuredStorage",
+  "Win32_System_Variant",
+  "Win32_UI_Shell_PropertiesSystem",
 ] }
 webview2-com = "0.38"

@@ -2,6 +2,7 @@ import { useQuery } from "@tanstack/react-query";
 import { getMovie } from "../../api/movies";
 import { getEpisodeCredits, getShow } from "../../api/series";
 import { CastCrewSection, type CastPerson, type CrewMember } from "../detail/detailComponents";
+import { PlayerVideoCollectionsSection, stageOpenCollectionInMyDevice } from "../device/PlayerVideoCollectionsSection";
 import { fmtTime, parentDirectory } from "./playerFormat";
 import { EMBEDDED_PLAYER_SHORTCUT_SECTIONS } from "./playerShortcuts";
 import type { PlaybackLaunchState } from "../../types/playback";
@@ -12,6 +13,8 @@ type Props = {
   state: PlaybackLaunchState;
   timePos: number;
   duration: number;
+  /** Closes the player the same way the header's close button does (saves progress, then navigates). */
+  onExitPlayer: () => void | Promise<void>;
 };
 
 // The popup is a separate frameless player window with no MainLayout/router chrome for
@@ -20,7 +23,7 @@ type Props = {
 const noNavigate = () => {};
 
 /** Episode details + keyboard-shortcuts popup, opened from clicking the title in the header. */
-export function PlayerEmbeddedEpisodeInfoModal({ open, onClose, state, timePos, duration }: Props) {
+export function PlayerEmbeddedEpisodeInfoModal({ open, onClose, state, timePos, duration, onExitPlayer }: Props) {
   const movieQ = useQuery({
     queryKey: ["movie", state.libraryMovieId],
     queryFn: () => getMovie(state.libraryMovieId!),
@@ -113,6 +116,16 @@ export function PlayerEmbeddedEpisodeInfoModal({ open, onClose, state, timePos, 
           <dt className="text-pitflix-muted">File</dt>
           <dd className="break-all text-white/85">{state.filePath}</dd>
         </dl>
+        {state.filePath ? (
+          <PlayerVideoCollectionsSection
+            filePath={state.filePath}
+            onOpenCollection={(c) => {
+              stageOpenCollectionInMyDevice(c);
+              onClose();
+              void onExitPlayer();
+            }}
+          />
+        ) : null}
         {credits ? (
           <CastCrewSection cast={credits.cast ?? []} crew={credits.crew ?? []} navigate={noNavigate} />
         ) : null}

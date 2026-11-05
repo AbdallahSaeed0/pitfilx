@@ -68,3 +68,27 @@ export const cancelLetterboxdSync = () =>
 
 export const getLetterboxdSyncStatus = () =>
   api.get<LetterboxdSyncStatus>("/letterboxd/sync/status").then((r) => r.data);
+
+// ── Watchlist → Pitflix list sync ────────────────────────────────────────────
+
+export type LetterboxdWatchlistSyncStatus = {
+  enabled: boolean;
+  listId: number | null;
+  running: boolean;
+  phase: string | null;
+  lastRunUtc: string | null;
+  onWatchlist: number;
+  added: number;
+  removed: number;
+  unresolved: number;
+  lastError: string | null;
+};
+
+export const getLetterboxdWatchlistSync = () =>
+  api.get<LetterboxdWatchlistSyncStatus>("/letterboxd/watchlist-sync").then((r) => r.data);
+
+/** Turn the sync on/off and pick the target list (null keeps the current one). */
+export const saveLetterboxdWatchlistSync = (enabled: boolean, listId: number | null) =>
+  api.post("/letterboxd/watchlist-sync", { enabled, listId }).then((r) => r.data);
+
+export const runLetterboxdWatchlistSync = () => api.post("/letterboxd/watchlist-sync/run").then((r) => r.data);

@@ -4,6 +4,8 @@ import { useMemo, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { getPerson, getPersonStreamCredits, getBatchCachedRatings, type CreditRatings } from "../api/people";
 import { getPersonAwards, type PersonNomination } from "../api/awards";
+import { getWatchedTmdbIds } from "../api/history";
+import { useLibraryTmdbIndex } from "../hooks/useLibraryTmdbIndex";
 import { CeremonyIcon, ceremonyAccent, ceremonyShortName } from "../components/awards/CeremonyBadge";
 import { PersonPhotoGallery } from "../components/PersonPhotoGallery";
 import { MediaImage } from "../components/ui/MediaImage";
@@ -234,14 +236,51 @@ function PersonAwardsBadges({
   );
 }
 
+type PersonCredit = import("../api/people").PersonStreamCredit;
+
+/** "Movie:123" / "Series:456" — TMDB movie and TV ids overlap, so the media type is part of the key. */
+const creditKey = (c: Pick<PersonCredit, "id" | "mediaType">) => `${c.mediaType}:${c.id}`;
+
+/** Future year, or no year at all (TMDB's "announced" entries) — can't have been watched yet. */
+function isUnreleased(c: PersonCredit): boolean {
+  if (!c.year) return true;
+  const y = parseInt(c.year, 10);
+  return Number.isFinite(y) && y > new Date().getFullYear();
+}
+
+/** Watched share of one filmography tab. Titles count once even when credited in several roles. */
+function watchedStats(credits: PersonCredit[], watched: Set<string>) {
+  const released = new Set<string>();
+  const seen = new Set<string>();
+  let upcoming = 0;
+  const counted = new Set<string>();
+  for (const c of credits) {
+    const k = creditKey(c);
+    if (counted.has(k)) continue;
+    counted.add(k);
+    // A watched title always counts, even if TMDB still files it as upcoming.
+    if (watched.has(k)) {
+      seen.add(k);
+      released.add(k);
+    } else if (isUnreleased(c)) {
+      upcoming++;
+    } else {
+      released.add(k);
+    }
+  }
+  const total = released.size;
+  return { seen: seen.size, total, upcoming, pct: total > 0 ? Math.round((seen.size / total) * 100) : 0 };
+}
+
 type CreditGridProps = {
   credits: import("../api/people").PersonStreamCredit[];
   localByTmdbId: Map<number, LocalAppearance>;
   ratingsMap: Map<string, CreditRatings>;
+  watched: Set<string>;
   navigate: ReturnType<typeof useNavigate>;
 };
 
-function CreditGrid({ credits, localByTmdbId, ratingsMap, navigate }: CreditGridProps) {
+function CreditGrid({ credits, localByTmdbId, ratingsMap, watched, navigate }: CreditGridProps) {
   if (credits.length === 0)
     return <p className="mt-4 text-sm text-pitflix-subtle">No credits in this category.</p>;
   return (
@@ -280,6 +319,11 @@ function CreditGrid({ credits, localByTmdbId, ratingsMap, navigate }: CreditGrid
                   In Library
                 </div>
               )}
+              {watched.has(creditKey(credit)) && (
+                <div className="absolute bottom-1.5 left-1.5 rounded-full bg-emerald-500/90 px-1.5 py-0.5 text-[8px] font-bold text-white shadow">
+                  ✓ Watched
+                </div>
+              )}
             </div>
             <div className="p-2">
               <p className="line-clamp-2 text-[10px] font-semibold leading-snug text-white">{credit.title}</p>
@@ -310,7 +354,7 @@ function CreditGrid({ credits, localByTmdbId, ratingsMap, navigate }: CreditGrid
 type FilmographyTab = "acting" | "directing" | "writing" | "producing" | "crew";
 
 function FilmographyTabs({
-  castCredits, directors, writers, producers, otherCrew, localByTmdbId, ratingsMap, navigate,
+  castCredits, directors, writers, producers, otherCrew, localByTmdbId, ratingsMap, watched, navigate,
 }: {
   castCredits: import("../api/people").PersonStreamCredit[];
   directors: import("../api/people").PersonStreamCredit[];
@@ -319,6 +363,7 @@ function FilmographyTabs({
   otherCrew: import("../api/people").PersonStreamCredit[];
   localByTmdbId: Map<number, LocalAppearance>;
   ratingsMap: Map<string, CreditRatings>;
+  watched: Set<string>;
   navigate: ReturnType<typeof useNavigate>;
 }) {
   const tabs: { key: FilmographyTab; label: string; count: number }[] = (
@@ -333,6 +378,19 @@ function FilmographyTabs({
 
   const [tab, setTab] = useState<FilmographyTab>(tabs[0]?.key ?? "acting");
   const [sortBy, setSortBy] = useState<"rating" | "year">("rating");
+  const [seenFilter, setSeenFilter] = useState<"all" | "seen" | "unseen">("all");
+
+  const creditsFor = (key: FilmographyTab) =>
+    key === "acting"    ? castCredits :
+    key === "directing" ? directors :
+    key === "writing"   ? writers :
+    key === "producing" ? producers : otherCrew;
+  const statsByTab = useMemo(() => {
+    const m = new Map<FilmographyTab, ReturnType<typeof watchedStats>>();
+    for (const t of ["acting", "directing", "writing", "producing", "crew"] as const) m.set(t, watchedStats(creditsFor(t), watched));
+    return m;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [castCredits, directors, writers, producers, otherCrew, watched]);
 
   const activeCredits =
     tab === "acting"    ? castCredits :
@@ -341,13 +399,19 @@ function FilmographyTabs({
     tab === "producing" ? producers : otherCrew;
 
   const sortedCredits = useMemo(() => {
-    if (sortBy === "rating") return activeCredits; // API already returns rating order
-    return [...activeCredits].sort((a, b) => {
+    const filtered =
+      seenFilter === "all"
+        ? activeCredits
+        : activeCredits.filter((c) => watched.has(creditKey(c)) === (seenFilter === "seen"));
+    if (sortBy === "rating") return filtered; // API already returns rating order
+    return [...filtered].sort((a, b) => {
       const ay = a.year ? parseInt(a.year, 10) : -1;
       const by = b.year ? parseInt(b.year, 10) : -1;
       return by - ay;
     });
-  }, [activeCredits, sortBy]);
+  }, [activeCredits, sortBy, seenFilter, watched]);
+
+  const stats = statsByTab.get(tab)!;
 
   return (
     <div className="mt-10">
@@ -366,11 +430,53 @@ function FilmographyTabs({
               }`}
             >
               {t.label} <span className="opacity-60">({t.count})</span>
+              {(statsByTab.get(t.key)?.seen ?? 0) > 0 ? (
+                <span className={cn("ml-1.5 tabular-nums", tab === t.key ? "text-white" : "text-emerald-400")}>
+                  {statsByTab.get(t.key)!.pct}%
+                </span>
+              ) : null}
             </button>
           ))}
         </div>
       </div>
-      <div className="mb-4 flex items-center gap-2 text-xs text-pitflix-muted">
+      {stats.total > 0 ? (
+        <div className="mb-4 max-w-md rounded-xl border border-white/[0.07] bg-pitflix-surface/50 px-4 py-3">
+          <div className="flex items-baseline justify-between gap-3">
+            <p className="text-xs text-pitflix-muted">
+              You've seen <span className="font-semibold text-white">{stats.seen}</span> of{" "}
+              <span className="font-semibold text-white">{stats.total}</span>
+            </p>
+            <p className="text-lg font-bold tabular-nums text-white">{stats.pct}%</p>
+          </div>
+          <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-white/10">
+            <div
+              className="h-full rounded-full bg-gradient-to-r from-pitflix-primary to-emerald-400 transition-[width] duration-500"
+              style={{ width: `${stats.pct}%` }}
+            />
+          </div>
+          {stats.upcoming > 0 ? (
+            <p className="mt-1.5 text-[10px] text-pitflix-subtle">
+              {stats.upcoming} upcoming / unreleased not counted
+            </p>
+          ) : null}
+        </div>
+      ) : null}
+      <div className="mb-4 flex flex-wrap items-center gap-2 text-xs text-pitflix-muted">
+        {(["all", "seen", "unseen"] as const).map((f) => (
+          <button
+            key={f}
+            type="button"
+            onClick={() => setSeenFilter(f)}
+            className={`rounded-full px-2.5 py-0.5 text-[11px] font-semibold transition-all ${
+              seenFilter === f
+                ? "bg-pitflix-primary text-white"
+                : "border border-white/10 text-pitflix-muted hover:border-white/25 hover:text-white"
+            }`}
+          >
+            {f === "all" ? "All" : f === "seen" ? "Seen" : "Not seen"}
+          </button>
+        ))}
+        <span className="mx-1 h-3 w-px bg-white/10" />
         <span>From TMDB · sort by</span>
         {(["rating", "year"] as const).map((s) => (
           <button
@@ -387,7 +493,13 @@ function FilmographyTabs({
           </button>
         ))}
       </div>
-      <CreditGrid credits={sortedCredits} localByTmdbId={localByTmdbId} ratingsMap={ratingsMap} navigate={navigate} />
+      <CreditGrid
+        credits={sortedCredits}
+        localByTmdbId={localByTmdbId}
+        ratingsMap={ratingsMap}
+        watched={watched}
+        navigate={navigate}
+      />
     </div>
   );
 }
@@ -408,8 +520,16 @@ export function PersonPage() {
 
   const creditsQ = useQuery({
     queryKey: ["person-stream-credits", id],
-    queryFn: () => getPersonStreamCredits(id),
+    // A failed TMDB lookup must be an error, never "success with zero credits": that empty result was
+    // cached (and persisted across launches) with no retry, leaving the filmography blank for a while.
+    queryFn: async () => {
+      const r = await getPersonStreamCredits(id);
+      if (r.error && (r.cast?.length ?? 0) === 0 && (r.crew?.length ?? 0) === 0) throw new Error(r.error);
+      return r;
+    },
     enabled: Number.isFinite(id) && id > 0,
+    retry: 3,
+    retryDelay: (attempt) => Math.min(1500 * 2 ** attempt, 8000),
     staleTime: 30 * 60_000,
     gcTime: 60 * 60_000,
   });
@@ -438,6 +558,20 @@ export function PersonPage() {
     for (const r of ratingsQ.data ?? []) m.set(r.key, r);
     return m;
   }, [ratingsQ.data]);
+
+  // What you've watched: watch history (incl. titles marked watched without a file) + library status.
+  // Same query keys as the streaming cards, so marking something watched elsewhere refreshes this too.
+  const watchedMoviesQ = useQuery({ queryKey: ["watched-tmdb-ids", "Movie"], queryFn: () => getWatchedTmdbIds("Movie"), staleTime: 60_000 });
+  const watchedSeriesQ = useQuery({ queryKey: ["watched-tmdb-ids", "Series"], queryFn: () => getWatchedTmdbIds("Series"), staleTime: 60_000 });
+  const libraryIndex = useLibraryTmdbIndex();
+  const watched = useMemo(() => {
+    const set = new Set<string>();
+    for (const id of watchedMoviesQ.data ?? []) set.add(`Movie:${id}`);
+    for (const id of watchedSeriesQ.data ?? []) set.add(`Series:${id}`);
+    for (const id of libraryIndex.data?.watchedMovieTmdb ?? []) set.add(`Movie:${id}`);
+    for (const id of libraryIndex.data?.watchedSeriesTmdb ?? []) set.add(`Series:${id}`);
+    return set;
+  }, [watchedMoviesQ.data, watchedSeriesQ.data, libraryIndex.data]);
 
   if (!Number.isFinite(id) || id <= 0) return <p className="text-pitflix-muted">Invalid person</p>;
   if (isLoading)
@@ -575,8 +709,18 @@ export function PersonPage() {
         <div className="mt-10 rounded-2xl border border-white/[0.07] bg-pitflix-surface/40 p-5 text-center">
           <p className="text-sm font-medium text-pitflix-muted">Filmography unavailable</p>
           <p className="mt-1 text-xs text-pitflix-subtle">
-            {creditsQ.isError ? "Could not reach the server." : creditsQ.data?.error ?? "No credits found."}
+            {creditsQ.isError ? "Couldn't load credits from TMDB." : "No credits found."}
           </p>
+          {creditsQ.isError ? (
+            <button
+              type="button"
+              onClick={() => void creditsQ.refetch()}
+              disabled={creditsQ.isFetching}
+              className="mt-3 rounded-lg border border-white/[0.12] px-4 py-1.5 text-xs font-medium text-white/80 transition hover:bg-white/[0.08] disabled:opacity-50"
+            >
+              {creditsQ.isFetching ? "Retrying…" : "Try again"}
+            </button>
+          ) : null}
         </div>
       ) : (
         <FilmographyTabs
@@ -587,6 +731,7 @@ export function PersonPage() {
           otherCrew={otherCrew}
           localByTmdbId={localByTmdbId}
           ratingsMap={ratingsMap}
+          watched={watched}
           navigate={navigate}
         />
       )}

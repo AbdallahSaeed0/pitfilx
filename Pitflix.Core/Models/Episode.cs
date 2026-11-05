@@ -10,6 +10,10 @@ public class Episode
     /// <summary>Locally cached TMDB episode still (<c>still_path</c>).</summary>
     public string? StillLocalPath { get; set; }
     public string FilePath { get; set; } = "";
+
+    /// <summary>Size of <see cref="FilePath"/> in bytes when last seen (see <see cref="Movie.FileSize"/>).</summary>
+    public long? FileSize { get; set; }
+
     public string? SubtitlePath { get; set; }
 
     public string WatchStatus { get; set; } = WatchStatuses.Unwatched;

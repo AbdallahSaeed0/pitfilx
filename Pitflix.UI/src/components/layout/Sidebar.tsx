@@ -5,7 +5,7 @@ import { useRef, useState } from "react";
 import { getStats } from "../../api/stats";
 import { getWatchStats } from "../../api/watchStats";
 import { useSidebarStore } from "../../store/sidebarStore";
-import { useAppPrefsStore } from "../../store/appPrefsStore";
+import { selectEffectiveOffline, useAppPrefsStore } from "../../store/appPrefsStore";
 import { cn } from "../../utils/cn";
 import { formatCount } from "../../utils/format";
 import { PitflixWordmark } from "../ui/PitflixWordmark";
@@ -20,8 +20,9 @@ const collapsedW = 72;
 export function Sidebar() {
   const collapsed = useSidebarStore((s) => s.collapsed);
   const toggleSidebar = useSidebarStore((s) => s.toggle);
-  const offlineMode = useAppPrefsStore((s) => s.offlineMode);
+  const offlineMode = useAppPrefsStore(selectEffectiveOffline);
   const liveTvEnabled = useAppPrefsStore((s) => s.liveTvEnabled);
+  const cinemasEnabled = useAppPrefsStore((s) => s.cinemasEnabled);
   const { data: stats } = useQuery({ queryKey: ["stats"], queryFn: getStats, refetchInterval: 30_000 });
   const { data: watchStats } = useQuery({ queryKey: ["watch-stats"], queryFn: getWatchStats, staleTime: 5 * 60_000 });
   const streak = watchStats?.watchStreak ?? 0;
@@ -67,7 +68,9 @@ export function Sidebar() {
       </div>
 
       <nav className="flex flex-1 flex-col gap-1 overflow-x-hidden overflow-y-auto">
-        {APP_NAV_ITEMS.filter((item) => item.to !== "/live" || liveTvEnabled).map((item) => (
+        {APP_NAV_ITEMS.filter(
+          (item) => (item.to !== "/live" || liveTvEnabled) && (item.to !== "/cinemas" || cinemasEnabled),
+        ).map((item) => (
           <AppNavItemRow
             key={item.to}
             item={item}

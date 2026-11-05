@@ -1,19 +1,22 @@
 import type { ReactNode } from "react";
-import { useRef } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import {
   Clock,
   ListMusic,
+  Maximize2,
   Minus,
   Pause as PauseIcon,
   PictureInPicture2,
   Play,
   Plus,
+  Repeat,
   RotateCcw,
   RotateCw,
   SkipBack,
   SkipForward,
+  X,
 } from "lucide-react";
 import { cn } from "../../utils/cn";
 import { toPosterSrc, upscaleTmdbImageUrl } from "../../utils/posterSrc";
@@ -25,7 +28,13 @@ import { SKIP_OVERLAY_DISABLED } from "./playerConstants";
 import { getControlSizeClasses, getPlayerLayoutSizeClasses, resolveControlScale, TIME_LABEL_SIZE_CLASSES } from "./playerLayoutSizes";
 import { getSeekBarVisualStyle } from "./playerSeekBarLayout";
 import { pointerXOnTrack, seekSecondsFromPointer } from "./playerSeekBar";
-import { getSeekHoverCached, seekHoverPreviewSecond } from "../../utils/seekHoverThumbCache";
+import {
+  getSeekHoverCached,
+  getSeekHoverExact,
+  getSeekHoverFrameTime,
+  seekHoverExactSecond,
+  seekHoverPreviewSecond,
+} from "../../utils/seekHoverThumbCache";
 import { groupControlsByZone } from "./playerLayoutZones";
 import type { PlayerLayoutControlId } from "./playerLayoutTypes";
 import { logPlayer2InvokeFailure } from "./playerDebug";
@@ -38,8 +47,13 @@ import { PlayerEmbeddedVolumeHud } from "./PlayerEmbeddedVolumeHud";
 import { PlayerEmbeddedDevTools } from "./PlayerEmbeddedDevTools";
 import { PlayerEmbeddedEpisodeInfoModal } from "./PlayerEmbeddedEpisodeInfoModal";
 import { PlayerSeekSkipButton } from "./PlayerSeekSkipButton";
+
+const SHOW_TOTAL_DURATION_KEY = "pitflix.player.showTotalDuration.v1";
+/** A classic mouse-wheel notch reports ~100px (120 at some DPI settings); smaller deltas accumulate. */
+const WHEEL_NOTCH_PX = 80;
 import { PlayerWindowChrome } from "./PlayerWindowChrome";
-import type { PlayerEmbeddedViewProps } from "./playerViewProps";
+import type { PlayerChromeZone, PlayerEmbeddedViewProps } from "./playerViewProps";
+import { previewMiniPlayerPos, useMiniPlayerStore } from "../../store/miniPlayerStore";
 
 export function PlayerEmbeddedView(props: PlayerEmbeddedViewProps) {
   const {
@@ -56,12 +70,12 @@ export function PlayerEmbeddedView(props: PlayerEmbeddedViewProps) {
     isFullscreen,
     isMaximized,
     fsControlsVisible,
+    chromeZone,
     onFullscreenPointerActivity,
+    onChromePointerActivity,
     onPlayerRightClick,
     onFullscreen,
     onToggleMaximize,
-    videoSettling,
-    loading,
     useLibMpv,
     embedReady,
     prevEp,
@@ -111,6 +125,8 @@ export function PlayerEmbeddedView(props: PlayerEmbeddedViewProps) {
     subTracks,
     externalSubFiles,
     subMenuValue,
+    secondaryMenuValue,
+    onPickSecondary,
     toggleSub,
     subAppearanceOpen,
     setSubAppearanceOpen,
@@ -127,6 +143,10 @@ export function PlayerEmbeddedView(props: PlayerEmbeddedViewProps) {
     toggleMute,
     setVolumePct,
     volumeHudVisible,
+    seekHud,
+    bumpSeekHud,
+    abLoop,
+    onClearAbLoop,
     playbackSpeed,
     setPlaybackSpeed,
     skipSeconds,
@@ -136,6 +156,9 @@ export function PlayerEmbeddedView(props: PlayerEmbeddedViewProps) {
     toggleAlwaysOnTop,
     isPip,
     togglePip,
+    inAppMini,
+    onEnterInAppMini,
+    onExpandInAppMini,
     layoutPrefs,
     nativeState,
     embeddedSafeMode,
@@ -157,6 +180,128 @@ export function PlayerEmbeddedView(props: PlayerEmbeddedViewProps) {
       letterboxInsets.bottom > 0);
 
   const chromeVisible = fsControlsVisible;
+  /** PiP and the in-app mini player are both too small for the full chrome. */
+  const compact = isPip || inAppMini;
+  /** Header and footer wake independently: hovering near the top shows only the header, near the
+   * bottom only the footer, the middle neither. Compact players keep showing both together. */
+  const headerVisible = chromeVisible && (compact || chromeZone === "all" || chromeZone === "top");
+  const footerVisible = chromeVisible && (compact || chromeZone === "all" || chromeZone === "bottom");
+
+  /** How far past each bar's own height still counts as "near" it, so it wakes slightly early. */
+  const CHROME_ZONE_SLACK_PX = 48;
+  const chromeZoneForPointer = (e: React.PointerEvent<HTMLElement>): PlayerChromeZone | null => {
+    if (compact) return "all";
+    const target = e.target as Node;
+    const header = playerHeaderChromeRef.current;
+    const footer = playerFooterChromeRef.current;
+    // Anything inside a bar (incl. its popup menus, which can reach into the middle) keeps that bar.
+    if (footer?.contains(target)) return "bottom";
+    if (header?.contains(target)) return "top";
+    // Other floating UI (playlist, volume HUD, …) leaves the current zone alone.
+    if (target !== e.currentTarget && !videoAreaRef.current?.contains(target)) return null;
+    const rect = e.currentTarget.getBoundingClientRect();
+    const y = e.clientY - rect.top;
+    if (y <= (header?.offsetHeight ?? 72) + CHROME_ZONE_SLACK_PX) return "top";
+    if (rect.height - y <= (footer?.offsetHeight ?? 130) + CHROME_ZONE_SLACK_PX) return "bottom";
+    return "none";
+  };
+
+  /** The "You're watching" pause screen only after a minute paused — a quick pause shouldn't cover
+   * the picture (user request). Resets the moment playback resumes. */
+  const PAUSE_INFO_DELAY_MS = 60_000;
+  const [pausedLong, setPausedLong] = useState(false);
+  useEffect(() => {
+    if (!displayPaused) {
+      setPausedLong(false);
+      return;
+    }
+    const t = window.setTimeout(() => setPausedLong(true), PAUSE_INFO_DELAY_MS);
+    return () => window.clearTimeout(t);
+  }, [displayPaused]);
+
+  /**
+   * Resize the in-app mini player from its top-left corner (the bottom-right stays put). Height
+   * follows at 16:9; whichever axis was dragged further sets the new width. Same per-frame DOM
+   * preview + commit-on-release scheme as the move below.
+   */
+  const startMiniResize = (e: React.PointerEvent<HTMLElement>) => {
+    if (e.button !== 0) return;
+    e.preventDefault();
+    e.stopPropagation();
+    const handle = e.currentTarget;
+    handle.setPointerCapture(e.pointerId);
+    const { pos: startPos, setPos } = useMiniPlayerStore.getState();
+    const startX = e.clientX;
+    const startY = e.clientY;
+    const posAt = (ev: PointerEvent) => {
+      const growX = startX - ev.clientX;
+      const growY = ((startY - ev.clientY) * 16) / 9;
+      const grow = Math.abs(growX) >= Math.abs(growY) ? growX : growY;
+      return { ...startPos, width: startPos.width + grow };
+    };
+    let frame = 0;
+    let latest: PointerEvent | null = null;
+    const onMove = (ev: PointerEvent) => {
+      latest = ev;
+      if (frame) return;
+      frame = requestAnimationFrame(() => {
+        frame = 0;
+        if (latest) previewMiniPlayerPos(posAt(latest));
+      });
+    };
+    const onUp = (ev: PointerEvent) => {
+      if (frame) cancelAnimationFrame(frame);
+      frame = 0;
+      onFullscreenPointerActivity();
+      setPos(posAt(ev), true);
+      handle.removeEventListener("pointermove", onMove);
+      handle.removeEventListener("pointerup", onUp);
+      handle.removeEventListener("pointercancel", onUp);
+    };
+    handle.addEventListener("pointermove", onMove);
+    handle.addEventListener("pointerup", onUp);
+    handle.addEventListener("pointercancel", onUp);
+  };
+
+  /** Drag the in-app mini player around by its title. Offsets are from the bottom-right corner. */
+  const startMiniDrag = (e: React.PointerEvent<HTMLElement>) => {
+    if (e.button !== 0) return;
+    e.preventDefault();
+    e.stopPropagation();
+    const handle = e.currentTarget;
+    handle.setPointerCapture(e.pointerId);
+    const { pos: startPos, setPos } = useMiniPlayerStore.getState();
+    const startX = e.clientX;
+    const startY = e.clientY;
+    const posAt = (ev: PointerEvent) => ({
+      ...startPos,
+      right: startPos.right - (ev.clientX - startX),
+      bottom: startPos.bottom - (ev.clientY - startY),
+    });
+    // One DOM update per frame, however fast the pointer reports.
+    let frame = 0;
+    let latest: PointerEvent | null = null;
+    const onMove = (ev: PointerEvent) => {
+      latest = ev;
+      if (frame) return;
+      frame = requestAnimationFrame(() => {
+        frame = 0;
+        if (latest) previewMiniPlayerPos(posAt(latest));
+      });
+    };
+    const onUp = (ev: PointerEvent) => {
+      if (frame) cancelAnimationFrame(frame);
+      frame = 0;
+      onFullscreenPointerActivity();
+      setPos(posAt(ev), true);
+      handle.removeEventListener("pointermove", onMove);
+      handle.removeEventListener("pointerup", onUp);
+      handle.removeEventListener("pointercancel", onUp);
+    };
+    handle.addEventListener("pointermove", onMove);
+    handle.addEventListener("pointerup", onUp);
+    handle.addEventListener("pointercancel", onUp);
+  };
 
   const openPlayerContextMenuFromEvent = (e?: React.SyntheticEvent) => {
     // Some controls (playlist rows, seek-skip buttons) own their own right-click menu. The
@@ -190,17 +335,89 @@ export function PlayerEmbeddedView(props: PlayerEmbeddedViewProps) {
   const timeLabelClass = TIME_LABEL_SIZE_CLASSES[seekBarPrefs.timeLabelSize] ?? TIME_LABEL_SIZE_CLASSES.default;
   const seekBarTrackRef = useRef<HTMLDivElement>(null);
 
+  // Right-hand time label: "-52:10" remaining (default) or the total length — click to switch.
+  const [showTotalDuration, setShowTotalDuration] = useState<boolean>(() => {
+    try { return localStorage.getItem(SHOW_TOTAL_DURATION_KEY) === "1"; } catch { return false; }
+  });
+  const toggleShowTotalDuration = useCallback(() => {
+    setShowTotalDuration((prev) => {
+      const next = !prev;
+      try { localStorage.setItem(SHOW_TOTAL_DURATION_KEY, next ? "1" : "0"); } catch { /* ignore */ }
+      return next;
+    });
+  }, []);
+
+  const wheelSeekAccRef = useRef({ px: 0, at: 0 });
+  const skipWithHud = useCallback((delta: number) => {
+    seekRel(delta);
+    bumpSeekHud(delta);
+  }, [seekRel, bumpSeekHud]);
+  // A-B loop overlay: amber band between A and B (or a lone A tick while waiting for B).
+  const loopPct = (sec: number) => (uiDuration > 0 ? Math.min(100, Math.max(0, (sec / uiDuration) * 100)) : 0);
+  const abLoopOverlay =
+    abLoop.a != null && uiDuration > 0 ? (
+      <>
+        {abLoop.b != null ? (
+          <div
+            className="pointer-events-none absolute inset-y-0 z-[1]"
+            style={{
+              left: `${loopPct(abLoop.a)}%`,
+              width: `${Math.max(0.3, loopPct(abLoop.b) - loopPct(abLoop.a))}%`,
+              background: "rgba(251,191,36,0.55)",
+            }}
+            aria-hidden
+          />
+        ) : null}
+        {[abLoop.a, abLoop.b].map((sec, i) =>
+          sec == null ? null : (
+            <div
+              key={i}
+              className="pointer-events-none absolute z-[2] w-[2px] -translate-x-1/2 rounded-full bg-amber-300"
+              style={{ left: `${loopPct(sec)}%`, top: -3, bottom: -3 }}
+              aria-hidden
+            />
+          ),
+        )}
+      </>
+    ) : null;
+
+  // Once mpv reports the landing spot, follow the live playhead (same value as the left time label)
+  // rather than freezing on the landing time while the video keeps playing.
+  const seekHudTime = seekHud ? (seekHud.settled ? timePos : seekHud.target) : 0;
+  const seekHudPct = seekHud && uiDuration > 0 ? Math.min(100, Math.max(0, (seekHudTime / uiDuration) * 100)) : 0;
+  const seekHudPill = seekHud ? (
+    <div
+      className="flex items-center gap-2 whitespace-nowrap rounded-lg border border-white/10 px-2.5 py-1.5 text-[13px] font-semibold tabular-nums text-white animate-volume-osd-in [text-shadow:none]"
+      style={{
+        background: "rgba(12,9,28,0.86)",
+        backdropFilter: "blur(20px)",
+        boxShadow: "0 10px 30px rgba(0,0,0,0.6), 0 0 0 1px rgba(124,58,237,0.18)",
+      }}
+    >
+      {seekHud.delta !== 0 ? (
+        <span className="rounded-md bg-pitflix-primary/80 px-1.5 py-0.5 text-[11px] font-bold">
+          {seekHud.delta > 0 ? "+" : "−"}{fmtTime(Math.abs(Math.round(seekHud.delta)))}
+        </span>
+      ) : null}
+      <span>
+        {fmtTime(seekHudTime)}
+        {uiDuration > 0 ? <span className="text-white/55"> / {fmtTime(Math.round(uiDuration))}</span> : null}
+      </span>
+    </div>
+  ) : null;
+
   const updateSeekHover = (clientX: number) => {
     if (!state?.filePath || duration <= 0 || !seekBarTrackRef.current) return;
     const track = seekBarTrackRef.current;
     const x = pointerXOnTrack(clientX, track);
     const seconds = seekSecondsFromPointer(clientX, track, duration);
-    const previewSecond = seekHoverPreviewSecond(seconds);
-    const cached = getSeekHoverCached(state.filePath, previewSecond);
+    const exact = getSeekHoverExact(state.filePath, seekHoverExactSecond(seconds));
+    const cached = exact ?? getSeekHoverCached(state.filePath, seekHoverPreviewSecond(seconds));
     setSeekHover((prev) => ({
       pixelX: x,
       seconds,
-      // Keep the last good frame visible (dimmed) until the new one arrives.
+      // Keep the last good frame visible (dimmed) only when nothing is saved for this spot yet; a
+      // nearby saved frame shows at full brightness and the exact one replaces it if fetched.
       dataUrl: cached ?? prev?.dataUrl ?? null,
       loading: !cached,
     }));
@@ -211,6 +428,33 @@ export function PlayerEmbeddedView(props: PlayerEmbeddedViewProps) {
     if (sessionBlocksTransport || duration <= 0 || !seekBarTrackRef.current) return;
     const seconds = seekSecondsFromPointer(clientX, seekBarTrackRef.current, duration);
     seekToAbsolute(seconds);
+  };
+
+  /** Real time of the frame the preview is showing right now (settled, not a stale one kept while
+   * loading) — undefined when unknown. */
+  const shownPreviewTime =
+    seekHover?.dataUrl && !seekHover.loading ? getSeekHoverFrameTime(seekHover.dataUrl) : undefined;
+
+  /**
+   * A click lands on exactly the frame the preview showed: the swept preview is the nearest saved
+   * keyframe, which can be seconds from the cursor, so seeking to the cursor time showed a different
+   * scene than the one the user clicked on. Only for a settled preview of this same spot (within
+   * the ±20 s the nearest-frame lookup searches); otherwise it seeks to the cursor as before.
+   * Returns true when it snapped.
+   */
+  const seekToShownPreview = (clientX: number): boolean => {
+    if (sessionBlocksTransport || duration <= 0 || !seekBarTrackRef.current) return false;
+    const cursor = seekSecondsFromPointer(clientX, seekBarTrackRef.current, duration);
+    if (
+      shownPreviewTime == null ||
+      !seekHover ||
+      Math.abs(seekHover.seconds - cursor) > 1 ||
+      Math.abs(shownPreviewTime - cursor) > 21
+    ) {
+      return false;
+    }
+    seekToAbsolute(shownPreviewTime);
+    return true;
   };
   const groupedControls = groupControlsByZone(layoutPrefs);
 
@@ -274,7 +518,7 @@ export function PlayerEmbeddedView(props: PlayerEmbeddedViewProps) {
               "flex flex-col items-center justify-center gap-0 rounded-md text-white enabled:hover:bg-white/[0.09] disabled:opacity-40",
               layoutSizes.seekBtn,
             )}
-            onSeek={seekRel}
+            onSeek={skipWithHud}
           >
             <RotateCcw className={layoutSizes.seekIcon} strokeWidth={2} />
             <span className={cn("font-bold leading-none", layoutSizes.seekLabel)}>{skipSeconds}</span>
@@ -312,7 +556,7 @@ export function PlayerEmbeddedView(props: PlayerEmbeddedViewProps) {
               "flex flex-col items-center justify-center gap-0 rounded-md text-white enabled:hover:bg-white/[0.09] disabled:opacity-40",
               layoutSizes.seekBtn,
             )}
-            onSeek={seekRel}
+            onSeek={skipWithHud}
           >
             <RotateCw className={layoutSizes.seekIcon} strokeWidth={2} />
             <span className={cn("font-bold leading-none", layoutSizes.seekLabel)}>{skipSeconds}</span>
@@ -325,6 +569,8 @@ export function PlayerEmbeddedView(props: PlayerEmbeddedViewProps) {
             subTracks={subTracks}
             externalSubFiles={externalSubFiles}
             subMenuValue={subMenuValue}
+            secondaryMenuValue={secondaryMenuValue}
+            onPickSecondary={onPickSecondary}
             toggleSub={toggleSub}
             subAppearanceOpen={subAppearanceOpen}
             setSubAppearanceOpen={setSubAppearanceOpen}
@@ -521,9 +767,9 @@ export function PlayerEmbeddedView(props: PlayerEmbeddedViewProps) {
     "relative flex h-full min-h-0 w-full flex-1 flex-col overflow-hidden",
     !chromeVisible ? "cursor-none" : "cursor-default",
   )}
-  onPointerMove={() => onFullscreenPointerActivity()}
+  onPointerMove={(e) => onChromePointerActivity(chromeZoneForPointer(e))}
   onPointerDownCapture={(e) => {
-    onFullscreenPointerActivity();
+    onChromePointerActivity(chromeZoneForPointer(e));
     onVideoPointerDownCapture(e);
   }}
   onContextMenu={openPlayerContextMenuFromEvent}
@@ -535,19 +781,36 @@ export function PlayerEmbeddedView(props: PlayerEmbeddedViewProps) {
       openPlayerContextMenuFromEvent(e);
       return;
     }
-    onFullscreenPointerActivity();
+    onChromePointerActivity(chromeZoneForPointer(e));
     void getCurrentWindow().setFocus().catch(() => {});
     e.currentTarget.focus({ preventScroll: true });
   }}
 >
-  {/* Always-on drag strip — stays interactive even when chrome auto-hides. */}
-  <div
-    data-tauri-drag-region
-    className="absolute inset-x-0 top-0 z-[30] h-5 cursor-move right-[13.5rem]"
-    title="Drag to move window"
-    aria-label="Drag to move window"
-  />
+  {/* Always-on drag strip — stays interactive even when chrome auto-hides. Not in the in-app
+      mini player: dragging there would move the whole app window. */}
+  {inAppMini ? null : (
+    <div
+      data-tauri-drag-region
+      className="absolute inset-x-0 top-0 z-[30] h-5 cursor-move right-[13.5rem]"
+      title="Drag to move window"
+      aria-label="Drag to move window"
+    />
+  )}
 
+  {inAppMini ? (
+    // The box is anchored at its bottom-right, so the free corner to resize from is the top-left.
+    <div
+      role="separator"
+      aria-label="Resize mini player"
+      title="Drag to resize"
+      className="absolute left-0 top-0 z-[40] h-5 w-5 cursor-nwse-resize touch-none"
+      onPointerDown={startMiniResize}
+    >
+      <svg viewBox="0 0 16 16" className="h-full w-full p-0.5 text-white/45">
+        <path d="M2 14 14 2M2 8 8 2M2 2v0" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+      </svg>
+    </div>
+  ) : null}
   {isPip ? (
     <div
       role="separator"
@@ -572,7 +835,7 @@ export function PlayerEmbeddedView(props: PlayerEmbeddedViewProps) {
     ref={playerHeaderChromeRef}
     className={cn(
       "absolute left-0 right-0 top-0 z-10 flex items-center justify-between gap-3 px-6 py-[18px] transition-[opacity,transform] duration-[450ms] ease-out",
-      chromeVisible
+      headerVisible
         ? "translate-y-0 opacity-100"
         : "pointer-events-none -translate-y-2.5 opacity-0 [&_*]:pointer-events-none",
     )}
@@ -580,10 +843,36 @@ export function PlayerEmbeddedView(props: PlayerEmbeddedViewProps) {
       background:
         "linear-gradient(to bottom, rgba(0,0,0,0.84) 0%, rgba(0,0,0,0.36) 58%, transparent 100%)",
     }}
-    inert={chromeVisible ? undefined : true}
-    aria-hidden={chromeVisible ? undefined : true}
+    inert={headerVisible ? undefined : true}
+    aria-hidden={headerVisible ? undefined : true}
   >
-    {isPip ? (
+    {inAppMini ? (
+      <>
+        <div
+          className="min-w-0 flex-1 cursor-move touch-none select-none self-stretch truncate py-2 text-xs font-semibold text-white/90"
+          title="Drag to move"
+          onPointerDown={startMiniDrag}
+        >
+          {state.title}
+        </div>
+        <button
+          type="button"
+          title="Back to full player"
+          onClick={onExpandInAppMini}
+          className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md text-white/85 transition hover:bg-white/15 hover:text-white"
+        >
+          <Maximize2 className="h-4 w-4" />
+        </button>
+        <button
+          type="button"
+          title="Close player"
+          onClick={() => void exitAndClose()}
+          className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md text-white/85 transition hover:bg-red-500/25 hover:text-red-200"
+        >
+          <X className="h-4 w-4" />
+        </button>
+      </>
+    ) : isPip ? (
       // Same overlap problem as the footer control grid — title text + all six chrome buttons
       // don't fit at ~384px width. Only a way back out of PiP is essential here.
       <>
@@ -629,8 +918,7 @@ export function PlayerEmbeddedView(props: PlayerEmbeddedViewProps) {
           onMinimize={() => void getCurrentWindow().minimize().catch(() => {})}
           isMaximized={isMaximized}
           onToggleMaximize={() => void onToggleMaximize()}
-          isFullscreen={isFullscreen}
-          onToggleFullscreen={() => void onFullscreen()}
+          onMiniInApp={onEnterInAppMini}
           onClose={() => void exitAndClose()}
         />
       </>
@@ -660,14 +948,11 @@ export function PlayerEmbeddedView(props: PlayerEmbeddedViewProps) {
         className="pointer-events-none absolute inset-0 z-[1] h-full w-full bg-black object-contain"
       />
     ) : null}
-    {useLibMpv && videoSettling ? (
-      <div className="pointer-events-none absolute inset-0 z-10 flex items-center justify-center bg-black">
-        {loading ? <span className="text-sm text-white/70">Loading…</span> : null}
-      </div>
-    ) : null}
+    {/* The opening title/thumbnail card (PlayerIntroOverlay) was removed at the user's request —
+        the video now shows as soon as mpv has the first frame. */}
     
     <PlayerPauseInfoOverlay
-      visible={displayPaused && !isPip}
+      visible={displayPaused && pausedLong && !compact}
       title={pauseInfoTitle}
       season={state.season}
       episodeNumber={state.episodeNumber}
@@ -683,7 +968,7 @@ export function PlayerEmbeddedView(props: PlayerEmbeddedViewProps) {
         nextEpisode={nextEp}
         onPrevious={playPrevious}
         onNext={playNext}
-        visible={chromeVisible}
+        visible={footerVisible}
       />
     )}
 
@@ -742,10 +1027,12 @@ export function PlayerEmbeddedView(props: PlayerEmbeddedViewProps) {
     sessionBlocksTransport={sessionBlocksTransport}
     setVolumePct={setVolumePct}
     toggleMute={toggleMute}
+    compact={compact}
   />
 
-  {/* Mini progress bar — shown only while chrome is hidden */}
-  {!chromeVisible && seekBarPrefs.visible ? (
+  {/* Mini progress bar — shown only while chrome is hidden. During an arrow-key skip it follows
+      the skip target so the bar and the time readout above it always agree. */}
+  {!footerVisible && seekBarPrefs.visible ? (
     <div
       className="pointer-events-none absolute bottom-0 left-0 right-0 z-10 bg-white/10"
       style={{ height: Math.max(2, seekBarStyle.trackPx) }}
@@ -754,10 +1041,25 @@ export function PlayerEmbeddedView(props: PlayerEmbeddedViewProps) {
       <div
         className="h-full"
         style={{
-          width: `${Math.min(100, Math.max(0, uiDuration > 0 ? (uiTimePos / uiDuration) * 100 : 0))}%`,
+          width: `${Math.min(100, Math.max(0, uiDuration > 0 ? ((seekHud && !seekHud.settled ? seekHud.target : uiTimePos) / uiDuration) * 100 : 0))}%`,
           background: seekBarStyle.miniFillBackground,
         }}
       />
+      {abLoopOverlay}
+    </div>
+  ) : null}
+
+  {/* Skip readout (arrow keys / skip buttons) while chrome is hidden — rides above the mini bar. */}
+  {!footerVisible && seekHudPill ? (
+    <div
+      className="pointer-events-none absolute z-20 -translate-x-1/2"
+      style={{
+        left: `clamp(92px, ${seekHudPct}%, calc(100% - 92px))`,
+        bottom: Math.max(2, seekBarStyle.trackPx) + 10,
+      }}
+      aria-live="polite"
+    >
+      {seekHudPill}
     </div>
   ) : null}
 
@@ -765,7 +1067,7 @@ export function PlayerEmbeddedView(props: PlayerEmbeddedViewProps) {
     ref={playerFooterChromeRef}
     className={cn(
       "absolute bottom-0 left-0 right-0 z-10 overflow-x-clip overflow-y-visible px-7 pb-[26px] pt-6 transition-[opacity,transform] duration-[450ms] ease-out",
-      chromeVisible
+      footerVisible
         ? "translate-y-0 opacity-100"
         : "pointer-events-none translate-y-2.5 opacity-0 [&_*]:pointer-events-none",
     )}
@@ -773,9 +1075,27 @@ export function PlayerEmbeddedView(props: PlayerEmbeddedViewProps) {
       background:
         "linear-gradient(to top, rgba(0,0,0,0.99) 0%, rgba(0,0,0,0.95) 35%, rgba(0,0,0,0.78) 65%, transparent 100%)",
     }}
-    inert={chromeVisible ? undefined : true}
-    aria-hidden={chromeVisible ? undefined : true}
+    inert={footerVisible ? undefined : true}
+    aria-hidden={footerVisible ? undefined : true}
   >
+  {abLoop.a != null ? (
+    <div className="absolute left-7 top-0 z-20 flex items-center gap-1.5 rounded-md border border-amber-300/30 bg-black/75 py-1 pl-2 pr-1 text-[11px] font-semibold tabular-nums text-amber-200 backdrop-blur-sm">
+      <Repeat className="h-3 w-3" strokeWidth={2.4} />
+      {abLoop.b != null ? (
+        <span>Loop {fmtTime(Math.round(abLoop.a))} – {fmtTime(Math.round(abLoop.b))}</span>
+      ) : (
+        <span>Loop start {fmtTime(Math.round(abLoop.a))} · press B at the end point</span>
+      )}
+      <button
+        type="button"
+        onClick={onClearAbLoop}
+        title="Clear A-B loop"
+        className="ml-0.5 flex h-4 w-4 items-center justify-center rounded text-amber-200/80 hover:bg-white/10 hover:text-white"
+      >
+        <X className="h-3 w-3" />
+      </button>
+    </div>
+  ) : null}
   <div className="w-full space-y-1.5">
     {seekBarPrefs.visible ? (
     <div className={cn("flex items-center gap-2 font-bold tabular-nums text-white [text-shadow:0_1px_3px_rgba(0,0,0,0.8)]", timeLabelClass)}>
@@ -810,11 +1130,12 @@ export function PlayerEmbeddedView(props: PlayerEmbeddedViewProps) {
           seekDraggingRef.current = true;
           onFullscreenPointerActivity();
           e.currentTarget.setPointerCapture(e.pointerId);
+          // Clicked on a spot whose preview is showing: go to exactly that frame (it's already
+          // what the preview shows, so no exact-frame fetch needed).
+          if (seekToShownPreview(e.clientX)) return;
           seekFromPointer(e.clientX);
           updateSeekHover(e.clientX);
-          // The click itself deserves a frame-exact preview, not the ~2.5s-rounded bucket the
-          // hover-sweep path (updateSeekHover → scheduleHoverThumb) uses — that rounding is what
-          // made the shown thumbnail not match the second actually clicked.
+          // Otherwise the click deserves a frame-exact preview of the second it seeked to.
           if (state?.filePath && seekBarTrackRef.current) {
             const exactSeconds = seekSecondsFromPointer(e.clientX, seekBarTrackRef.current, duration);
             scheduleExactHoverThumb(state.filePath, exactSeconds);
@@ -846,9 +1167,17 @@ export function PlayerEmbeddedView(props: PlayerEmbeddedViewProps) {
         }}
         onWheel={(e) => {
           if (sessionBlocksTransport || duration <= 0) return;
-          e.preventDefault();
-          const step = e.deltaY < 0 ? 5 : -5;
-          seekRel(step);
+          // One skip (the user's skip amount, same as ← →) per wheel notch. Smooth-scrolling mice
+          // and touchpads split a notch into many small events, which used to each skip 5s.
+          const px = e.deltaMode === 1 ? e.deltaY * 33 : e.deltaMode === 2 ? e.deltaY * 800 : e.deltaY;
+          const now = performance.now();
+          const acc = wheelSeekAccRef.current;
+          if (now - acc.at > 250 || Math.sign(px) !== Math.sign(acc.px)) acc.px = 0;
+          acc.at = now;
+          acc.px += px;
+          if (Math.abs(acc.px) < WHEEL_NOTCH_PX) return;
+          acc.px = 0;
+          skipWithHud(px < 0 ? skipSeconds : -skipSeconds);
         }}
       >
         <div
@@ -871,6 +1200,7 @@ export function PlayerEmbeddedView(props: PlayerEmbeddedViewProps) {
               height: "100%",
             }}
           />
+          {abLoopOverlay}
           {seekBarPrefs.thumbVisible ? (
             <div
               className="absolute top-1/2 -translate-x-1/2 -translate-y-1/2 rounded-full bg-white opacity-0 transition-opacity duration-200 group-hover:opacity-100"
@@ -883,6 +1213,17 @@ export function PlayerEmbeddedView(props: PlayerEmbeddedViewProps) {
             />
           ) : null}
         </div>
+        {/* Skip readout while the controls are showing — above the bar at the skip target. Yields to
+            the hover preview, which occupies the same spot. */}
+        {footerVisible && seekHudPill && !seekHover ? (
+          <div
+            className="pointer-events-none absolute bottom-full z-30 mb-1 -translate-x-1/2"
+            style={{ left: `clamp(80px, ${seekHudPct}%, calc(100% - 80px))` }}
+            aria-live="polite"
+          >
+            {seekHudPill}
+          </div>
+        ) : null}
         {seekBarPrefs.hoverPreviewVisible && seekHover && (() => {
           const TOOLTIP_HALF = 80;
           const rectW =
@@ -908,14 +1249,22 @@ export function PlayerEmbeddedView(props: PlayerEmbeddedViewProps) {
               </div>
             ) : null}
             <span className="mt-1 rounded bg-black/80 px-1.5 py-0.5 text-[10px] tabular-nums text-white transition-opacity duration-150">
-              {fmtTime(Math.round(seekHover.seconds))}
+              {/* The shown frame's real time when known — that's where a click goes. */}
+              {fmtTime(Math.round(shownPreviewTime ?? seekHover.seconds))}
             </span>
           </div>
           );
         })()}
       </div>
       {seekBarPrefs.remainingTimeVisible ? (
-        <span className="shrink-0 tabular-nums text-right">-{fmtTime(remaining)}</span>
+        <button
+          type="button"
+          onClick={toggleShowTotalDuration}
+          title={showTotalDuration ? "Total length — click to show time remaining" : "Time remaining — click to show total length"}
+          className="shrink-0 cursor-pointer rounded px-1 text-right tabular-nums transition-colors hover:bg-white/10"
+        >
+          {showTotalDuration ? fmtTime(Math.round(duration)) : `-${fmtTime(remaining)}`}
+        </button>
       ) : (
         <span className="w-0 shrink-0" aria-hidden />
       )}
@@ -961,7 +1310,7 @@ export function PlayerEmbeddedView(props: PlayerEmbeddedViewProps) {
         </div>
       </div>
     ) : null}
-    {isPip ? (
+    {compact ? (
       // The normal 3-column control-zone grid below packs many buttons (volume, subtitles,
       // speed, playlist, clock, etc.) side by side — at PiP's ~384px width they wrap onto each
       // other instead of fitting in a row. Only play/pause is essential for "keep watching in a
@@ -1015,6 +1364,7 @@ export function PlayerEmbeddedView(props: PlayerEmbeddedViewProps) {
     state={state}
     timePos={timePos}
     duration={duration}
+    onExitPlayer={exitAndClose}
   />
 ) : null}
     </>

@@ -98,6 +98,50 @@ app.MapPost("/api/library/movies/{id:int}/match-tmdb", async (int id, MatchTmdbB
     return Results.Json(new { success = true, libraryId = newId }, jsonSerializerOptions);
 });
 
+/// <summary>Point a movie at its file after it was moved/renamed outside Pitflix (keeps watch state).</summary>
+app.MapPost("/api/library/movies/{id:int}/relocate", async (int id, RelocatePathBody body, LibraryRepository repo,
+    Microsoft.Extensions.Caching.Memory.IMemoryCache memoryCache, CancellationToken ct) =>
+{
+    var (ok, err) = await repo.RelocateMovieFileAsync(id, body.Path ?? "", ct).ConfigureAwait(false);
+    if (ok)
+        memoryCache.Remove("home:watching-currently");
+    return Results.Json(new { success = ok, error = err }, jsonSerializerOptions);
+});
+
+/// <summary>A file matched as a movie is really an episode of a series already in the library.</summary>
+app.MapPost("/api/library/movies/{id:int}/link-to-episode", async (int id, LinkMovieToEpisodeBody body,
+    LibraryRepository repo, ITmdbClientFactory tmdbClientFactory,
+    Microsoft.Extensions.Caching.Memory.IMemoryCache memoryCache, CancellationToken ct) =>
+{
+    var tmdb = tmdbClientFactory.Create();
+    if (tmdb == null)
+        return Results.Json(new { success = false, error = "TMDB API key not configured." }, jsonSerializerOptions);
+    var pipeline = new ScanPipeline(new FileScanner(), tmdb, repo);
+    var (ok, episodeId, err) = await pipeline
+        .LinkMovieFileToEpisodeAsync(id, body.ShowId, body.Season, body.Episode, ct).ConfigureAwait(false);
+    if (!ok)
+        return Results.Json(new { success = false, error = err ?? "Could not link as an episode." }, jsonSerializerOptions);
+    memoryCache.Remove("home:watching-currently");
+    return Results.Json(new { success = true, showId = body.ShowId, episodeId }, jsonSerializerOptions);
+});
+
+/// <summary>Point a series at the folder it was moved to (episodes re-found by path or SxxExx).</summary>
+app.MapPost("/api/library/series/{id:int}/relocate", async (int id, RelocatePathBody body, LibraryRepository repo,
+    ITmdbClientFactory tmdbClientFactory, Microsoft.Extensions.Caching.Memory.IMemoryCache memoryCache,
+    CancellationToken ct) =>
+{
+    // Relocating never calls TMDB; the pipeline just needs a client instance to construct.
+    var tmdb = tmdbClientFactory.Create();
+    if (tmdb == null)
+        return Results.Json(new { success = false, error = "TMDB API key not configured." }, jsonSerializerOptions);
+    var pipeline = new ScanPipeline(new FileScanner(), tmdb, repo);
+    var (ok, relinked, missing, err) = await pipeline.RelocateShowFolderAsync(id, body.Path ?? "", ct)
+        .ConfigureAwait(false);
+    if (ok)
+        memoryCache.Remove("home:watching-currently");
+    return Results.Json(new { success = ok, relinked, missing, error = err }, jsonSerializerOptions);
+});
+
 app.MapPost("/api/library/series/{id:int}/rematch-from-folder", async (int id, LibraryRepository repo, ITmdbClientFactory tmdbClientFactory, CancellationToken ct) =>
 {
     var tmdb = tmdbClientFactory.Create();

@@ -19,9 +19,17 @@ const dpr = (() => {
 
 const scaled = (cssWidth: number) => Math.round(cssWidth * dpr);
 
+/**
+ * Small posters need ~1.5x more pixels than the slot to look crisp. An exact-fit variant is a
+ * small q82 JPEG that the browser then resamples a second time onto the cell, and posters are
+ * mostly fine text and faces — both steps soften them visibly next to the sharp UI text around
+ * them (user report 2026-10-16: "posters are good quality but don't look like it").
+ */
+const crisp = (cssWidth: number) => scaled(cssWidth * 1.5);
+
 export const POSTER_WIDTHS = {
   /** Dense carousel / list-row thumbnails (~130-136 px cells). */
-  thumb: scaled(136),
+  thumb: crisp(136),
   /**
    * Library grid cells and default home-row cards. The 145 px baseline undersold this in practice:
    * `LibraryPosterGrid`'s columns are `minmax(145px, 1fr)`, so on anything wider than a few narrow
@@ -29,9 +37,9 @@ export const POSTER_WIDTHS = {
    * are a fixed 176px — both were requesting a ~150-160px variant and getting stretched, which read
    * as pixelation. 200 covers both with headroom and is still a fraction of the 500px cached source.
    */
-  card: scaled(200),
+  card: crisp(200),
   /** Detail-page poster and hover-card art. */
-  detail: scaled(200),
+  detail: crisp(200),
   /**
    * Hero backdrops — drawn across the full home-page column (900-1900px+ CSS wide), not a small
    * fixed-size slot, so this deliberately isn't `scaled()`. The API's largest resize bucket is 640,

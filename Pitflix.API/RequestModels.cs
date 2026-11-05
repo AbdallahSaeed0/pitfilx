@@ -54,6 +54,10 @@ internal sealed record PersonProfileOverrideBody(string? ProfilePath);
 internal sealed record RewatchCountBody(int Count);
 
 internal sealed record MatchTmdbBody(int TmdbId);
+
+internal sealed record RelocatePathBody(string? Path);
+
+internal sealed record LinkMovieToEpisodeBody(int ShowId, int Season, int Episode);
 internal sealed record BulkRescanSeriesRequest(int[] ShowIds);
 internal sealed record RecommendationFromBody(int TmdbId, string? MediaType, string? Filter);
 internal sealed record PathRequest(string? Path);

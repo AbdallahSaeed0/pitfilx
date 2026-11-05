@@ -1,4 +1,5 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { AmbientBackdrop } from "../components/detail/CinematicBackdrop";
 import { RowListSkeleton } from "../components/ui/Skeleton";
 import { useCallback, useMemo, useRef, useState } from "react";
 import { isTauri } from "@tauri-apps/api/core";
@@ -34,6 +35,7 @@ import {
 } from "../components/episodes/EpisodeAvailabilityUi";
 import { MediaImage } from "../components/ui/MediaImage";
 import { ImdbRatingBadge } from "../components/ui/ImdbRatingBadge";
+import { SeasonRatingsRow } from "../features/detail/SeasonRatingsRow";
 import { RewatchPopover } from "../components/ui/RewatchPopover";
 import { cn } from "../utils/cn";
 import { toPosterSrc } from "../utils/posterSrc";
@@ -58,9 +60,30 @@ type EpisodeRow = {
   inLibrary?: boolean;
   isAired?: boolean;
   runtimeMinutes?: number | null;
+  /** Where you stopped in a partly-watched episode (seconds); absent when unstarted or finished. */
+  resumeSeconds?: number | null;
+  /** 1–99 for partly-watched episodes. */
+  progressPercent?: number | null;
 };
 
 const VIEW_KEY = "pitflix.season.viewMode";
+
+/** Thin "how far in" bar pinned to the bottom edge of an episode thumbnail. */
+function EpisodeProgressBar({ percent }: { percent: number }) {
+  return (
+    <div className="absolute inset-x-0 bottom-0 z-[2] h-1 bg-black/50" aria-hidden="true">
+      <div className="h-full rounded-r-full bg-gradient-to-r from-pitflix-primary to-violet-400" style={{ width: `${percent}%` }} />
+    </div>
+  );
+}
+
+/** "32% watched · 39m left" — mirrors the Continue Watching banner on Home. */
+function episodeProgressLabel(ep: { progressPercent?: number | null; resumeSeconds?: number | null; runtimeMinutes?: number | null }) {
+  if (!ep.progressPercent) return null;
+  const totalMin = ep.runtimeMinutes ?? 0;
+  const leftMin = totalMin > 0 && ep.resumeSeconds ? Math.max(1, Math.round(totalMin - ep.resumeSeconds / 60)) : null;
+  return leftMin ? `${ep.progressPercent}% watched · ${leftMin}m left` : `${ep.progressPercent}% watched`;
+}
 
 /** Shared watched-toggle button for both the grid and list episode-row layouts —
  * clicking toggles watched status, holding (when already watched) reveals the
@@ -167,13 +190,19 @@ export function SeasonDetailPage() {
     queryFn: () => getShowSeason(libraryId, season),
     enabled: Number.isFinite(libraryId) && libraryId > 0 && Number.isFinite(season),
     staleTime: 10 * 60_000,
+    // Episode progress bars change whenever you play something (in either player) — cached data still
+    // paints instantly, this just re-checks positions each time the page opens. Local call, ~15 ms.
+    refetchOnMount: "always",
     gcTime: 60 * 60_000,
     refetchInterval: (query) => {
       const eps = (query.state.data?.episodes ?? []) as EpisodeRow[];
       const pending = eps.some(
         (e) => e.isAired !== false && (e.imdbVoteAverage == null || e.imdbVoteAverage <= 0),
       );
-      return pending ? 8000 : false;
+      // Background OMDb backfill runs ~2 episodes/sec, so a minute covers any season. Episodes that
+      // still have no rating after that genuinely don't have one yet (new, too few IMDb votes) —
+      // stop polling for them instead of refetching every 8s for as long as the page stays open.
+      return pending && query.state.dataUpdateCount <= 8 ? 8000 : false;
     },
   });
 
@@ -366,7 +395,7 @@ export function SeasonDetailPage() {
   );
 
   const episodeThumb = useCallback(
-    (ep: EpisodeRow) => toPosterSrc(ep.stillLocalPath ?? undefined) ?? ep.stillUrl ?? poster,
+    (ep: EpisodeRow) => toPosterSrc(ep.stillLocalPath ?? undefined) ?? toPosterSrc(ep.stillUrl ?? undefined) ?? poster,
     [poster],
   );
 
@@ -382,7 +411,8 @@ export function SeasonDetailPage() {
   const posterSeason = data.posterUrl as string | null | undefined;
 
   return (
-    <div>
+    <div className="isolate">
+      <AmbientBackdrop src={toPosterSrc(posterSeason ?? undefined) || poster} alwaysOn />
       {ResumePromptModal}
       <div className="mb-4 flex flex-wrap items-center gap-2">
         <button
@@ -404,7 +434,7 @@ export function SeasonDetailPage() {
 
       <div className="flex flex-col gap-6 md:flex-row md:items-start">
         <MediaImage
-          src={posterSeason || poster}
+          src={toPosterSrc(posterSeason ?? undefined) || poster}
           alt=""
           className="w-full max-w-[180px] shrink-0 overflow-hidden rounded-xl bg-pitflix-card shadow-xl"
           fallbackText={show.title ?? ""}
@@ -414,6 +444,11 @@ export function SeasonDetailPage() {
             {show.title}
           </h1>
           <p className="mt-1 text-base font-semibold text-pitflix-muted">{seasonName}</p>
+          {/* This season's own scores from every source — only when there's more than one season
+              to compare (a single-season show's numbers are already on the series page). */}
+          {show.tmdbId && seasonsSummary.filter((s) => s.seasonNumber > 0).length > 1 && season > 0 ? (
+            <SeasonRatingsRow tvTmdbId={show.tmdbId} season={season} />
+          ) : null}
 
           {/* Season navigation */}
           {availableSeasons.length > 1 && (
@@ -576,7 +611,7 @@ export function SeasonDetailPage() {
 
         {/* Grid view */}
         {viewMode === "grid" && (
-          <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5">
+          <div className="grid grid-cols-1 gap-5 sm:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-4">
             {episodes.map((ep) => {
               const inLibrary = ep.inLibrary !== false && ep.id != null;
               const isWatched = episodeIsWatched(ep, inLibrary);
@@ -642,7 +677,9 @@ export function SeasonDetailPage() {
                       </div>
                     )}
                     {isNextUp && (
-                      <div className="absolute left-2 top-2 rounded-full bg-pitflix-primary/90 px-2 py-0.5 text-[10px] font-bold text-white shadow-lg">Next up</div>
+                      <div className="absolute left-2 top-2 rounded-full bg-pitflix-primary/90 px-2 py-0.5 text-[10px] font-bold text-white shadow-lg">
+                        {ep.progressPercent ? "Continue" : "Next up"}
+                      </div>
                     )}
                     {missingReleased ? (
                       <div className="absolute right-2 top-2">
@@ -665,6 +702,7 @@ export function SeasonDetailPage() {
                         <EpisodeRuntimeBadge minutes={ep.runtimeMinutes} variant="thumb" />
                       </div>
                     ) : null}
+                    {!isWatched && ep.progressPercent ? <EpisodeProgressBar percent={ep.progressPercent} /> : null}
                     {inLibrary && ep.filePath ? (
                       <button
                         type="button"
@@ -700,6 +738,11 @@ export function SeasonDetailPage() {
                         : `Episode ${ep.episodeNumber}`}
                     </p>
                     <div className="mt-2 flex flex-wrap gap-1.5">
+                      {!isWatched && episodeProgressLabel(ep) ? (
+                        <span className="rounded bg-pitflix-primary/20 px-1.5 py-0.5 text-[10px] font-semibold text-violet-300">
+                          {episodeProgressLabel(ep)}
+                        </span>
+                      ) : null}
                       {(ep.runtimeMinutes ?? 0) > 0 ? (
                         <EpisodeRuntimeBadge minutes={ep.runtimeMinutes} />
                       ) : null}
@@ -842,7 +885,7 @@ export function SeasonDetailPage() {
 
         {/* List view */}
         {viewMode === "list" && (
-        <div className="space-y-2">
+        <div className="space-y-3">
           {episodes.map((ep) => {
             const inLibrary = ep.inLibrary !== false && ep.id != null;
             const isWatched = episodeIsWatched(ep, inLibrary);
@@ -856,7 +899,7 @@ export function SeasonDetailPage() {
               <div
                 key={ep.id ?? `tmdb-${ep.episodeNumber}`}
                 className={cn(
-                  "group flex items-center gap-3 rounded-2xl border py-3 pl-3 pr-4 transition-all duration-300 sm:gap-4 sm:pl-4",
+                  "group flex items-center gap-3 rounded-2xl border py-3.5 pl-3 pr-4 transition-all duration-300 sm:gap-5 sm:py-4 sm:pl-4",
                   inLibrary && "border-transparent bg-pitflix-bg/50 hover:border-pitflix-primary/30 hover:bg-pitflix-card/90",
                   isNextUp && "border-l-4 border-l-pitflix-primary",
                   isSelected && "border-pitflix-primary/40 bg-pitflix-card/70 ring-1 ring-pitflix-primary/25",
@@ -879,23 +922,26 @@ export function SeasonDetailPage() {
                 ) : (
                   <div className="w-6 shrink-0" aria-hidden="true" />
                 )}
-                <MediaImage
-                  src={epThumb}
-                  alt=""
-                  className={cn(
-                    "h-14 w-[88px] shrink-0 overflow-hidden rounded-lg bg-pitflix-card object-cover ring-1",
-                    inLibrary && "ring-white/5",
-                    missingReleased && "ring-amber-500/30 saturate-[0.7]",
-                    upcoming && "ring-violet-500/25 saturate-[0.6]",
-                    spoilerProtection && !isWatched && "blur-md",
-                  )}
-                  fallbackText={`${ep.episodeNumber}`}
-                />
-                <span className="w-10 shrink-0 text-center font-mono text-sm font-medium tabular-nums text-pitflix-muted">
+                <div className="relative shrink-0 overflow-hidden rounded-lg">
+                  <MediaImage
+                    src={epThumb}
+                    alt=""
+                    className={cn(
+                      "h-16 w-[112px] shrink-0 overflow-hidden rounded-lg bg-pitflix-card object-cover ring-1 sm:h-24 sm:w-[170px]",
+                      inLibrary && "ring-white/5",
+                      missingReleased && "ring-amber-500/30 saturate-[0.7]",
+                      upcoming && "ring-violet-500/25 saturate-[0.6]",
+                      spoilerProtection && !isWatched && "blur-md",
+                    )}
+                    fallbackText={`${ep.episodeNumber}`}
+                  />
+                  {!isWatched && ep.progressPercent ? <EpisodeProgressBar percent={ep.progressPercent} /> : null}
+                </div>
+                <span className="w-10 shrink-0 text-center font-mono text-base font-medium tabular-nums text-pitflix-muted">
                   {String(ep.episodeNumber).padStart(2, "0")}
                 </span>
                 <div className="min-w-0 flex-1 pr-2">
-                  <p className="flex flex-wrap items-center gap-2 truncate text-sm font-medium text-white">
+                  <p className="flex flex-wrap items-center gap-2 truncate text-[15px] font-semibold text-white">
                     <span className="truncate">
                       {revealTitle
                         ? (ep.title?.trim() ? ep.title : `Episode ${ep.episodeNumber}`)
@@ -909,7 +955,7 @@ export function SeasonDetailPage() {
                     ) : null}
                     {isNextUp ? (
                       <span className="shrink-0 rounded-full bg-pitflix-primary/25 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-pitflix-primary">
-                        Next up
+                        {ep.progressPercent ? "Continue" : "Next up"}
                       </span>
                     ) : null}
                     {ep.imdbVoteAverage != null && ep.imdbVoteAverage > 0 ? (
@@ -918,9 +964,14 @@ export function SeasonDetailPage() {
                     {(ep.runtimeMinutes ?? 0) > 0 ? (
                       <EpisodeRuntimeBadge minutes={ep.runtimeMinutes} className="shrink-0" />
                     ) : null}
+                    {!isWatched && episodeProgressLabel(ep) ? (
+                      <span className="shrink-0 rounded bg-pitflix-primary/20 px-1.5 py-0.5 text-[10px] font-semibold text-violet-300">
+                        {episodeProgressLabel(ep)}
+                      </span>
+                    ) : null}
                   </p>
                   {ep.overview ? (
-                    <p className="mt-0.5 line-clamp-2 text-[11px] leading-relaxed text-pitflix-muted">{ep.overview}</p>
+                    <p className="mt-1 line-clamp-3 text-[13px] leading-relaxed text-pitflix-muted">{ep.overview}</p>
                   ) : null}
                   {(!inLibrary && (missingReleased || upcoming)) ? (
                     <EpisodeExternalListMeta

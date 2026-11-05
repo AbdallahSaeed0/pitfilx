@@ -10,14 +10,21 @@ use serde::Serialize;
 use tauri::{image::Image, App, Emitter, Manager, RunEvent};
 
 mod browse;
+mod cinemas;
+mod device_media;
 mod player;
 mod remote_player;
+mod stream_player;
 mod torrent_stream;
 
 use browse::{
     browse_close, browse_get_ad_block_stats, browse_get_detected_media, browse_navigate,
     browse_open, browse_resize, browse_set_ad_block_enabled, handle_download_protocol,
     BrowseWebviewState, NetworkState,
+};
+use stream_player::{
+    stream_player_close, stream_player_navigate, stream_player_open, stream_player_resize,
+    StreamPlayerWebviewState,
 };
 
 #[cfg(windows)]
@@ -51,7 +58,10 @@ use player::tauri_commands::{
     translate_srt_to_arabic,
 };
 #[cfg(windows)]
-use player::thumbs::{clear_thumb_posters, thumb_at, thumb_at_quick, thumb_note_current, thumb_poster};
+use player::thumbs::{
+    clear_thumb_posters, device_thumbs_prewarm, file_prewarm, thumb_at, thumb_at_quick, thumb_note_current,
+    thumb_note_next, thumb_poster,
+};
 use player::{playback_orchestrator, PlayerHost, PlayerHostState};
 use remote_player::{remote_close, remote_open, remote_play_pause, remote_seek};
 
@@ -541,8 +551,18 @@ fn spawn_api_process(exe: &std::path::Path) -> std::io::Result<Child> {
         .map(PathBuf::from)
         .unwrap_or_else(|| exe.into());
 
-    Command::new(exe)
-        .current_dir(workdir)
+    let mut cmd = Command::new(exe);
+    // The single-file API extracts all its DLLs (IncludeAllContentForSelfExtract) under
+    // %TEMP%\.net by default, where Storage Sense / temp cleaners delete them piecemeal. Lazily
+    // loaded ones (e.g. HtmlAgilityPack for WatchSoMuch) then fail with FileNotFoundException.
+    if let Some(local) = std::env::var_os("LOCALAPPDATA") {
+        let extract_dir = PathBuf::from(local).join("Pitflix").join("runtime");
+        if std::fs::create_dir_all(&extract_dir).is_ok() {
+            cmd.env("DOTNET_BUNDLE_EXTRACT_BASE_DIR", extract_dir);
+        }
+    }
+
+    cmd.current_dir(workdir)
         .env("ASPNETCORE_URLS", "http://127.0.0.1:5280")
         .env("DOTNET_ENVIRONMENT", "Production")
         .stdin(Stdio::null())
@@ -650,27 +670,7 @@ fn device_read_dir(path: String) -> Result<Vec<DeviceFsEntry>, String> {
         });
         let name = ent.file_name().to_string_lossy().into_owned();
         let full = ent.path();
-        let ext = full
-            .extension()
-            .and_then(|x| x.to_str())
-            .unwrap_or("")
-            .to_lowercase();
-
-        let media_kind = if is_dir {
-            None
-        } else if matches!(
-            ext.as_str(),
-            "jpg" | "jpeg" | "png" | "gif" | "webp" | "bmp" | "avif" | "jfif"
-        ) {
-            Some("image".into())
-        } else if matches!(
-            ext.as_str(),
-            "mp4" | "mkv" | "avi" | "mov" | "webm" | "m4v" | "wmv" | "mpg" | "mpeg"
-        ) {
-            Some("video".into())
-        } else {
-            Some("other".into())
-        };
+        let media_kind = if is_dir { None } else { Some(device_media_kind(&full).into()) };
 
         out.push(DeviceFsEntry {
             name,
@@ -689,6 +689,29 @@ fn device_read_dir(path: String) -> Result<Vec<DeviceFsEntry>, String> {
     });
 
     Ok(out)
+}
+
+/// "image" / "video" / "other" by file extension — shared by `device_read_dir` and the
+/// cross-location search in `device_media.rs` so both classify files identically.
+pub(crate) fn device_media_kind(path: &std::path::Path) -> &'static str {
+    let ext = path
+        .extension()
+        .and_then(|x| x.to_str())
+        .unwrap_or("")
+        .to_lowercase();
+    if matches!(
+        ext.as_str(),
+        "jpg" | "jpeg" | "png" | "gif" | "webp" | "bmp" | "avif" | "jfif"
+    ) {
+        "image"
+    } else if matches!(
+        ext.as_str(),
+        "mp4" | "mkv" | "avi" | "mov" | "webm" | "m4v" | "wmv" | "mpg" | "mpeg"
+    ) {
+        "video"
+    } else {
+        "other"
+    }
 }
 
 fn normalize_path_key(path: &str) -> String {
@@ -850,9 +873,11 @@ fn release_any_player_lock_on_paths(app: tauri::AppHandle, target_keys: &[String
             result
         };
         if holds_target {
-            let state: tauri::State<'_, player::libmpv_session::LibMpvHostState> = app.state();
-            let _ = player::libmpv_session::player2_libmpv_close(app.clone(), state);
+            let _ = player::libmpv_session::close_session_blocking(&app, false);
         }
+        // A close the frontend fired just before (now torn down on a worker thread) may still be
+        // releasing the file — wait for it, as the old synchronous close implicitly did.
+        drop(player::libmpv_session::TEARDOWN_GATE.lock());
 
         // "Pitflix Player" engine (external-mpv / Path B) — a detached mpv.exe managed by
         // WindowsPlayerHost, distinct from both the embedded libmpv session above and the WPF
@@ -1172,6 +1197,19 @@ fn device_rename_entry(path: String, new_name: String) -> Result<String, String>
     Ok(dest.to_string_lossy().into_owned())
 }
 
+/// Writes text to a path the user picked via the save dialog (backup export). Not gated by the fs
+/// plugin's scope allow-list since it's a plain Rust command, not an `fs:*` plugin invocation.
+#[tauri::command]
+fn backup_write_text_file(path: String, contents: String) -> Result<(), String> {
+    std::fs::write(path.trim(), contents).map_err(|e| format!("Failed to write file: {e}"))
+}
+
+/// Reads text from a path the user picked via the open dialog (backup import).
+#[tauri::command]
+fn backup_read_text_file(path: String) -> Result<String, String> {
+    std::fs::read_to_string(path.trim()).map_err(|e| format!("Failed to read file: {e}"))
+}
+
 #[tauri::command]
 fn device_create_folder(parent_dir: String, name: String) -> Result<String, String> {
     let parent = PathBuf::from(parent_dir.trim());
@@ -1360,7 +1398,11 @@ pub fn run() {
             device_entry_details,
             device_paths_exist,
             device_find_files,
+            device_media::device_search_entries,
+            device_media::device_video_durations,
             device_create_folder,
+            backup_write_text_file,
+            backup_read_text_file,
             take_pending_open_file_path,
             take_pending_folder_action,
             prepare_update_exit,
@@ -1411,6 +1453,10 @@ pub fn run() {
             player2_libmpv_close,
             check_hdr_capability,
             thumb_note_current,
+            thumb_note_next,
+            file_prewarm,
+            device_thumbs_prewarm,
+            player::cursor_refresh::player_refresh_cursor,
             thumb_at_quick,
             thumb_at,
             thumb_poster,
@@ -1431,11 +1477,19 @@ pub fn run() {
             browse_get_detected_media,
             browse_set_ad_block_enabled,
             browse_get_ad_block_stats,
+            cinemas::vox::cinemas_fetch_vox,
+            cinemas::premiere::cinemas_fetch_premiere,
+            cinemas::premiere::cinemas_premiere_showtimes,
+            stream_player_open,
+            stream_player_navigate,
+            stream_player_resize,
+            stream_player_close,
             torrent_stream::torrent_stream_start,
             torrent_stream::torrent_stream_status,
             torrent_stream::torrent_stream_stop,
         ])
         .register_uri_scheme_protocol("pitflix-browse", handle_download_protocol)
+        .register_uri_scheme_protocol("pitflix-cinemas", cinemas::handle_cinemas_protocol)
         // Must be the first plugin registered (Tauri requirement) so it can intercept a
         // second launch before anything else runs. Explorer "Open with Pitflix" on a file
         // while the app is already running re-invokes the exe with the path as an arg;
@@ -1508,6 +1562,9 @@ pub fn run() {
                 ),
             );
             app.manage(PendingOpenFile(Mutex::new(cold_start_path)));
+            // Load the 118 MB libmpv in the background so the first Play doesn't pay for it.
+            #[cfg(windows)]
+            player::libmpv_session::prewarm_libmpv(app.handle().clone());
             let cold_start_folder_action = extract_folder_action_from_args(&cold_start_args);
             append_player_debug_log(
                 Some(app.handle()),
@@ -1585,6 +1642,8 @@ pub fn run() {
             app.manage(ApiChild(Mutex::new(child)));
             app.manage(BrowseWebviewState::default());
             app.manage(NetworkState::default());
+            app.manage(cinemas::CinemaScrapeState::default());
+            app.manage(StreamPlayerWebviewState::default());
             app.manage(playback_orchestrator::PlaybackOrchestratorState::default());
             if let Ok(mut pol) = app.state::<playback_orchestrator::PlaybackOrchestratorState>().0.lock() {
                 pol.set_app_paths(app.handle());

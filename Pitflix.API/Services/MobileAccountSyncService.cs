@@ -163,9 +163,15 @@ public sealed partial class MobileAccountSyncService
                 genres = s.Genres,
                 network = s.Network,
                 release_year = s.Year,
-                status = string.Equals(s.Status, "Watching", StringComparison.OrdinalIgnoreCase)
-                    ? "watching"
-                    : "completed",
+                // "dropped" lets mobile's Currently Watching/Next Episodes skip shows dropped
+                // here — desktop's Up Next excludes Show.IsDropped, and nothing else carried
+                // that flag over. A dropped-but-finished show stays "completed" so mobile's
+                // completed-series counts keep matching desktop's.
+                status = s.IsDropped && !string.Equals(s.Status, "Completed", StringComparison.OrdinalIgnoreCase)
+                    ? "dropped"
+                    : string.Equals(s.Status, "Watching", StringComparison.OrdinalIgnoreCase)
+                        ? "watching"
+                        : "completed",
                 // Desktop never touches this (no per-series counter — see ExportSeries' doc
                 // comment), so localCount is always 0 here and this always resolves to whatever
                 // was already on Supabase, preserving a mobile-set series rewatch count untouched.
@@ -184,6 +190,12 @@ public sealed partial class MobileAccountSyncService
                 season_number = e.Season,
                 episode_number = e.Episode,
                 rewatch_count = MergedEpisodeRewatchCount(e.ShowTmdbId, e.Season, e.Episode, e.RewatchCount),
+                // The real completion time, not the column's now() default — every row is
+                // re-inserted on each push (see ReconcileStaleWatchDataAsync), so without this
+                // every episode read as "watched just now": mobile couldn't order Currently
+                // Watching by last watched like desktop's Up Next does. Same unknown-when
+                // sentinel as PushWatchLogAsync, so undated rows sort as oldest.
+                watched_at = (e.CompletedAt ?? UnknownWatchedAt).ToString("O"),
             }).ToList(),
             ct).ConfigureAwait(false);
         if (episodesErr != null) errors.Add(episodesErr);
@@ -339,6 +351,10 @@ public sealed partial class MobileAccountSyncService
     // Movies rarely carry a stored runtime for older/unmatched entries; episodes have no
     // runtime field on desktop at all — both fall back to a flat estimate, same "no real
     // playback telemetry" caveat the schema itself documents.
+    /// <summary>Sentinel for "we know this was watched, don't know when" — Unix epoch so it sorts
+    /// outside any real recent-history window on the mobile side.</summary>
+    private static readonly DateTime UnknownWatchedAt = new(1970, 1, 1, 0, 0, 0, DateTimeKind.Utc);
+
     private const int DefaultMovieRuntimeMinutes = 120;
     private const int DefaultEpisodeRuntimeMinutes = 45;
 
@@ -370,9 +386,7 @@ public sealed partial class MobileAccountSyncService
         static DateTime TruncateToSecond(DateTime dt) =>
             new(dt.Ticks - (dt.Ticks % TimeSpan.TicksPerSecond), dt.Kind);
 
-        // Sentinel for "we know this was watched, don't know when" — Unix epoch so it sorts
-        // outside any real recent-history window on the mobile Stats side.
-        var unknownWhen = new DateTime(1970, 1, 1, 0, 0, 0, DateTimeKind.Utc);
+        var unknownWhen = UnknownWatchedAt;
 
         var entries = payload.Movies
             .Select(m => (

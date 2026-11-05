@@ -101,24 +101,31 @@ fn run_ffmpeg(args: &[&str]) -> Result<(), String> {
 }
 
 /// Escape a filesystem path for ffmpeg's `subtitles` filter (Windows-safe).
+///
+/// A file path as a filter option value: ffmpeg parses filter args twice — once for the filtergraph
+/// (quotes / backslashes) and once for the filter's own `key=value:key=value` options, where a bare
+/// `:` (the one in `C:`) ends the value. So escape for the option level, then single-quote the whole
+/// thing for the graph level. (Only quoting paths with spaces broke every space-less path, e.g. the
+/// `C:/Users/ABDALL~1/...` temp .srt: "Unable to parse original_size".)
 fn escape_filter_path(path: &str) -> String {
-    let normalized = path.replace('\\', "/");
+    quote_filter_args(&escape_filter_option(path))
+}
+
+/// Option-level escaping (forward slashes, then `\`-escape the option parser's specials).
+fn escape_filter_option(path: &str) -> String {
     let mut escaped = String::new();
-    for (i, ch) in normalized.char_indices() {
-        match ch {
-            ':' if i == 1 => escaped.push_str("\\:"),
-            '\'' | '[' | ']' | ',' | ';' | '\\' => {
-                escaped.push('\\');
-                escaped.push(ch);
-            }
-            _ => escaped.push(ch),
+    for ch in path.replace('\\', "/").chars() {
+        if matches!(ch, ':' | '\'' | '=') {
+            escaped.push('\\');
         }
+        escaped.push(ch);
     }
-    if escaped.contains(' ') {
-        format!("'{escaped}'")
-    } else {
-        escaped
-    }
+    escaped
+}
+
+/// Graph-level quoting: everything inside '...' is literal; a `'` closes, adds `\'`, and reopens.
+fn quote_filter_args(args: &str) -> String {
+    format!("'{}'", args.replace('\'', "'\\''"))
 }
 
 fn is_srt_path(path: &Path) -> bool {
@@ -275,24 +282,10 @@ fn prepare_subtitle_filter(
             .to_string(),
         );
             }
-            let normalized = source_path.replace('\\', "/");
-            let mut path_with_si = String::new();
-            for (i, ch) in normalized.char_indices() {
-                match ch {
-                    ':' if i == 1 => path_with_si.push_str("\\:"),
-                    '\'' | '[' | ']' | ',' | ';' | '\\' => {
-                        path_with_si.push('\\');
-                        path_with_si.push(ch);
-                    }
-                    _ => path_with_si.push(ch),
-                }
-            }
-            path_with_si.push_str(&format!(":si={si}"));
-            let filter = if path_with_si.contains(' ') {
-                format!("subtitles='{path_with_si}'")
-            } else {
-                format!("subtitles={path_with_si}")
-            };
+            let filter = format!(
+                "subtitles={}",
+                quote_filter_args(&format!("{}:si={si}", escape_filter_option(source_path)))
+            );
             #[cfg(debug_assertions)]
             eprintln!("[player-export] embedded extract failed ({extract_err}); using si={si}");
             Ok(Some(PreparedSubtitle {

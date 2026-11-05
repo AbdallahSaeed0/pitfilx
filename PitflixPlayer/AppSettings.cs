@@ -1,8 +1,26 @@
 using System;
+using System.Collections.Generic;
 using System.IO;
+using System.Linq;
 using System.Text.Json;
 
 namespace PitflixPlayer;
+
+/// <summary>Remembered tracks for one show. Null fields mean "no preference".</summary>
+internal sealed class ShowTrackPref
+{
+    public string? AudioLang  { get; set; }
+    public string? AudioTitle { get; set; }
+    /// <summary>"off" or "lang"; null = no subtitle preference for this show.</summary>
+    public string? SubMode    { get; set; }
+    public string? SubLang    { get; set; }
+    public string? SubTitle   { get; set; }
+    /// <summary>Dual subtitles: "off" or "lang" for the second subtitle (mpv secondary-sid, shown at the top).</summary>
+    public string? SecondaryMode  { get; set; }
+    public string? SecondaryLang  { get; set; }
+    public string? SecondaryTitle { get; set; }
+    public long    UpdatedUtcTicks { get; set; }
+}
 
 /// <summary>
 /// Lightweight per-user settings persisted to
@@ -32,6 +50,46 @@ internal sealed class AppSettings
     //   "lang"    — user picked a specific track; PreferredSubLang holds the lang code.
     public string  PreferredSubMode { get; set; } = "default";
     public string? PreferredSubLang { get; set; }
+
+    // ── Skip amount ──────────────────────────────────────────────────────────
+    //
+    // Seconds jumped by the Left/Right arrow keys, the mouse-wheel seek zone
+    // (bottom 15% of the window), and the "Skip Amount" context-menu picker.
+    public int SkipSeconds { get; set; } = 5;
+
+    // ── Per-show track memory ────────────────────────────────────────────────
+    //
+    // Audio + subtitle choice per show ("show:<libraryShowId>" or "dir:<folder>"),
+    // matched by language/title on each new episode since mpv track indices drift.
+    // Takes precedence over the global PreferredSub* above for that show.
+    public Dictionary<string, ShowTrackPref> ShowTrackPrefs { get; set; } = new();
+
+    private const int MaxShowTrackPrefs = 300;
+    private readonly object _showPrefsLock = new();
+
+    public ShowTrackPref? GetShowTrackPref(string key)
+    {
+        lock (_showPrefsLock)
+            return ShowTrackPrefs.TryGetValue(key, out var p) ? p : null;
+    }
+
+    public void UpdateShowTrackPref(string key, Action<ShowTrackPref> update)
+    {
+        lock (_showPrefsLock)
+        {
+            if (!ShowTrackPrefs.TryGetValue(key, out var pref))
+                ShowTrackPrefs[key] = pref = new ShowTrackPref();
+            update(pref);
+            pref.UpdatedUtcTicks = DateTime.UtcNow.Ticks;
+            if (ShowTrackPrefs.Count > MaxShowTrackPrefs)
+            {
+                foreach (var stale in ShowTrackPrefs.OrderBy(kv => kv.Value.UpdatedUtcTicks)
+                             .Take(ShowTrackPrefs.Count - MaxShowTrackPrefs).Select(kv => kv.Key).ToList())
+                    ShowTrackPrefs.Remove(stale);
+            }
+            Save();
+        }
+    }
 
     public static AppSettings Load()
     {

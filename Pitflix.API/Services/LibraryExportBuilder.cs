@@ -15,7 +15,7 @@ public sealed record ExportMovie(
 /// this export's lack of one.</summary>
 public sealed record ExportSeries(
     int TmdbId, string Title, int? Year, string[] Genres, string? PosterPath, string? Network, string Status,
-    string? RemotePosterPath, int RewatchCount = 0);
+    string? RemotePosterPath, int RewatchCount = 0, bool IsDropped = false);
 
 public sealed record ExportEpisode(int ShowTmdbId, int Season, int Episode, DateTime? CompletedAt, int RewatchCount = 0);
 
@@ -187,7 +187,7 @@ public sealed class LibraryExportBuilder
                 var d = showCards[s.TmdbId];
                 return new ExportSeries(
                     d.TmdbId, d.Title, d.Year, SplitGenres(d.GenresCsv), ResolvePoster(d), s.Network, d.WatchStatus,
-                    d.PosterRemoteUrl);
+                    d.PosterRemoteUrl, IsDropped: s.IsDropped);
             }).ToList(),
             Episodes: episodes.Select(e =>
                 new ExportEpisode(showTmdbIdsById[e.ShowId], e.Season, e.EpisodeNumber, e.CompletedAt, e.RewatchCount))

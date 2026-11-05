@@ -166,7 +166,10 @@ app.MapPost("/api/settings", async (SettingsBody body, LibraryRepository repo, C
         await repo.SaveSettingAsync("MdblistApiKey", body.MdblistApiKey.Trim(), ct).ConfigureAwait(false);
 
     if (!string.IsNullOrWhiteSpace(body.OmdbApiKey))
+    {
         await repo.SaveSettingAsync("OmdbApiKey", body.OmdbApiKey.Trim(), ct).ConfigureAwait(false);
+        await MdbListService.ClearEpisodeMissesAsync(ct).ConfigureAwait(false);
+    }
 
     if (!string.IsNullOrWhiteSpace(body.TvdbApiKey))
         await repo.SaveSettingAsync("TvdbApiKey", body.TvdbApiKey.Trim(), ct).ConfigureAwait(false);

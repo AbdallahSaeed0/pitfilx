@@ -184,6 +184,32 @@ public static class RatingsEndpoints
             }, jsonSerializerOptions);
         });
 
+        // One season's scores from every source that rates seasons separately: TMDB (season vote),
+        // IMDb (average of the season's episodes), Rotten Tomatoes and Metacritic (their season pages).
+        app.MapGet("/api/ratings/season", async (int tmdbId, int season, SeasonRatingsService seasonScores,
+            RatingsAggregationService ratings, ITmdbClientFactory tmdbClientFactory, CancellationToken ct) =>
+        {
+            if (tmdbId <= 0 || season < 0) return Results.BadRequest();
+            var tmdb = tmdbClientFactory.Create();
+            async Task<double?> TmdbSeasonVoteAsync() =>
+                tmdb is null ? null : (await tmdb.TryGetTvSeasonHeaderAsync(tmdbId, season, ct).ConfigureAwait(false))?.VoteAverage;
+            var tmdbTask = TmdbSeasonVoteAsync();
+            var imdbTask = ratings.TryGetCachedSeasonImdbRatingAsync(tmdbId, season, ct);
+            var sitesTask = seasonScores.GetAsync(tmdbId, season, ct);
+            await Task.WhenAll(tmdbTask, imdbTask, sitesTask).ConfigureAwait(false);
+            var sites = sitesTask.Result;
+            return Results.Json(new
+            {
+                tmdb = tmdbTask.Result is > 0 ? tmdbTask.Result : null,
+                imdb = imdbTask.Result is > 0 ? imdbTask.Result : null,
+                rottenTomatoes = sites?.RottenTomatoes,
+                rottenTomatoesAudience = sites?.RottenTomatoesAudience,
+                metacritic = sites?.Metacritic,
+                rottenTomatoesUrl = sites?.RottenTomatoesUrl,
+                metacriticUrl = sites?.MetacriticUrl,
+            }, jsonSerializerOptions);
+        });
+
         app.MapGet("/api/ratings/mdblist", async (string? imdbId, int? tmdbId, MdbListService mdbList, CancellationToken ct) =>
         {
             var id = imdbId?.Trim();

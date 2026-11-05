@@ -1,8 +1,10 @@
 import { ChevronUp, Pause, Play } from "lucide-react";
-import { useEffect } from "react";
+import { useEffect, useRef } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import { useActivePlayerStore } from "../../store/activePlayerStore";
 import { usePlaybackPolStore } from "../../playback/playbackStore";
+import { cn } from "../../utils/cn";
+import { useLiquidGlass } from "./liquidGlass/useLiquidGlass";
 
 /**
  * Floating mini-chip that appears at the bottom of the screen whenever the built-in
@@ -32,6 +34,9 @@ export function BackToPlayerChip() {
     }
   }, [isActive, launchState, setLaunchState, switchInProgress, isOnPlayerPage]);
 
+  const chipRef = useRef<HTMLButtonElement>(null);
+  const glass = useLiquidGlass(chipRef, { radius: 16, bezel: 14, strength: 16 });
+
   if (!isActive || !launchState) return null;
 
   const isPlaying = phase === "playing" || phase === "buffering";
@@ -39,9 +44,17 @@ export function BackToPlayerChip() {
   return (
     <button
       type="button"
+      ref={chipRef}
       onClick={() => navigate("/player", { state: launchState })}
-      className="group fixed bottom-5 right-5 z-50 flex items-center gap-2.5 rounded-2xl border border-pitflix-primary/40 bg-pitflix-bg/95 px-4 py-2.5 shadow-[0_8px_30px_rgba(0,0,0,0.6)] backdrop-blur-md transition-all hover:border-pitflix-primary/70 hover:bg-pitflix-surface/95 hover:shadow-pitflix-primary/20"
+      className={cn(
+        "group fixed bottom-5 right-5 z-50 flex items-center gap-2.5 rounded-2xl border px-4 py-2.5 transition-all",
+        glass.active
+          ? "liquid-glass bg-[rgba(14,12,28,0.6)] hover:bg-[rgba(124,58,237,0.18)]"
+          : "border-pitflix-primary/40 bg-pitflix-bg/95 shadow-[0_8px_30px_rgba(0,0,0,0.6)] backdrop-blur-md hover:border-pitflix-primary/70 hover:bg-pitflix-surface/95 hover:shadow-pitflix-primary/20",
+      )}
+      style={glass.style}
     >
+      {glass.filter}
       <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-pitflix-primary/20 group-hover:bg-pitflix-primary/35 transition-colors">
         {isPlaying ? (
           <Play className="h-3.5 w-3.5 fill-pitflix-primary text-pitflix-primary" />

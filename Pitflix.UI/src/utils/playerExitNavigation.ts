@@ -52,7 +52,12 @@ function runReturnToScroll(returnTo: PlayerReturnTo) {
 }
 
 /** Navigate back from the player using explicit return target or browser history. */
-export function navigateFromPlayer(navigate: NavigateFunction, returnTo: PlayerReturnTo | undefined, replace = true) {
+export function navigateFromPlayer(
+  navigate: NavigateFunction,
+  returnTo: PlayerReturnTo | undefined,
+  replace = true,
+  opts?: { restoreScroll?: boolean },
+) {
   void restoreAppWindowFromFullscreen().finally(() => {
     if (returnTo?.pathname) {
       navigate(
@@ -63,7 +68,9 @@ export function navigateFromPlayer(navigate: NavigateFunction, returnTo: PlayerR
         },
         { replace },
       );
-      runReturnToScroll(returnTo);
+      // Skipped when returning to the page kept alive under the player: it never lost its scroll,
+      // and the restore's retries (up to 2.4 s) would yank back a scroll made right after closing.
+      if (opts?.restoreScroll !== false) runReturnToScroll(returnTo);
     } else {
       navigate(-1);
     }

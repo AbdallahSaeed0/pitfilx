@@ -442,7 +442,7 @@ public partial class MainWindow : Window
             _initialApplyDone = true;
             _ = Task.Run(async () =>
             {
-                try { await _controls.ApplyPreferredSubtitleAsync(); }
+                try { await _controls.ApplyPreferredSubtitleAsync(session.FilePath); }
                 catch (Exception ex) { App.Log($"Initial subtitle apply failed: {ex.Message}"); }
             });
         }
@@ -611,7 +611,7 @@ public partial class MainWindow : Window
         _initialApplyDone = true;
         _ = Task.Run(async () =>
         {
-            try { if (_controls is not null) await _controls.ApplyPreferredSubtitleAsync(); }
+            try { if (_controls is not null) await _controls.ApplyPreferredSubtitleAsync(session.FilePath); }
             catch (Exception ex) { App.Log($"ExitPreWarmHide: subtitle apply failed: {ex.Message}"); }
         });
 
@@ -937,7 +937,7 @@ public partial class MainWindow : Window
                         // first WS push (initial file) because OnLoadedCore
                         // already triggers the same call after IPC connect.
                         if (fileChanged && _initialApplyDone)
-                            _ = _controls.ApplyPreferredSubtitleAsync();
+                            _ = _controls.ApplyPreferredSubtitleAsync(norm);
 
                         // Intro/outro skip data (Group 3) — fetch once per actual
                         // file/episode change (covers both the very first load and
@@ -1113,24 +1113,26 @@ public partial class MainWindow : Window
                 });
                 break;
 
-            case 0x25: // VK_LEFT — seek back 5 s (absolute, works while paused)
+            case 0x25: // VK_LEFT — seek back by the user's skip amount (absolute, works while paused)
                 _ = Dispatcher.InvokeAsync(() =>
                 {
                     if (_controls is null) return;
-                    double pos = Math.Max(0, _controls.CurrentPosition - 5);
+                    int step = App.Settings.SkipSeconds;
+                    double pos = Math.Max(0, _controls.CurrentPosition - step);
                     _controls.ApplyLocalSeek(pos);
-                    _controls.ShowSkipIndicator(-5);
+                    _controls.ShowSkipIndicator(-step);
                     _ = _ipc?.SendAsync("seek", pos, "absolute");
                 });
                 break;
 
-            case 0x27: // VK_RIGHT — seek forward 5 s (absolute, works while paused)
+            case 0x27: // VK_RIGHT — seek forward by the user's skip amount (absolute, works while paused)
                 _ = Dispatcher.InvokeAsync(() =>
                 {
                     if (_controls is null) return;
-                    double pos = Math.Min(_controls.CurrentDuration, _controls.CurrentPosition + 5);
+                    int step = App.Settings.SkipSeconds;
+                    double pos = Math.Min(_controls.CurrentDuration, _controls.CurrentPosition + step);
                     _controls.ApplyLocalSeek(pos);
-                    _controls.ShowSkipIndicator(+5);
+                    _controls.ShowSkipIndicator(+step);
                     _ = _ipc?.SendAsync("seek", pos, "absolute");
                 });
                 break;
@@ -1386,8 +1388,9 @@ public partial class MainWindow : Window
                                 if (_controls is null) return;
                                 if (relativeY > 0.85)
                                 {
-                                    // Bottom 15 % → seek ±10 s
-                                    int seconds = delta > 0 ? 10 : -10;
+                                    // Bottom 15 % → seek by the user's skip amount
+                                    int step = App.Settings.SkipSeconds;
+                                    int seconds = delta > 0 ? step : -step;
                                     double pos  = Math.Clamp(
                                         _controls.CurrentPosition + seconds, 0, _controls.CurrentDuration);
                                     _controls.ApplyLocalSeek(pos);
@@ -1413,7 +1416,7 @@ public partial class MainWindow : Window
 
     // ── Mouse scroll — zone-sensitive ────────────────────────────────────────
     //
-    // Bottom 15 % of the window → seek ±10 s.
+    // Bottom 15 % of the window → seek by the user's skip amount.
     // Anywhere else on the video → volume ±5 (0-200 range).
 
     private void OnScrollWheel(object sender, MouseWheelEventArgs e)
@@ -1426,8 +1429,9 @@ public partial class MainWindow : Window
 
         if (relativeY > 0.85)
         {
-            // ── Bottom 15 % → seek ±10 s ─────────────────────────────────────
-            int seconds = e.Delta > 0 ? 10 : -10;
+            // ── Bottom 15 % → seek by the user's skip amount ────────────────
+            int step = App.Settings.SkipSeconds;
+            int seconds = e.Delta > 0 ? step : -step;
             double pos  = Math.Clamp(
                 _controls.CurrentPosition + seconds, 0, _controls.CurrentDuration);
             _controls.ApplyLocalSeek(pos);

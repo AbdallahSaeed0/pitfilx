@@ -32,3 +32,5 @@ src-tauri/.tauri-updater.key
 src/features/device/collectionsStore.ts
 src/features/device/collectionsLookup.ts
 src/features/device/CollectionsPanel.tsx
+src/features/device/collectionsTransfer.ts
+src/features/device/PlayerVideoCollectionsSection.tsx

@@ -364,7 +364,9 @@ pub fn playback_pol_get_snapshot(
 }
 
 #[tauri::command]
-pub fn playback_pol_resume_hints_for_key(
+/// Async so it runs off the UI thread: it's awaited on every Play before the player opens, and as a
+/// synchronous command it queued behind whatever the main thread was doing (measured ~600 ms).
+pub async fn playback_pol_resume_hints_for_key(
     app: tauri::AppHandle,
     pol: State<'_, PlaybackOrchestratorState>,
     key: String,

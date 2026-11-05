@@ -18,6 +18,11 @@ public class Movie
     public double VoteAverage { get; set; }
     public int? Runtime { get; set; }
     public string FilePath { get; set; } = "";
+
+    /// <summary>Size of <see cref="FilePath"/> in bytes when last seen — lets a scan recognize the same file
+    /// after it was moved/renamed (see <c>MovedFileMatcher</c>). Null until the file has been stat'd.</summary>
+    public long? FileSize { get; set; }
+
     public bool IsArabic { get; set; }
     public bool IsMatched { get; set; }
     public DateTime DateAdded { get; set; }
@@ -51,4 +56,10 @@ public class Movie
     /// <summary>TMDB <c>belongs_to_collection</c> id, cached lazily on first detail page visit.</summary>
     public int? CollectionId { get; set; }
     public string? CollectionName { get; set; }
+
+    /// <summary>JSON array of production companies/networks from TMDB (the detail page's Studio row),
+    /// cached lazily on first detail page visit — fetched together with <see cref="CollectionId"/> in
+    /// the same TMDB call, so this field's non-null-ness is also the "have we already fetched the
+    /// collection?" sentinel (CollectionId alone can't tell "not yet checked" from "genuinely none").</summary>
+    public string? CompaniesJson { get; set; }
 }

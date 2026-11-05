@@ -4,7 +4,7 @@ import { open } from "@tauri-apps/plugin-dialog";
 import { openPath, revealItemInDir } from "@tauri-apps/plugin-opener";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useVirtualizer } from "@tanstack/react-virtual";
-import { Check, CheckSquare, ChevronLeft, ChevronRight, Clock, Dices, Filter, Film, FolderInput, FolderOpen, FolderPlus, HardDrive, Heart, Keyboard, Lock, PanelLeftClose, PanelLeftOpen, Pencil, Send, Trash2, X, Zap } from "lucide-react";
+import { Check, CheckSquare, ChevronLeft, ChevronRight, Clock, Dices, Filter, Film, FolderInput, FolderOpen, FolderPlus, HardDrive, Heart, Keyboard, Lock, PanelLeftClose, PanelLeftOpen, Pencil, Search, Send, Trash2, X, Zap } from "lucide-react";
 import {
   useCallback,
   useEffect,
@@ -29,8 +29,12 @@ import {
   type DeviceFolderContextMenuAction,
 } from "../features/device/DeviceFolderContextMenu";
 import { DeviceShortcutsModal } from "../features/device/DeviceShortcutsModal";
-import { AddToCollectionModal, CollectionsPanel } from "../features/device/CollectionsPanel";
+import { AddToCollectionModal, CollectionsPanel, OPEN_COLLECTION_EVENT } from "../features/device/CollectionsPanel";
+import { stageCollectionViewById } from "../features/device/PlayerVideoCollectionsSection";
 import { DeviceFavoritesPanel, DeviceHistoryPanel } from "../features/device/DeviceSavedItemsPanel";
+import { DeviceDurationBadge } from "../features/device/DeviceDurationBadge";
+import { DeviceGlobalSearchPanel } from "../features/device/DeviceGlobalSearchPanel";
+import { getVideoDuration, requestVideoDurations, useVideoDurationsVersion } from "../features/device/deviceDurations";
 import { DeviceMoveNavigatorModal } from "../features/device/DeviceMoveNavigatorModal";
 import { DeviceQuickSortModal } from "../features/device/DeviceQuickSortModal";
 import { DeviceMediaConfigureModal } from "../features/device/DeviceMediaConfigureModal";
@@ -73,16 +77,26 @@ import {
   saveLastPlayed,
   savePrivateFolders,
   saveSaved,
+  remapDeviceSavedPaths,
   saveSidebarCollapsed,
   suggestNewFolderName,
   TILE_LABEL_HEIGHT,
 } from "../features/device/deviceUtils";
 import { usePlayback } from "../hooks/usePlayback";
+import { useDebounce } from "../hooks/useDebounce";
 import { useSmoothWheelScroll } from "../hooks/useSmoothWheelScroll";
 import { pitflixConfirm } from "../utils/pitflixDialog";
 import { clearDeviceThumbnailDiskCache, clearDeviceThumbnailMemoryCache, watchThumbnailProgress } from "../utils/videoThumbnailCache";
+import { isPlayerCovering } from "../store/playerCoverStore";
+
+type DeviceSortId =
+  | 'default' | 'nameAZ' | 'nameZA' | 'dateOldNew' | 'dateNewOld'
+  | 'sizeSmallBig' | 'sizeBigSmall' | 'durationShortLong' | 'durationLongShort';
+const NAME_COLLATOR = new Intl.Collator(undefined, { numeric: true, sensitivity: 'base' });
 
 const COLLECTIONS_OPEN_KEY = "pitflix.device.collectionsOpen.v1";
+const GLOBAL_SEARCH_KEY_NORMAL = "pitflix.device.globalSearch.v1";
+const GLOBAL_SEARCH_KEY_PRIVATE = "pitflix.device.privateGlobalSearch.v1";
 const FAVORITES_OPEN_KEY = "pitflix.device.favoritesOpen.v1";
 const HISTORY_OPEN_KEY = "pitflix.device.historyOpen.v1";
 // Scroll position per folder path, persisted separately per mode — so switching between saved
@@ -267,6 +281,61 @@ export function MyDevicePage() {
   const [selectionMode, setSelectionMode] = useState(false);
   const [selectedPaths, setSelectedPaths] = useState<Set<string>>(() => new Set());
 
+  // Where the player (or anything else) wants this page to land, named in the URL it navigates to:
+  //   ?collection=<id>            → that actress/category folder's page in My Videos
+  //   ?panel=favorites|history    → that panel
+  //   ?path=<folder>              → a real folder (handled above, at mount)
+  // Previously closing a video from an actress/category folder returned to a bare /my-device and
+  // relied on sessionStorage plus whichever view happened to win on mount, so it could come back on
+  // a real folder or on the grid instead. This runs on mount AND whenever the search changes, since
+  // the page is kept mounted under the player and its React state ignores sessionStorage.
+  useEffect(() => {
+    const params = new URLSearchParams(location.search);
+    const collectionId = params.get("collection");
+    if (collectionId) {
+      if (!stageCollectionViewById(collectionId)) return;
+      setPrivateModeActive(true);
+      setPrivateCurrentPath(null);
+      setFavoritesOpen(false);
+      setHistoryOpen(false);
+      setCollectionsOpen(true);
+      window.dispatchEvent(new CustomEvent(OPEN_COLLECTION_EVENT, { detail: { id: collectionId } }));
+      return;
+    }
+    const panel = params.get("panel");
+    if (panel === "favorites" || panel === "history") {
+      setCurrentPath(null);
+      setCollectionsOpen(false);
+      setFavoritesOpen(panel === "favorites");
+      setHistoryOpen(panel === "history");
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [location.search]);
+
+  // Sidebar "Search all locations" — recursive search across every saved location of the current
+  // mode. Kept in sessionStorage (per mode) so coming back from the player lands on the same results.
+  const globalSearchKey = privateModeActive ? GLOBAL_SEARCH_KEY_PRIVATE : GLOBAL_SEARCH_KEY_NORMAL;
+  const [globalSearchInput, setGlobalSearchInputState] = useState<string>(() => {
+    try { return sessionStorage.getItem(readPrivateModeActiveFlag() ? GLOBAL_SEARCH_KEY_PRIVATE : GLOBAL_SEARCH_KEY_NORMAL) ?? ""; } catch { return ""; }
+  });
+  const setGlobalSearchInput = useCallback((next: string) => {
+    setGlobalSearchInputState(next);
+    try {
+      if (next) sessionStorage.setItem(globalSearchKey, next);
+      else sessionStorage.removeItem(globalSearchKey);
+    } catch { /* ignore */ }
+  }, [globalSearchKey]);
+  const globalSearchQuery = useDebounce(globalSearchInput.trim(), 300);
+  const globalSearchActive = globalSearchInput.trim().length >= 2 && globalSearchQuery.length >= 2;
+  const globalSearchInputRef = useRef<HTMLInputElement>(null);
+  // Switching Normal <-> Private swaps to that mode's own remembered search (never carries over).
+  const prevModeForSearchRef = useRef(privateModeActive);
+  useEffect(() => {
+    if (prevModeForSearchRef.current === privateModeActive) return;
+    prevModeForSearchRef.current = privateModeActive;
+    try { setGlobalSearchInputState(sessionStorage.getItem(globalSearchKey) ?? ""); } catch { setGlobalSearchInputState(""); }
+  }, [privateModeActive, globalSearchKey]);
+
   // Hold Ctrl+P for 3s to toggle Private Mode. Ignores OS key-repeat (only the first, non-repeat
   // keydown starts the hold timer) and cancels on keyup/blur before the hold completes, so a quick
   // Ctrl+P tap (e.g. a browser/OS shortcut collision) never accidentally toggles it.
@@ -279,6 +348,8 @@ export function MyDevicePage() {
       holding = false;
     };
     const onKeyDown = (e: KeyboardEvent) => {
+      // Hidden under the full player (kept alive, see AppRoutes): its keys belong to the player.
+      if (isPlayerCovering()) return;
       if (!e.ctrlKey || e.code !== "KeyP") return;
       e.preventDefault();
       if (e.repeat || holding) return;
@@ -307,6 +378,8 @@ export function MyDevicePage() {
   useEffect(() => {
     if (!privateModeActive) return;
     const onKeyDown = (e: KeyboardEvent) => {
+      // Hidden under the full player (kept alive, see AppRoutes): its keys belong to the player.
+      if (isPlayerCovering()) return;
       if (e.key !== "Escape" || selectionMode) return;
       setPrivateModeActive(false);
       setCollectionsOpen(false);
@@ -372,11 +445,25 @@ export function MyDevicePage() {
       const mainEl = document.querySelector('main');
       if (!mainEl) return;
       const rect = mainEl.getBoundingClientRect();
-      setSidebarBox({ top: rect.top, left: rect.left, height: window.innerHeight - rect.top });
+      setSidebarBox((prev) =>
+        prev && prev.top === rect.top && prev.left === rect.left && prev.height === window.innerHeight - rect.top
+          ? prev
+          : { top: rect.top, left: rect.left, height: window.innerHeight - rect.top },
+      );
     };
     measure();
     window.addEventListener('resize', measure);
-    return () => window.removeEventListener('resize', measure);
+    // Collapsing/expanding the app's main sidebar moves <main> without resizing the window, so a
+    // window 'resize' listener alone left this panel stranded at the old spot (and, collapsed,
+    // floating over the file grid). <main> changes width on every frame of that animation, so
+    // observing it keeps the panel glued to its left edge throughout.
+    const mainEl = document.querySelector('main');
+    const ro = mainEl ? new ResizeObserver(measure) : null;
+    if (mainEl) ro?.observe(mainEl);
+    return () => {
+      window.removeEventListener('resize', measure);
+      ro?.disconnect();
+    };
   }, []);
   const [filterText, setFilterText] = useState("");
   const [scanBusy, setScanBusy] = useState(false);
@@ -419,7 +506,7 @@ export function MyDevicePage() {
   const [scanErr, setScanErr] = useState<string | null>(null);
   const [lastPlayedRev, setLastPlayedRev] = useState(0);
   const [typeFilter, setTypeFilter] = useState<'all' | 'folder' | 'video' | 'image' | 'doc'>('all');
-  const [sortBy, setSortBy] = useState<'default' | 'dateOldNew' | 'dateNewOld' | 'sizeSmallBig' | 'sizeBigSmall'>('default');
+  const [sortBy, setSortBy] = useState<DeviceSortId>('default');
   const [filterMenuOpen, setFilterMenuOpen] = useState(false);
   const activeFolderChipRef = useRef<HTMLDivElement>(null);
   const filterInputRef = useRef<HTMLInputElement>(null);
@@ -585,6 +672,20 @@ export function MyDevicePage() {
     };
   }, []);
 
+  // Durations for the current folder's videos (duration badge + duration sort). Private Mode keeps
+  // them in memory only so private paths never land in persistent storage.
+  const durationsVersion = useVideoDurationsVersion();
+  const durationSortRev = sortBy.startsWith('duration') ? durationsVersion : 0;
+  useEffect(() => {
+    if (isFetching) return;
+    const videos = entries.filter((e) => !e.is_directory && e.media_kind === 'video');
+    if (videos.length === 0) return;
+    requestVideoDurations(
+      videos.map((e) => ({ path: e.path, size: e.size_bytes })),
+      { persist: !privateModeActive },
+    );
+  }, [entries, isFetching, privateModeActive]);
+
   // ── Filtered list ────────────────────────────────────────────────────────────
   const filtered = useMemo(() => {
     let list = entries;
@@ -599,7 +700,30 @@ export function MyDevicePage() {
         return true;
       });
     }
-    if (sortBy !== 'default') {
+    if (sortBy === 'nameAZ' || sortBy === 'nameZA') {
+      const dir = sortBy === 'nameAZ' ? 1 : -1;
+      list = [...list].sort((a, b) => {
+        if (a.is_directory !== b.is_directory) return a.is_directory ? -1 : 1;
+        return dir * NAME_COLLATOR.compare(a.name, b.name);
+      });
+    } else if (sortBy === 'durationShortLong' || sortBy === 'durationLongShort') {
+      // Folders first, then videos by length (still-probing ones last, by name), then other files.
+      const dir = sortBy === 'durationShortLong' ? 1 : -1;
+      const rank = (e: DeviceFsEntry) => (e.is_directory ? 0 : e.media_kind === 'video' ? 1 : 2);
+      list = [...list].sort((a, b) => {
+        const ra = rank(a);
+        const rb = rank(b);
+        if (ra !== rb) return ra - rb;
+        if (ra === 1) {
+          const da = getVideoDuration(a.path);
+          const db = getVideoDuration(b.path);
+          if (da != null && db != null && da !== db) return dir * (da - db);
+          if (da != null && db == null) return -1;
+          if (da == null && db != null) return 1;
+        }
+        return NAME_COLLATOR.compare(a.name, b.name);
+      });
+    } else if (sortBy !== 'default') {
       list = [...list].sort((a, b) => {
         if (sortBy === 'dateOldNew')   return (a.created_at ?? 0) - (b.created_at ?? 0);
         if (sortBy === 'dateNewOld')   return (b.created_at ?? 0) - (a.created_at ?? 0);
@@ -609,7 +733,8 @@ export function MyDevicePage() {
       });
     }
     return list;
-  }, [entries, filterText, typeFilter, sortBy]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- durationSortRev re-sorts as durations arrive
+  }, [entries, filterText, typeFilter, sortBy, durationSortRev]);
 
   const viewerMediaEntries = useMemo(
     () => filtered.filter((e) => !e.is_directory && (e.media_kind === "image" || e.media_kind === "video")),
@@ -712,7 +837,8 @@ export function MyDevicePage() {
   useLayoutEffect(() => {
     if (isDeviceScrolling()) return;
     const grid = gridContainerRef.current;
-    const scroller = scrollContainerRef.current;
+    // Same element the virtualizer measures against (see getScrollElement below).
+    const scroller = getEffectiveDeviceScroller(scrollContainerRef.current);
     if (!grid || !scroller) return;
     const margin = Math.round(
       grid.getBoundingClientRect().top - scroller.getBoundingClientRect().top + scroller.scrollTop,
@@ -728,7 +854,12 @@ export function MyDevicePage() {
 
   const virtualizer = useVirtualizer({
     count: rows.length,
-    getScrollElement: () => scrollContainerRef.current,
+    // The element that really scrolls. The page's own container isn't height-bounded — it grows to
+    // the full content height (55,248 px for a 2,000-video folder) and <main> does the scrolling —
+    // so measured against it the virtualizer saw a "viewport" as tall as the whole folder and
+    // rendered every row: 2,000 tiles / ~43k DOM nodes, 3.4 s before the grid appeared. Re-read on
+    // every render, so it follows the switch to <main> once a folder's content makes it scroll.
+    getScrollElement: () => getEffectiveDeviceScroller(scrollContainerRef.current),
     estimateSize: () => rowHeight,
     overscan: 3,
     scrollMargin,
@@ -917,6 +1048,29 @@ export function MyDevicePage() {
     setFolderPicker(null);
   }, []);
 
+  // Opening a folder from the search results (or "Show in folder" on a file) leaves search.
+  const openFolderFromSearch = useCallback((path: string) => {
+    setCollectionsOpen(false);
+    setFavoritesOpen(false);
+    setHistoryOpen(false);
+    exitSelectionMode();
+    setGlobalSearchInput('');
+    setCurrentPath(path);
+  }, [setCollectionsOpen, setFavoritesOpen, setHistoryOpen, exitSelectionMode, setGlobalSearchInput, setCurrentPath]);
+
+  // Any sidebar navigation (a location, My Favorite, History, My Videos) also leaves search.
+  const searchNavSnapshotRef = useRef({ currentPath, collectionsOpen, favoritesOpen, historyOpen });
+  useEffect(() => {
+    const prev = searchNavSnapshotRef.current;
+    searchNavSnapshotRef.current = { currentPath, collectionsOpen, favoritesOpen, historyOpen };
+    if (
+      prev.currentPath === currentPath && prev.collectionsOpen === collectionsOpen &&
+      prev.favoritesOpen === favoritesOpen && prev.historyOpen === historyOpen
+    ) return;
+    if (globalSearchInput) setGlobalSearchInput('');
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [currentPath, collectionsOpen, favoritesOpen, historyOpen]);
+
   const enterSelectionMode = useCallback(() => {
     if (document.activeElement instanceof HTMLElement) document.activeElement.blur();
     setSelectionMode(true);
@@ -974,6 +1128,18 @@ export function MyDevicePage() {
     setDetailsPath(entry.path);
   }, [getSingleSelectedEntry]);
 
+  const remapAfterMove = useCallback(async (paths: string[], destinationDir: string) => {
+    const dest = destinationDir.replace(/[/\\]+$/, "");
+    const sep = dest.includes("\\") || !dest.includes("/") ? "\\" : "/";
+    const pairs = paths.map((from) => ({ from, to: `${dest}${sep}${from.split(/[/\\]/).pop() ?? ""}` }));
+    try {
+      const flags = await invoke<boolean[]>("device_paths_exist", {
+        paths: [...pairs.map((p) => p.from), ...pairs.map((p) => p.to)],
+      });
+      remapDeviceSavedPaths(pairs.filter((_, i) => !flags[i] && flags[pairs.length + i]));
+    } catch { /* History just falls back to re-finding the files by name */ }
+  }, []);
+
   const transferToFolder = useCallback(async (
     destinationDir: string,
     opts: { mode: "move" | "copy"; paths: string[]; clearSelection?: boolean },
@@ -993,10 +1159,16 @@ export function MyDevicePage() {
     setTransferProgress(null);
     setScanErr(null);
     try {
-      await invoke(mode === "move" ? "device_move_entries" : "device_copy_entries", {
-        paths,
-        destinationDir,
-      });
+      try {
+        await invoke(mode === "move" ? "device_move_entries" : "device_copy_entries", {
+          paths,
+          destinationDir,
+        });
+      } finally {
+        // Even a move that failed part-way moved some items — remap exactly the ones that are now
+        // at the destination and gone from their old spot, so History / My Favorite follow them.
+        if (mode === "move") void remapAfterMove(paths, destinationDir);
+      }
       setFolderPicker(null);
       if (clearSelection) exitSelectionMode();
       refreshCurrentDir();
@@ -1007,7 +1179,7 @@ export function MyDevicePage() {
       setFsBusyLabel(null);
       setTransferProgress(null);
     }
-  }, [exitSelectionMode, refreshCurrentDir]);
+  }, [exitSelectionMode, refreshCurrentDir, remapAfterMove]);
 
   const sendToSelected = useCallback(async () => {
     if (!isTauri() || selectedList.length === 0) return;
@@ -1081,6 +1253,7 @@ export function MyDevicePage() {
         path: entryRename.path,
         newName: name,
       });
+      remapDeviceSavedPaths([{ from: entryRename.path, to: newPath }]);
       const oldKey = normalizePathKey(entryRename.path);
       const nextSaved = saved.map((s) =>
         normalizePathKey(s) === oldKey ? newPath : s,
@@ -1478,6 +1651,7 @@ export function MyDevicePage() {
     filterInputRef,
     openShortcuts,
     isTauri(),
+    globalSearchInputRef,
   );
 
   if (!isTauri()) {
@@ -1509,12 +1683,16 @@ export function MyDevicePage() {
     { id: 'doc',    label: 'Docs'    },
   ];
 
-  const SORT_OPTIONS: { id: 'default'|'dateOldNew'|'dateNewOld'|'sizeSmallBig'|'sizeBigSmall'; label: string }[] = [
+  const SORT_OPTIONS: { id: DeviceSortId; label: string }[] = [
     { id: 'default',      label: 'Default'          },
+    { id: 'nameAZ',       label: 'Name: A to Z'     },
+    { id: 'nameZA',       label: 'Name: Z to A'     },
     { id: 'dateOldNew',   label: 'Date: old to new' },
     { id: 'dateNewOld',   label: 'Date: new to old' },
     { id: 'sizeSmallBig', label: 'Size: small to big' },
     { id: 'sizeBigSmall', label: 'Size: big to small' },
+    { id: 'durationShortLong', label: 'Duration: short to long' },
+    { id: 'durationLongShort', label: 'Duration: long to short' },
   ];
 
   const folderCount = entries.filter((e) => e.is_directory).length;
@@ -1928,6 +2106,37 @@ export function MyDevicePage() {
             </div>
           )}
         </div>
+
+        {/* Search all locations */}
+        {!sidebarCollapsed ? (
+          <div style={{ padding: '14px 12px 0', flexShrink: 0 }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, background: globalSearchActive ? 'rgba(124,58,237,0.1)' : 'rgba(255,255,255,0.04)', border: `1px solid ${globalSearchActive ? 'rgba(124,58,237,0.4)' : 'rgba(255,255,255,0.07)'}`, borderRadius: 8, padding: '7px 10px' }}>
+              <Search style={{ width: 12, height: 12, color: 'rgba(180,180,220,0.45)', flexShrink: 0 }} />
+              <input
+                ref={globalSearchInputRef}
+                type="text"
+                value={globalSearchInput}
+                onChange={(e) => setGlobalSearchInput(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Escape' && globalSearchInput) { e.preventDefault(); e.stopPropagation(); setGlobalSearchInput(''); }
+                }}
+                placeholder={privateModeActive ? 'Search private folders…' : 'Search all locations…'}
+                title="Searches every saved location, including subfolders (Ctrl+Shift+F)"
+                style={{ flex: 1, minWidth: 0, background: 'transparent', border: 'none', outline: 'none', color: '#e0e0f0', fontSize: 12, fontFamily: 'inherit' }}
+              />
+              {globalSearchInput ? (
+                <button
+                  type="button"
+                  onClick={() => setGlobalSearchInput('')}
+                  aria-label="Clear search"
+                  style={{ background: 'transparent', border: 'none', color: 'rgba(200,200,235,0.55)', cursor: 'pointer', display: 'flex', padding: 0, flexShrink: 0 }}
+                >
+                  <X style={{ width: 12, height: 12 }} />
+                </button>
+              ) : null}
+            </div>
+          </div>
+        ) : null}
 
         {/* LOCATIONS label */}
         {!sidebarCollapsed ? (
@@ -2404,7 +2613,15 @@ export function MyDevicePage() {
           onScroll={notifyScroll}
           onContextMenu={currentPath ? openBrowseContextMenu : undefined}
         >
-          {currentPath ? (
+          {globalSearchActive ? (
+            <DeviceGlobalSearchPanel
+              query={globalSearchQuery}
+              roots={saved}
+              exclude={privateModeActive ? [] : privateFolders}
+              privateMode={privateModeActive}
+              onOpenFolder={openFolderFromSearch}
+            />
+          ) : currentPath ? (
             <div style={{ padding: '16px 24px 32px' }}>
 
               {/* Loading indicator */}
@@ -2742,9 +2959,12 @@ export function MyDevicePage() {
                               ) : e.media_kind === 'image' ? (
                                 <LazyFolderThumb mode="image" path={e.path} />
                               ) : e.media_kind === 'video' ? (
-                                <DeviceVideoHoverPreview path={e.path}>
-                                  <LazyFolderThumb mode="video" path={e.path} />
-                                </DeviceVideoHoverPreview>
+                                <>
+                                  <DeviceVideoHoverPreview path={e.path}>
+                                    <LazyFolderThumb mode="video" path={e.path} />
+                                  </DeviceVideoHoverPreview>
+                                  <DeviceDurationBadge path={e.path} />
+                                </>
                               ) : (
                                 <svg width="24" height="30" viewBox="0 0 24 30" fill="none" stroke="rgba(180,180,220,0.2)" strokeWidth="1.4" strokeLinecap="round">
                                   <path d="M14 2H6a2 2 0 0 0-2 2v24a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V8z"/>
@@ -2757,18 +2977,6 @@ export function MyDevicePage() {
                             <div style={{ padding: '7px 9px 8px' }}>
                               <div style={{ fontSize: 11, fontWeight: 500, color: '#c0c0d8', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', lineHeight: 1.3, transition: 'color 0.15s' }}>
                                 {e.name}
-                              </div>
-                              {/* Always rendered (just hidden when there's no kind label) rather than
-                                  conditionally mounted — every tile in a row needs the exact same
-                                  height for the grid row (and the virtualizer's fixed rowHeight
-                                  estimate) to actually be uniform. A row that mixed a video tile
-                                  with this line against a folder tile without it would render at a
-                                  height CSS Grid auto-sizes to the taller cell, but the virtualizer
-                                  would still be positioning every OTHER row using the shorter
-                                  estimate — a mismatch that has to get corrected as folder-only rows
-                                  scroll past, which is what showed up as scroll position jumps. */}
-                              <div style={{ fontSize: 9.5, color: 'rgba(180,180,220,0.28)', marginTop: 2, visibility: (e.media_kind === 'video' || e.media_kind === 'image') ? 'visible' : 'hidden' }}>
-                                {e.media_kind === 'video' ? 'Video' : e.media_kind === 'image' ? 'Image' : ' '}
                               </div>
                             </div>
                           </button>
@@ -2794,9 +3002,17 @@ export function MyDevicePage() {
           ) : collectionsOpen ? (
             <CollectionsPanel roots={privateFolders} />
           ) : favoritesOpen ? (
-            <DeviceFavoritesPanel privateMode={privateModeActive} />
+            <DeviceFavoritesPanel
+              privateMode={privateModeActive}
+              searchRoots={privateModeActive ? [...privateFolders, ...normalSaved] : normalSaved}
+              excludeRoots={privateModeActive ? [] : privateFolders}
+            />
           ) : historyOpen ? (
-            <DeviceHistoryPanel privateMode={privateModeActive} />
+            <DeviceHistoryPanel
+              privateMode={privateModeActive}
+              searchRoots={privateModeActive ? [...privateFolders, ...normalSaved] : normalSaved}
+              excludeRoots={privateModeActive ? [] : privateFolders}
+            />
           ) : (
             /* Empty / welcome state when no folder selected */
             <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', height: '100%', gap: 16, color: 'rgba(180,180,220,0.3)', textAlign: 'center', padding: '0 40px' }}>

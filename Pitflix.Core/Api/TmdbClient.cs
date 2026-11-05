@@ -2242,13 +2242,15 @@ public sealed class TmdbClient
         catch { return null; }
     }
 
-    /// <summary>Production companies (movies and TV) plus TV networks (streaming originals live here,
-    /// not in production_companies) from TMDB's core details endpoint — the same data the
-    /// online-streaming page's "Studio" row uses, reused here for the local library detail pages.</summary>
-    public async Task<IReadOnlyList<TmdbCompanyInfo>> TryGetCompaniesAsync(
+    /// <summary>Production companies (movies and TV), TV networks (streaming originals live here, not
+    /// in production_companies), and — for movies — <c>belongs_to_collection</c>, all from ONE call to
+    /// TMDB's core details endpoint. Movies used to need two separate live calls to this exact same
+    /// endpoint (one for companies, one for collection) on every single detail-page open; merged into
+    /// one here so callers only pay for it once, and can cache the combined result together.</summary>
+    public async Task<TmdbCompaniesAndCollection> TryGetCompaniesAndCollectionAsync(
         int tmdbId, bool isMovie, CancellationToken cancellationToken = default)
     {
-        if (tmdbId <= 0) return Array.Empty<TmdbCompanyInfo>();
+        if (tmdbId <= 0) return new TmdbCompaniesAndCollection(Array.Empty<TmdbCompanyInfo>(), null, null);
         var endpoint = isMovie ? $"movie/{tmdbId}" : $"tv/{tmdbId}";
         var url = AbsoluteApiUrl($"{endpoint}?api_key={Uri.EscapeDataString(_apiKey)}&language=en-US");
         try
@@ -2283,11 +2285,23 @@ public sealed class TmdbClient
                     AddCompany((int?)c["id"] ?? 0, (string?)c["name"], (string?)c["logo_path"], "company");
             }
 
-            return result;
+            int? collectionId = null;
+            string? collectionName = null;
+            if (isMovie && root["belongs_to_collection"] is JObject col)
+            {
+                var cid = (int?)col["id"] ?? 0;
+                if (cid > 0)
+                {
+                    collectionId = cid;
+                    collectionName = ((string?)col["name"] ?? "").Trim();
+                }
+            }
+
+            return new TmdbCompaniesAndCollection(result, collectionId, collectionName);
         }
         catch
         {
-            return Array.Empty<TmdbCompanyInfo>();
+            return new TmdbCompaniesAndCollection(Array.Empty<TmdbCompanyInfo>(), null, null);
         }
     }
 

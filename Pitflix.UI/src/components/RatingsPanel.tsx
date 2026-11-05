@@ -64,6 +64,105 @@ function SourceChip({
   );
 }
 
+export type RatingSource = {
+  key: "tmdb" | "imdb" | "rt" | "rt-audience" | "mc" | "lb";
+  /** Short brand label ("IMDb", "RT", …). */
+  label: string;
+  /** Long label for lists and strips ("Rotten Tomatoes", "Audience", …). */
+  longLabel: string;
+  score: string;
+  sub: string | null;
+  /** Brand colour for the label text. */
+  color: string;
+};
+
+/**
+ * The same sources RatingsPanel draws, as plain data — for compact chips / strips in the
+ * alternative detail layouts. Shares RatingsPanel's query keys, so both read one cache entry.
+ */
+export function useRatingSources(tmdbId: number, mediaType: "movie" | "tv") {
+  const q = useQuery({
+    queryKey: ["ratings-display", tmdbId, mediaType],
+    queryFn: () => loadRatingsPanelData(tmdbId, mediaType),
+    enabled: Number.isFinite(tmdbId) && tmdbId > 0,
+    staleTime: 30 * 60_000,
+    gcTime: 60 * 60_000,
+    retry: 1,
+  });
+  const imdbId = q.data?.imdbId ?? null;
+  const mdbQ = useQuery({
+    queryKey: ["mdblist-ratings", tmdbId, imdbId, mediaType],
+    queryFn: () => getMdblistRatings(tmdbId, imdbId),
+    enabled: tmdbId > 0 && (q.isSuccess || q.isError),
+    staleTime: 1000 * 60 * 60 * 24,
+    retry: false,
+  });
+
+  const r = q.data;
+  const mdb = mdbQ.data ?? null;
+  const sources: RatingSource[] = [];
+  if (mdb?.imdbScore != null && mdb.imdbScore > 0)
+    sources.push({
+      key: "imdb",
+      label: "IMDb",
+      longLabel: "IMDb",
+      score: mdb.imdbScore.toFixed(1),
+      sub: mdb.imdbVotes != null ? `${mdb.imdbVotes.toLocaleString()} votes` : null,
+      color: "#f5c518",
+    });
+  if (mdb?.rottenTomatoesScore != null)
+    sources.push({
+      key: "rt",
+      label: "RT",
+      longLabel: "Rotten Tomatoes",
+      score: `${Math.round(mdb.rottenTomatoesScore)}%`,
+      sub: "Tomatometer",
+      color: "#fa6450",
+    });
+  if (mdb?.rottenTomatoesAudience != null)
+    sources.push({
+      key: "rt-audience",
+      label: "Audience",
+      longLabel: "Audience",
+      score: `${Math.round(mdb.rottenTomatoesAudience)}%`,
+      sub: "Audience score",
+      color: "#fb923c",
+    });
+  if (mdb?.metacriticScore != null)
+    sources.push({
+      key: "mc",
+      label: "MC",
+      longLabel: "Metacritic",
+      score: `${Math.round(mdb.metacriticScore)}`,
+      sub: "Metascore",
+      color: "#86d35b",
+    });
+  if (mediaType === "movie" && mdb?.letterboxdScore != null)
+    sources.push({
+      key: "lb",
+      label: "Letterboxd",
+      longLabel: "Letterboxd",
+      score: mdb.letterboxdScore.toFixed(1),
+      sub: "out of 5",
+      color: "#ff8000",
+    });
+  if (r?.tmdbVoteAverage != null && r.tmdbVoteAverage > 0)
+    sources.push({
+      key: "tmdb",
+      label: "TMDB",
+      longLabel: "TMDB",
+      score: r.tmdbVoteAverage.toFixed(1),
+      sub: r.tmdbVoteCount != null && r.tmdbVoteCount > 0 ? `${r.tmdbVoteCount.toLocaleString()} votes` : null,
+      color: "#60c5e8",
+    });
+
+  return {
+    sources,
+    fetchedAtUtc: r?.fetchedAtUtc ?? null,
+    loading: !(q.isSuccess || q.isError) || (mdbQ.isFetching && !mdbQ.data),
+  };
+}
+
 export function RatingsPanel({
   tmdbId,
   mediaType,
@@ -137,7 +236,8 @@ export function RatingsPanel({
 
   // ── All remaining chips from MDBList ──────────────────────────────────────
   if (mdb) {
-    if (mdb.imdbScore != null)
+    // MDBList reports 0 for titles IMDb hasn't rated yet — hide the card rather than show "0.0/10".
+    if (mdb.imdbScore != null && mdb.imdbScore > 0)
       chips.push(
         <SourceChip
           key="imdb"

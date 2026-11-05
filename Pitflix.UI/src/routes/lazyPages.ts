@@ -18,7 +18,8 @@ function lazyPage(loader: Loader): PreloadableComponent {
   return component;
 }
 
-export const PlayerPage = lazyPage(() => import("../pages/PlayerPage").then((m) => ({ default: m.PlayerPage })));
+// Rendered by PersistentPlayerHost (not a route element); kept here so it is warmed on idle too.
+export const PlayerPage = lazyPage(() => import("../pages/PlayerPage").then((m) => ({ default: m.PlayerPage as ComponentType<unknown> })));
 export const MovieDetailPage = lazyPage(() => import("../pages/DetailPage").then((m) => ({ default: m.MovieDetailPage })));
 export const ShowDetailPage = lazyPage(() => import("../pages/DetailPage").then((m) => ({ default: m.ShowDetailPage })));
 export const UnmatchedPage = lazyPage(() => import("../pages/UnmatchedPage").then((m) => ({ default: m.UnmatchedPage })));
@@ -63,6 +64,9 @@ export const TvTimeReviewPage = lazyPage(() =>
   import("../pages/TvTimeReviewPage").then((m) => ({ default: m.TvTimeReviewPage })),
 ); // TEMPORARY -- remove once the TV Time import review is done
 export const BrowsePage = lazyPage(() => import("../pages/Browse/BrowsePage").then((m) => ({ default: m.BrowsePage })));
+export const CinemasSchedulePage = lazyPage(() =>
+  import("../pages/CinemasSchedulePage").then((m) => ({ default: m.CinemasSchedulePage })),
+);
 
 /**
  * Static nav destinations → their page chunk. Hovering a nav item warms the chunk so the click
@@ -74,6 +78,7 @@ const PATH_LOADERS: Record<string, Loader> = {
   "/trailers": TrailersPage.preload,
   "/online-stream": OnlineStreamPage.preload,
   "/browse": BrowsePage.preload,
+  "/cinemas": CinemasSchedulePage.preload,
   "/live": LivePage.preload,
   "/next-episodes": NextEpisodesPage.preload,
   "/awards": AwardsPage.preload,

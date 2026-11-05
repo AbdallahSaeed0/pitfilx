@@ -14,6 +14,19 @@
 ;   2. Classes\<ext>\OpenWithList\pitflixui.exe — makes Pitflix show directly in the file's
 ;      right-click "Open with" submenu even before the user has ever picked it for that type.
 
+; Before copying files: stop the background processes Tauri's own "app is running" check doesn't
+; know about. The API sidecar (pitflix-api.exe) keeps running after the window closes, and a running
+; exe is locked — the installer then silently keeps the OLD backend while installing the new UI
+; (happened with the 2026-10-02 build: new pitflixui.exe, Sep 28 pitflix-api.exe). Only our own image
+; names are targeted; mpv.exe is left alone since other players use that name too.
+!macro NSIS_HOOK_PREINSTALL
+  nsExec::Exec 'taskkill /F /T /IM pitflix-api.exe'
+  Pop $0
+  nsExec::Exec 'taskkill /F /T /IM PitflixPlayer.exe'
+  Pop $0
+  Sleep 1500 ; let Windows release the file handles
+!macroend
+
 !macro NSIS_HOOK_POSTINSTALL
   WriteRegStr HKCU "Software\Classes\Applications\pitflixui.exe\shell\open\command" "" '"$INSTDIR\pitflixui.exe" "%1"'
   WriteRegStr HKCU "Software\Classes\Applications\pitflixui.exe" "FriendlyAppName" "Pitflix"

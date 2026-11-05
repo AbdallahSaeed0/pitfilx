@@ -46,8 +46,56 @@ public sealed class TvdbService
         return best?.Url;
     }
 
+    private static readonly TimeSpan ArtworkCacheTtl = TimeSpan.FromDays(7);
+
     public async Task<IReadOnlyList<TvdbArtwork>?> GetArtworksAsync(int tmdbId, string mediaType,
         CancellationToken ct)
+    {
+        var normalizedType = NormalizeMediaType(mediaType);
+
+        // This used to hit TVDB live on every single detail-page open (the tvdbId itself was
+        // cached, but the actual artwork payload never was) — a large chunk of "opening any
+        // title takes 5 seconds" was this one uncached network round-trip, every time, forever.
+        // An entry past ArtworkCacheTtl is still served right away (it was being treated as missing,
+        // which put the ~1-1.3 s TVDB round-trip back on the page's critical path) and refreshed in
+        // the background for next time.
+        var (cachedJson, stale) = await ReadArtworkCacheAsync(tmdbId, normalizedType, ct).ConfigureAwait(false);
+        if (cachedJson is not null)
+        {
+            if (stale && !Pitflix.Core.Net.NetworkStatus.IsOffline)
+                RefreshArtworksInBackground(tmdbId, mediaType, normalizedType);
+            return string.IsNullOrEmpty(cachedJson) ? Array.Empty<TvdbArtwork>() : ParseArtworks(cachedJson);
+        }
+
+        return await FetchAndStoreArtworksAsync(tmdbId, mediaType, normalizedType, ct).ConfigureAwait(false);
+    }
+
+    private readonly System.Collections.Concurrent.ConcurrentDictionary<(int, string), byte> _artworkRefreshing = new();
+
+    private void RefreshArtworksInBackground(int tmdbId, string mediaType, string normalizedType)
+    {
+        if (!_artworkRefreshing.TryAdd((tmdbId, normalizedType), 0))
+            return;
+        _ = Task.Run(async () =>
+        {
+            try
+            {
+                await FetchAndStoreArtworksAsync(tmdbId, mediaType, normalizedType, CancellationToken.None)
+                    .ConfigureAwait(false);
+            }
+            catch
+            {
+                /* the saved copy was already served */
+            }
+            finally
+            {
+                _artworkRefreshing.TryRemove((tmdbId, normalizedType), out _);
+            }
+        });
+    }
+
+    private async Task<IReadOnlyList<TvdbArtwork>?> FetchAndStoreArtworksAsync(int tmdbId, string mediaType,
+        string normalizedType, CancellationToken ct)
     {
         var key = await GetApiKeyAsync(ct).ConfigureAwait(false);
         if (string.IsNullOrWhiteSpace(key)) return null;
@@ -75,6 +123,7 @@ public sealed class TvdbService
             if (!resp.IsSuccessStatusCode) return null;
 
             var body = await resp.Content.ReadAsStringAsync(ct).ConfigureAwait(false);
+            await WriteArtworkCacheAsync(tmdbId, normalizedType, body, ct).ConfigureAwait(false);
             return ParseArtworks(body);
         }
         catch (Exception ex)
@@ -456,6 +505,62 @@ public sealed class TvdbService
             Add("@tmdb",    tmdbId);
             Add("@mt",      mediaType);
             Add("@tvdb",    tvdbId == -1 ? DBNull.Value : (object)tvdbId);
+            Add("@fetched", DateTime.UtcNow.ToString("O"));
+            await cmd.ExecuteNonQueryAsync(ct).ConfigureAwait(false);
+        }
+        catch { }
+    }
+
+    /// <summary>Returns the cached artworks JSON (an empty string for a cached "no artwork found"
+    /// result, null when there's no entry at all) and whether it's older than ArtworkCacheTtl.</summary>
+    private static async Task<(string? Json, bool Stale)> ReadArtworkCacheAsync(int tmdbId, string mediaType,
+        CancellationToken ct)
+    {
+        try
+        {
+            using var db = LibraryContext.Create();
+            var conn = db.Database.GetDbConnection();
+            await conn.OpenAsync(ct).ConfigureAwait(false);
+            using var cmd = conn.CreateCommand();
+            cmd.CommandText = "SELECT ArtworksJson, FetchedAtUtc FROM TvdbArtworkCache WHERE TmdbId = @tmdb AND MediaType = @mt LIMIT 1";
+            void Add(string n, object v) { var p = cmd.CreateParameter(); p.ParameterName = n; p.Value = v; cmd.Parameters.Add(p); }
+            Add("@tmdb", tmdbId);
+            Add("@mt", mediaType);
+            using var r = await cmd.ExecuteReaderAsync(ct).ConfigureAwait(false);
+            if (!await r.ReadAsync(ct).ConfigureAwait(false)) return (null, false);
+
+            var json = r.IsDBNull(0) ? "" : r.GetString(0);
+            var fetchedStr = r.IsDBNull(1) ? null : r.GetString(1);
+            var stale = fetchedStr is not null &&
+                DateTime.TryParse(fetchedStr, out var fetched) &&
+                DateTime.UtcNow - fetched > ArtworkCacheTtl;
+
+            return (json, stale);
+        }
+        catch { return (null, false); }
+    }
+
+    private static async Task WriteArtworkCacheAsync(int tmdbId, string mediaType, string rawResponseJson,
+        CancellationToken ct)
+    {
+        try
+        {
+            var json = rawResponseJson ?? "";
+            using var db = LibraryContext.Create();
+            var conn = db.Database.GetDbConnection();
+            await conn.OpenAsync(ct).ConfigureAwait(false);
+            using var cmd = conn.CreateCommand();
+            cmd.CommandText = """
+                INSERT INTO TvdbArtworkCache (TmdbId, MediaType, ArtworksJson, FetchedAtUtc)
+                VALUES (@tmdb, @mt, @json, @fetched)
+                ON CONFLICT(TmdbId, MediaType) DO UPDATE SET
+                    ArtworksJson = excluded.ArtworksJson,
+                    FetchedAtUtc = excluded.FetchedAtUtc;
+                """;
+            void Add(string n, object? v) { var p = cmd.CreateParameter(); p.ParameterName = n; p.Value = v ?? DBNull.Value; cmd.Parameters.Add(p); }
+            Add("@tmdb", tmdbId);
+            Add("@mt", mediaType);
+            Add("@json", json);
             Add("@fetched", DateTime.UtcNow.ToString("O"));
             await cmd.ExecuteNonQueryAsync(ct).ConfigureAwait(false);
         }

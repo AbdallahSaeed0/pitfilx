@@ -101,12 +101,18 @@ export interface PlayerEmbeddedRefsProps {
   launchStateRef: RefObject<PlaybackLaunchState | undefined>;
 }
 
+/** Which overlay bar(s) the last pointer activity woke ("none" = cursor only, no bars). */
+export type PlayerChromeZone = "all" | "top" | "bottom" | "none";
+
 /** Fullscreen auto-hide chrome + toggle. */
 export interface PlayerEmbeddedFullscreenProps {
   isFullscreen: boolean;
   isMaximized: boolean;
   fsControlsVisible: boolean;
+  chromeZone: PlayerChromeZone;
   onFullscreenPointerActivity: () => void;
+  /** Pointer moved over the player; `zone` null keeps the current zone. */
+  onChromePointerActivity: (zone: PlayerChromeZone | null) => void;
   /** Right-click anywhere on the player surface (open options menu). */
   onPlayerRightClick: (clientX: number, clientY: number) => void;
   onFullscreen: () => void | Promise<void>;
@@ -189,6 +195,12 @@ export interface PlayerEmbeddedTransportProps {
   setTimePos: Dispatch<SetStateAction<number>>;
   seekToAbsolute: (seconds: number) => void;
   uiTimePos: number;
+  /** Keyboard-arrow skip readout shown by the mini progress bar (null = hidden). */
+  seekHud: SeekHudState | null;
+  /** Shows/extends the skip readout for a relative skip (arrow keys or the skip buttons). */
+  bumpSeekHud: (deltaSeconds: number) => void;
+  abLoop: AbLoopState;
+  onClearAbLoop: () => void;
   uiDuration: number;
 }
 
@@ -220,6 +232,9 @@ export interface PlayerEmbeddedSubtitlesProps {
   subTracks: MpvTrack[];
   externalSubFiles: string[];
   subMenuValue: string;
+  /** Second (dual) subtitle, same value format as `subMenuValue`: "" | "e:<id>" | "x:<encoded path>". */
+  secondaryMenuValue: string;
+  onPickSecondary: (value: string) => void;
   toggleSub: () => void;
   subAppearanceOpen: boolean;
   setSubAppearanceOpen: Dispatch<SetStateAction<boolean>>;
@@ -243,6 +258,20 @@ export interface PlayerEmbeddedVolumeProps {
   volumeHudVisible: boolean;
 }
 
+/** A-B loop points in seconds. `a` set + `b` null = waiting for the end point. */
+export type AbLoopState = { a: number | null; b: number | null };
+
+export type SeekHudState = {
+  /** Estimated landing point (seconds) while mpv is still seeking — lets rapid presses stack
+   *  instantly instead of showing a stale position. */
+  target: number;
+  /** Total skipped in this burst (seconds, signed). Exact once `settled`. */
+  delta: number;
+  /** mpv reported where the seek actually landed (keyframe seeks rarely hit `target` exactly):
+   *  from here the readout follows the real playhead instead of the estimate. */
+  settled: boolean;
+};
+
 /** Playback speed (mpv `speed` property). */
 export interface PlayerEmbeddedSpeedProps {
   playbackSpeed: number;
@@ -265,6 +294,10 @@ export interface PlayerEmbeddedSettingsProps {
    * overlay with chrome hidden, rather than a separate floating window/session. */
   isPip: boolean;
   togglePip: () => void;
+  /** In-app mini player — the player shrinks into a corner of the main window while the app is browsed. */
+  inAppMini: boolean;
+  onEnterInAppMini: () => void;
+  onExpandInAppMini: () => void;
 }
 
 /** Dev-only IPC diagnostics panel. */

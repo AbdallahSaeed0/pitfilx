@@ -1,4 +1,5 @@
 import { useQuery } from "@tanstack/react-query";
+import { AmbientBackdrop, HeroBackdrop } from "../components/detail/CinematicBackdrop";
 import { ChevronLeft, Download, Play, Tv, Video } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
@@ -17,6 +18,8 @@ import { Spinner } from "../components/ui/Spinner";
 import { RatingsPanel } from "../components/RatingsPanel";
 import { ParentsGuideSection } from "../components/ParentsGuideSection";
 import { cn } from "../utils/cn";
+// The API hands season/recommendation posters out at TMDB w185 — soft on ~160px cards.
+import { upscaleTmdbImageUrl } from "../utils/posterSrc";
 
 type StreamCastTabKey = "cast" | "directors" | "writers" | "crew";
 
@@ -41,8 +44,9 @@ function StreamPersonPortraitCard({ name, role, imgSrc, onClick }: {
           fallbackText={name.slice(0, 2)}
         />
       </div>
-      <p className="mt-2 line-clamp-2 text-[11px] font-semibold leading-snug text-white">{name}</p>
-      {role ? <p className="mt-0.5 line-clamp-1 text-[10px] text-pitflix-subtle">{role}</p> : null}
+      {/* Shadowed + brighter role text: these sit straight on the tinted backdrop, which can be bright/red. */}
+      <p className="mt-2 line-clamp-2 text-[11px] font-semibold leading-snug text-white [text-shadow:0_1px_3px_rgba(0,0,0,0.85)]">{name}</p>
+      {role ? <p className="mt-0.5 line-clamp-1 text-[10px] font-medium text-white/75 [text-shadow:0_1px_3px_rgba(0,0,0,0.85)]">{role}</p> : null}
     </button>
   );
 }
@@ -294,10 +298,11 @@ export function StreamingDetailsPage() {
   }
 
   return (
-    <div className="pb-16">
+    <div className="isolate pb-16">
+      <AmbientBackdrop src={backdropUrl} />
       {/* ── CINEMATIC HERO ── */}
       <div className="-mx-6 -mt-12">
-        <div className="relative h-[560px] overflow-hidden bg-pitflix-card">
+        <div className="relative h-[560px] overflow-hidden">
           <button
             type="button"
             onClick={() => {
@@ -314,17 +319,7 @@ export function StreamingDetailsPage() {
             <ChevronLeft className="h-4 w-4" />
             Back
           </button>
-          <div className="pointer-events-none absolute inset-0">
-            {backdropUrl ? (
-              <div className="absolute inset-0 [&_img]:h-full [&_img]:w-full [&_img]:object-cover [&_img]:object-top [&_img]:opacity-75">
-                <MediaImage src={backdropUrl} alt="" className="h-full w-full bg-pitflix-card" fallbackText="" />
-              </div>
-            ) : (
-              <div className="absolute inset-0 bg-pitflix-card" />
-            )}
-            <div className="absolute inset-0 bg-gradient-to-r from-pitflix-bg via-pitflix-bg/55 to-transparent" />
-            <div className="absolute bottom-0 left-0 right-0 h-2/3 bg-gradient-to-t from-pitflix-bg via-pitflix-bg/60 to-transparent" />
-          </div>
+          <HeroBackdrop src={backdropUrl} />
           <div
             className="absolute bottom-0 left-0 right-0 z-10 flex items-end gap-9 px-12 pb-9"
             onContextMenu={handleContextMenu({
@@ -483,7 +478,7 @@ export function StreamingDetailsPage() {
       />
 
       {/* ── RATINGS ── */}
-      <div className="-mx-6 border-t border-white/5 px-12 py-5">
+      <div className="relative -mx-6 px-12 py-5 before:absolute before:inset-x-12 before:top-0 before:h-px before:bg-gradient-to-r before:from-transparent before:via-white/10 before:to-transparent">
         <p className="mb-3 text-[11px] font-semibold uppercase tracking-[0.12em] text-white/35">Ratings</p>
         <RatingsPanel
           tmdbId={tmdbId}
@@ -539,7 +534,7 @@ export function StreamingDetailsPage() {
                 </button>
                 <div className="aspect-[2/3] w-full bg-pitflix-card/40">
                   <MediaImage
-                    src={s.posterUrl}
+                    src={upscaleTmdbImageUrl(s.posterUrl, "w342")}
                     alt={s.name}
                     className="h-full w-full object-cover transition-opacity group-hover:opacity-80"
                     fallbackText="TV"
@@ -665,7 +660,7 @@ export function StreamingDetailsPage() {
               >
                 <div className="aspect-[2/3] w-full bg-pitflix-card/40">
                   <MediaImage
-                    src={r.posterUrl}
+                    src={upscaleTmdbImageUrl(r.posterUrl, "w342")}
                     alt={r.title}
                     className="h-full w-full object-cover transition-opacity group-hover:opacity-80"
                     fallbackText={r.mediaType === "Movie" ? "Movie" : "TV"}

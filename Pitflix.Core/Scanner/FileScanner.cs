@@ -12,6 +12,10 @@ public sealed class FileScanner
         ".ts", ".m2ts", ".mts", ".divx"
     ];
 
+    /// <summary>True for the file types the library scan picks up (by extension).</summary>
+    public static bool IsVideoFile(string path) =>
+        VideoExtensions.Contains(Path.GetExtension(path), StringComparer.OrdinalIgnoreCase);
+
     public IReadOnlyList<string> ScanDirectory(string rootPath, bool recursive = true, IReadOnlyList<string>? excludedPaths = null)
     {
         if (string.IsNullOrWhiteSpace(rootPath))

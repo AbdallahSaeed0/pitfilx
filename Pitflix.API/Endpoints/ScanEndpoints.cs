@@ -94,7 +94,8 @@ public static class ScanEndpoints
                         type = "complete",
                         result.Matched,
                         result.Unmatched,
-                        skipped = result.SkippedAlreadyMatched
+                        skipped = result.SkippedAlreadyMatched,
+                        relinked = result.Relinked
                     }, CancellationToken.None).ConfigureAwait(false);
                     ratingsRefreshQueue.TryEnqueueStaleSweep();
                 }
@@ -175,7 +176,8 @@ public static class ScanEndpoints
                         type = "complete",
                         result.Matched,
                         result.Unmatched,
-                        skipped = result.SkippedAlreadyMatched
+                        skipped = result.SkippedAlreadyMatched,
+                        relinked = result.Relinked
                     }, CancellationToken.None).ConfigureAwait(false);
                     ratingsRefreshQueue.TryEnqueueStaleSweep();
                 }

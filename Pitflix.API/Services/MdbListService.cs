@@ -36,7 +36,10 @@ public sealed class MdbListService
         _http.Timeout = TimeSpan.FromSeconds(20);
     }
 
-    public async Task<MdbListRatings?> GetRatingsAsync(string? imdbId, int? tmdbId, CancellationToken ct)
+    /// <param name="maxAge">How old a saved answer may be before asking MDBList again (default
+    /// <see cref="CacheTtl"/>). Callers pass less for new releases, whose scores move daily.</param>
+    public async Task<MdbListRatings?> GetRatingsAsync(string? imdbId, int? tmdbId, CancellationToken ct,
+        TimeSpan? maxAge = null)
     {
         var key = await GetApiKeyAsync(ct).ConfigureAwait(false);
         if (string.IsNullOrWhiteSpace(key))
@@ -49,7 +52,7 @@ public sealed class MdbListService
         // Cache hit?
         if (!string.IsNullOrWhiteSpace(imdbId))
         {
-            var cached = await ReadCacheAsync(imdbId, ct).ConfigureAwait(false);
+            var cached = await ReadCacheAsync(imdbId, maxAge ?? CacheTtl, ct).ConfigureAwait(false);
             if (cached is not null) return cached;
         }
 
@@ -111,6 +114,71 @@ public sealed class MdbListService
     /// <summary>Wipes both persisted ratings cache tables (title-level and per-episode). Returns the
     /// total row count removed. Used by the Settings → Maintenance "Clear ratings cache" action, e.g.
     /// to force a refetch after a fix to how episodes are matched/validated.</summary>
+    /// <summary>
+    /// Episodes of a show that don't need an OMDb call: anything with a rating (however old — refreshing
+    /// a known rating isn't worth daily quota) plus "no rating" answers still inside the cache TTL.
+    /// One query per show, so the background refill can skip covered shows without a per-episode read.
+    /// </summary>
+    public static async Task<HashSet<(int Season, int Episode)>> GetCoveredEpisodesAsync(string showImdbId,
+        CancellationToken ct)
+    {
+        var covered = new HashSet<(int, int)>();
+        if (string.IsNullOrWhiteSpace(showImdbId)) return covered;
+        try
+        {
+            using var db = LibraryContext.Create();
+            var conn = db.Database.GetDbConnection();
+            await conn.OpenAsync(ct).ConfigureAwait(false);
+            using var cmd = conn.CreateCommand();
+            cmd.CommandText = """
+                SELECT Season, Episode, ImdbRating, FetchedAtUtc FROM MdbListEpisodeRatingsCache
+                WHERE ShowImdbId = @id
+                """;
+            var p = cmd.CreateParameter();
+            p.ParameterName = "@id";
+            p.Value = showImdbId;
+            cmd.Parameters.Add(p);
+            using var reader = await cmd.ExecuteReaderAsync(ct).ConfigureAwait(false);
+            while (await reader.ReadAsync(ct).ConfigureAwait(false))
+            {
+                var hasRating = !reader.IsDBNull(2);
+                if (!hasRating)
+                {
+                    var fetchedStr = reader.IsDBNull(3) ? null : reader.GetString(3);
+                    var fresh = fetchedStr != null && DateTime.TryParse(fetchedStr, out var fetched) &&
+                                DateTime.UtcNow - fetched.ToUniversalTime() <= CacheTtl;
+                    if (!fresh) continue;
+                }
+                covered.Add((reader.GetInt32(0), reader.GetInt32(1)));
+            }
+        }
+        catch
+        {
+            // unreadable cache — treat as nothing covered; the refill just does more work
+        }
+        return covered;
+    }
+
+    /// <summary>Drops cached per-episode "no rating" rows (keeps real ratings). Called when the OMDb
+    /// key is saved: misses recorded under a missing/invalid key would otherwise hide ratings for the
+    /// full cache TTL even after the key is fixed.</summary>
+    public static async Task<int> ClearEpisodeMissesAsync(CancellationToken ct)
+    {
+        try
+        {
+            using var db = LibraryContext.Create();
+            var conn = db.Database.GetDbConnection();
+            await conn.OpenAsync(ct).ConfigureAwait(false);
+            using var cmd = conn.CreateCommand();
+            cmd.CommandText = "DELETE FROM MdbListEpisodeRatingsCache WHERE ImdbRating IS NULL;";
+            return await cmd.ExecuteNonQueryAsync(ct).ConfigureAwait(false);
+        }
+        catch
+        {
+            return 0;
+        }
+    }
+
     public async Task<int> ClearAllCachesAsync(CancellationToken ct)
     {
         try
@@ -201,7 +269,7 @@ public sealed class MdbListService
         }
     }
 
-    private static async Task<MdbListRatings?> ReadCacheAsync(string imdbId, CancellationToken ct)
+    private static async Task<MdbListRatings?> ReadCacheAsync(string imdbId, TimeSpan maxAge, CancellationToken ct)
     {
         try
         {
@@ -220,9 +288,13 @@ public sealed class MdbListService
             var ratingsJson = reader.IsDBNull(0) ? null : reader.GetString(0);
             var fetchedStr  = reader.IsDBNull(1) ? null : reader.GetString(1);
             if (string.IsNullOrWhiteSpace(ratingsJson)) return null;
+            // Stored as UTC ("…Z"); plain TryParse turned it into local time, skewing ages by the
+            // UTC offset.
             if (fetchedStr is not null &&
-                DateTime.TryParse(fetchedStr, out var fetched) &&
-                DateTime.UtcNow - fetched > CacheTtl)
+                DateTime.TryParse(fetchedStr, System.Globalization.CultureInfo.InvariantCulture,
+                    System.Globalization.DateTimeStyles.AdjustToUniversal | System.Globalization.DateTimeStyles.AssumeUniversal,
+                    out var fetched) &&
+                DateTime.UtcNow - fetched > maxAge)
                 return null;
 
             return JsonSerializer.Deserialize<MdbListRatings>(ratingsJson, _json);

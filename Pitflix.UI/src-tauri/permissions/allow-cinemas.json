@@ -1,0 +1,17 @@
+{
+  "default": null,
+  "permission": [
+    {
+      "identifier": "allow-cinemas",
+      "description": "Cinemas Schedule: refresh VOX and Premiere listings/showtimes through hidden scraper webviews",
+      "commands": {
+        "allow": [
+          "cinemas_fetch_vox",
+          "cinemas_fetch_premiere",
+          "cinemas_premiere_showtimes"
+        ],
+        "deny": []
+      }
+    }
+  ]
+}

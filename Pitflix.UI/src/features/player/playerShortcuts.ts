@@ -18,6 +18,7 @@ export const EMBEDDED_PLAYER_SHORTCUT_SECTIONS: PlayerShortcutSection[] = [
       { label: "Seek ±1 second", keys: "⇧← ⇧→" },
       { label: "Volume up / down", keys: "↑ ↓" },
       { label: "Mute", keys: "M" },
+      { label: "A-B loop: set start → set end → clear", keys: "B" },
       { label: "Fullscreen", keys: "F" },
       { label: "Open menu (screenshot, clip, …)", keys: "Right-click" },
       { label: "Exit fullscreen / close player", keys: "Esc" },

@@ -8,6 +8,7 @@ import {
   Info,
   RefreshCw,
   Smartphone,
+  Ticket,
 } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
@@ -48,6 +49,8 @@ function KindIcon({ kind }: { kind: PitflixNotificationKind }) {
       return <CalendarClock className={cn(cls, "text-cyan-400")} />;
     case "trailer":
       return <Clapperboard className={cn(cls, "text-rose-400")} />;
+    case "tickets":
+      return <Ticket className={cn(cls, "text-amber-400")} />;
     default:
       return <Info className={cn(cls, "text-pitflix-muted")} />;
   }
@@ -60,7 +63,13 @@ function Row({ n, onNavigate }: { n: PitflixNotification; onNavigate: () => void
   // section the kind implies so the backlog already sitting in the panel isn't dead clicks.
   const target =
     n.href ??
-    (n.kind === "unmatched" ? "/unmatched" : n.kind === "trailer" ? "/trailers" : undefined);
+    (n.kind === "unmatched"
+      ? "/unmatched"
+      : n.kind === "trailer"
+        ? "/trailers"
+        : n.kind === "tickets"
+          ? "/cinemas"
+          : undefined);
   return (
     <li
       className={cn(

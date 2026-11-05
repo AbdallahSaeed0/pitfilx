@@ -2,7 +2,9 @@ import { isTauri } from "@tauri-apps/api/core";
 import { Eye, EyeOff, RefreshCw } from "lucide-react";
 import { AppUpdateSection } from "../../components/updater/AppUpdateSection";
 import { setDesktopAutostart, isWindowsHost } from "../../utils/autostart";
+import { useAppPrefsStore } from "../../store/appPrefsStore";
 import { SettingsMobileSyncSection } from "./SettingsMobileSyncSection";
+import { SettingsOfflineLibrarySection } from "./SettingsOfflineLibrarySection";
 import type { SettingsPageModel } from "./useSettingsPageModel";
 
 type Props = { model: SettingsPageModel };
@@ -18,12 +20,16 @@ export function SettingsAppTab({ model }: Props) {
     setOfflineMode,
     liveTvEnabled,
     setLiveTvEnabled,
+    cinemasEnabled,
+    setCinemasEnabled,
     defaultSpoilerProtection,
     setDefaultSpoilerProtection,
     browseAdBlockEnabled,
     setBrowseAdBlockEnabled,
     autostartMessage,
   } = model;
+  const liquidGlass = useAppPrefsStore((s) => s.liquidGlass);
+  const setLiquidGlass = useAppPrefsStore((s) => s.setLiquidGlass);
 
   return (
     <>
@@ -93,7 +99,7 @@ export function SettingsAppTab({ model }: Props) {
               <div className="flex-1">
                 <p className="text-xs font-medium text-white">Offline mode</p>
                 <p className="mt-0.5 text-[10px] text-pitflix-subtle">
-                  Disables all internet features — online streaming, trailers, and TMDB lookups. Local library still works.
+                  Stops all internet use — streaming, trailers and online lookups. Library pages load from saved data instead (see Offline library below).
                 </p>
               </div>
               <button
@@ -132,6 +138,56 @@ export function SettingsAppTab({ model }: Props) {
                 <span
                   className={`pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out ${
                     liveTvEnabled ? "translate-x-5" : "translate-x-0"
+                  }`}
+                />
+              </button>
+            </div>
+
+            <div className="mt-4 border-t border-white/5 pt-4 flex items-center justify-between gap-3">
+              <div className="flex-1">
+                <p className="text-xs font-medium text-white">Cinemas Schedule</p>
+                <p className="mt-0.5 text-[10px] text-pitflix-subtle">
+                  VOX and Premiere showtimes in Egypt, with ticket-on-sale alerts. Shows the nav item and
+                  Home row, and checks both chains every 30 minutes in the background while it's on.
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setCinemasEnabled(!cinemasEnabled)}
+                className={`relative inline-flex h-6 w-11 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none focus:ring-2 focus:ring-pitflix-primary focus:ring-offset-2 focus:ring-offset-pitflix-bg ${
+                  cinemasEnabled ? "bg-pitflix-primary" : "bg-pitflix-card"
+                }`}
+                role="switch"
+                aria-checked={cinemasEnabled}
+              >
+                <span
+                  className={`pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out ${
+                    cinemasEnabled ? "translate-x-5" : "translate-x-0"
+                  }`}
+                />
+              </button>
+            </div>
+
+            <div className="mt-4 border-t border-white/5 pt-4 flex items-center justify-between gap-3">
+              <div className="flex-1">
+                <p className="text-xs font-medium text-white">Liquid glass</p>
+                <p className="mt-0.5 text-[10px] text-pitflix-subtle">
+                  Glass that bends what's behind it on the floating dock, player volume/speed/skip
+                  overlays, player menu, back-to-player chip and library toast. Off uses the plain frosted blur.
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setLiquidGlass(!liquidGlass)}
+                className={`relative inline-flex h-6 w-11 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none focus:ring-2 focus:ring-pitflix-primary focus:ring-offset-2 focus:ring-offset-pitflix-bg ${
+                  liquidGlass ? "bg-pitflix-primary" : "bg-pitflix-card"
+                }`}
+                role="switch"
+                aria-checked={liquidGlass}
+              >
+                <span
+                  className={`pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out ${
+                    liquidGlass ? "translate-x-5" : "translate-x-0"
                   }`}
                 />
               </button>
@@ -192,6 +248,10 @@ export function SettingsAppTab({ model }: Props) {
 
           <div id="settings-updates">
             <AppUpdateSection />
+          </div>
+
+          <div id="settings-offline-library" className="mt-4">
+            <SettingsOfflineLibrarySection />
           </div>
 
           <div id="settings-mobile-sync" className="mt-4">

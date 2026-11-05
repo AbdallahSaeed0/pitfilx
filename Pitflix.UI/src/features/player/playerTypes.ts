@@ -34,15 +34,28 @@ export type Player2Event =
         volume: number;
         sub_visible: boolean;
         sid: number;
+        /** mpv `secondary-sid` (dual subtitles); -1 when off. Absent on older backends. */
+        secondary_sid?: number;
         aid: number;
         /** Present when backend sends it (external IPC health). */
         ipc_healthy?: boolean;
         sub_delay?: number;
+        /** Embedded mpv: bumped whenever a seek finishes (time_pos = landed position). */
+        seek_seq?: number;
       };
     }
   | {
       type: "Tracks";
-      payload: { tracks: { id?: number; track_type?: string; lang?: string; title?: string; selected?: boolean }[] };
+      payload: {
+        tracks: {
+          id?: number;
+          track_type?: string;
+          lang?: string;
+          title?: string;
+          selected?: boolean;
+          external_filename?: string | null;
+        }[];
+      };
     }
   | { type: "Error"; payload: { message: string } }
   | { type: "AudioPassthroughStatus"; payload: { active: boolean } };
@@ -53,6 +66,8 @@ export type MpvTrack = {
   lang?: string;
   title?: string;
   selected?: boolean;
+  /** Path of the file an external subtitle track was loaded from. */
+  externalFilename?: string;
 };
 
 export type Player2IpcMirror = {

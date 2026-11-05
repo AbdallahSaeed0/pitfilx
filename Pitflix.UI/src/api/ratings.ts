@@ -169,3 +169,15 @@ export const queueRatingsStaleSweep = (maintenanceKey?: string) =>
       headers: maintenanceKey ? { "X-Pitflix-Ratings-ReEnrich-Key": maintenanceKey } : undefined,
     },
   ).then((r) => r.data);
+
+/** One season's scores (null where a source doesn't rate that season). */
+export type SeasonRatings = {
+  tmdb: number | null;
+  imdb: number | null;
+  rottenTomatoes: number | null;
+  rottenTomatoesAudience: number | null;
+  metacritic: number | null;
+};
+
+export const getSeasonRatings = (tvTmdbId: number, season: number) =>
+  api.get<SeasonRatings>("/ratings/season", { params: { tmdbId: tvTmdbId, season } }).then((r) => r.data);

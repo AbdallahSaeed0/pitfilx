@@ -1,4 +1,5 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { AmbientBackdrop } from "../components/detail/CinematicBackdrop";
 import { Check, Download, Eye, EyeOff, LayoutGrid, List, Play } from "lucide-react";
 import { useState } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
@@ -9,6 +10,7 @@ import { useMediaContextMenu } from "../features/library/useMediaContextMenu";
 import { markStreamingWatched } from "../hooks/markStreamingWatched";
 import { WsmDownloadModal } from "../components/WsmDownloadModal";
 import { EpisodeRuntimeBadge } from "../components/episodes/EpisodeRuntimeBadge";
+import { ImdbRatingBadge } from "../components/ui/ImdbRatingBadge";
 import {
   EpisodeExternalThumbOverlay,
   EpisodeStatusBadge,
@@ -136,7 +138,8 @@ export function StreamSeasonPage() {
   const seasonPoster = data?.seasonPosterUrl ?? seriesPosterUrl;
 
   return (
-    <div>
+    <div className="isolate">
+      <AmbientBackdrop src={seasonPoster} alwaysOn />
       <button
         type="button"
         onClick={() => navigate(-1)}
@@ -266,7 +269,7 @@ export function StreamSeasonPage() {
 
         {/* Grid view */}
         {!isLoading && viewMode === "grid" && episodes.length > 0 && (
-          <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5">
+          <div className="grid grid-cols-1 gap-5 sm:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-4">
             {episodes.map((ep) => {
               const aired = isEpisodeAired(ep.airDate);
               return (
@@ -354,12 +357,14 @@ export function StreamSeasonPage() {
                   </p>
                   <div className="mt-2 flex flex-wrap gap-1.5">
                     {ep.runtime > 0 ? <EpisodeRuntimeBadge minutes={ep.runtime} /> : null}
-                    {ep.voteAverage > 0 && (
+                    {ep.imdbVoteAverage != null && ep.imdbVoteAverage > 0 ? (
+                      <ImdbRatingBadge value={ep.imdbVoteAverage} size="xs" />
+                    ) : ep.voteAverage > 0 ? (
                       <span className="rounded bg-white/10 px-1.5 py-0.5 text-[10px] text-pitflix-muted">★ {ep.voteAverage.toFixed(1)}</span>
-                    )}
+                    ) : null}
                   </div>
                   {ep.overview && !spoilerProtection && (
-                    <p className="mt-1.5 line-clamp-3 text-[11px] leading-[1rem] text-pitflix-muted/80">{ep.overview}</p>
+                    <p className="mt-1.5 line-clamp-3 text-xs leading-[1.15rem] text-pitflix-muted/80">{ep.overview}</p>
                   )}
                   {!aired ? (
                     <div className="mt-auto pt-2">
@@ -375,7 +380,7 @@ export function StreamSeasonPage() {
 
         {/* List view */}
         {!isLoading && viewMode === "list" && episodes.length > 0 && (
-          <div className="space-y-2">
+          <div className="space-y-3">
             {episodes.map((ep) => {
               const aired = isEpisodeAired(ep.airDate);
               return (
@@ -392,7 +397,7 @@ export function StreamSeasonPage() {
                   episodeNumber: ep.episodeNumber,
                 })}
                 className={cn(
-                  "group flex items-center gap-3 rounded-2xl border py-3 pl-3 pr-4 transition-all duration-300 sm:gap-4 sm:pl-4",
+                  "group flex items-center gap-3 rounded-2xl border py-3.5 pl-3 pr-4 transition-all duration-300 sm:gap-5 sm:py-4 sm:pl-4",
                   aired
                     ? "border-transparent bg-pitflix-bg/50 hover:border-pitflix-primary/30 hover:bg-pitflix-card/90"
                     : episodeExternalListClass("upcoming", "rounded-2xl border"),
@@ -402,26 +407,28 @@ export function StreamSeasonPage() {
                   src={ep.stillUrl}
                   alt=""
                   className={cn(
-                    "h-14 w-[88px] shrink-0 overflow-hidden rounded-lg bg-pitflix-card object-cover ring-1",
+                    "h-16 w-[112px] shrink-0 overflow-hidden rounded-lg bg-pitflix-card object-cover ring-1 sm:h-24 sm:w-[170px]",
                     aired ? "ring-white/5" : "ring-violet-500/25 saturate-[0.6]",
                     spoilerProtection && "blur-md",
                   )}
                   fallbackText={`${ep.episodeNumber}`}
                 />
-                <span className="w-10 shrink-0 text-center font-mono text-sm font-medium tabular-nums text-pitflix-muted">
+                <span className="w-10 shrink-0 text-center font-mono text-base font-medium tabular-nums text-pitflix-muted">
                   {String(ep.episodeNumber).padStart(2, "0")}
                 </span>
                 <div className="min-w-0 flex-1 pr-2">
-                  <p className="flex flex-wrap items-center gap-2 truncate text-sm font-medium text-white">
+                  <p className="flex flex-wrap items-center gap-2 truncate text-[15px] font-semibold text-white">
                     <span className="truncate">{spoilerProtection ? `Episode ${ep.episodeNumber}` : ep.title}</span>
                     {!aired ? <EpisodeStatusBadge kind="upcoming" className="shrink-0" /> : null}
                     {ep.runtime > 0 ? <EpisodeRuntimeBadge minutes={ep.runtime} className="shrink-0" /> : null}
-                    {ep.voteAverage > 0 && (
+                    {ep.imdbVoteAverage != null && ep.imdbVoteAverage > 0 ? (
+                      <ImdbRatingBadge value={ep.imdbVoteAverage} size="xs" className="shrink-0" />
+                    ) : ep.voteAverage > 0 ? (
                       <span className="shrink-0 rounded bg-white/10 px-1.5 py-0.5 text-[10px] text-pitflix-muted">★ {ep.voteAverage.toFixed(1)}</span>
-                    )}
+                    ) : null}
                   </p>
                   {ep.overview && !spoilerProtection ? (
-                    <p className="mt-0.5 line-clamp-2 text-[11px] leading-relaxed text-pitflix-muted">{ep.overview}</p>
+                    <p className="mt-1 line-clamp-3 text-[13px] leading-relaxed text-pitflix-muted">{ep.overview}</p>
                   ) : spoilerProtection ? (
                     <p className="mt-0.5 flex items-center gap-1 text-[11px] text-amber-400/70">
                       <EyeOff className="inline h-3 w-3" />

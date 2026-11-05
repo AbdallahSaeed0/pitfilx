@@ -92,6 +92,9 @@ export function loadSaved(): string[] {
 
 export function saveSaved(paths: string[]) {
   localStorage.setItem(STORAGE_KEY, JSON.stringify(paths));
+  // Locations changed — (re)start making their thumbnails in the background. Lazy import keeps this
+  // small util free of the thumbnail cache module.
+  void import("../../utils/videoThumbnailCache").then((m) => m.prewarmDeviceThumbnails(paths));
 }
 
 export function isPlayableMedia(e: DeviceFsEntry): boolean {
@@ -372,5 +375,79 @@ export function canMoveEntriesTo(entries: string[], destinationDir: string): boo
 
 // Gap between grid tiles (matches gap-3 = 12px in Tailwind)
 export const GRID_GAP = 12;
-// Approximate height of the text label below each tile
-export const TILE_LABEL_HEIGHT = 36;
+// Approximate height of the name strip below each tile (one line now that the "Video"/"Image"
+// kind line is gone; rows are measured anyway, this only seeds the virtualizer before first paint)
+export const TILE_LABEL_HEIGHT = 22;
+
+// ── Keeping History / My Favorite / "last played" pointed at moved files ─────────────────────
+// All three store absolute paths, so a move or rename used to leave them pointing at a file that
+// "no longer exists". Moves made through My Device call remapDeviceSavedPaths directly; moves made
+// outside the app (Explorer, another tool) are re-found by file name when History / My Favorite
+// opens (see devicePathRelink.ts), which then calls this same function.
+
+/** `from` (a file, or a folder whose contents moved with it) now lives at `to`. */
+export type DevicePathMove = { from: string; to: string };
+
+function remapOnePath(path: string, moves: DevicePathMove[]): string {
+  for (const m of moves) {
+    if (!isPathInside(path, m.from)) continue;
+    const rest = normalizePathKey(path).slice(normalizePathKey(m.from).length);
+    return normalizePathKey(m.to) + rest;
+  }
+  return path;
+}
+
+/** Rewrites every History, My Favorite (both modes) and per-folder "last played" path affected by
+ *  the given moves. Entries that collapse onto the same file keep only their most recent copy. */
+export function remapDeviceSavedPaths(moves: DevicePathMove[]): void {
+  const real = moves.filter((m) => m.from.trim() && m.to.trim() && normalizePathKey(m.from) !== normalizePathKey(m.to));
+  if (real.length === 0) return;
+
+  const remapList = <T extends { path: string }>(list: T[]): T[] | null => {
+    let changed = false;
+    const seen = new Set<string>();
+    const out: T[] = [];
+    for (const e of list) {
+      const path = remapOnePath(e.path, real);
+      if (path !== e.path) changed = true;
+      const key = normalizePathKey(path).toLowerCase();
+      if (seen.has(key)) { changed = true; continue; }
+      seen.add(key);
+      out.push(path === e.path ? e : { ...e, path });
+    }
+    return changed ? out : null;
+  };
+
+  for (const privateMode of [false, true]) {
+    const history = remapList(loadHistory(privateMode));
+    if (history) saveHistory(privateMode, history);
+    const favorites = remapList(loadFavorites(privateMode));
+    if (favorites) saveFavorites(privateMode, favorites);
+  }
+
+  try {
+    const raw = localStorage.getItem(LAST_PLAYED_KEY);
+    if (raw) {
+      const map = JSON.parse(raw) as LastPlayedMap;
+      const next: LastPlayedMap = {};
+      let changed = false;
+      for (const [folder, value] of Object.entries(map)) {
+        const files = toList(value).map((f) => remapOnePath(f, real));
+        const newFolder = normalizePathKey(remapOnePath(folder, real));
+        if (newFolder !== folder || files.some((f, i) => f !== toList(value)[i])) changed = true;
+        // A moved file leaves its old folder's list: it's only "last played" where it now lives.
+        for (const f of files) {
+          const key = normalizePathKey(parentDirectory(f));
+          const target = key === newFolder ? newFolder : key;
+          if (target !== newFolder) changed = true;
+          next[target] = Array.from(new Set([...toList(next[target]), f])).slice(0, LAST_PLAYED_MAX);
+        }
+      }
+      if (changed) localStorage.setItem(LAST_PLAYED_KEY, JSON.stringify(next));
+    }
+  } catch { /* ignore */ }
+
+  if (typeof window !== "undefined") {
+    window.dispatchEvent(new CustomEvent("pitflix-device-saved-paths-remapped"));
+  }
+}

@@ -6,6 +6,7 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 import '../models/rate_prompt_item.dart';
 import '../models/supabase_rows.dart';
 import '../models/title_item.dart';
+import '../utils/disk_ttl_store.dart';
 import 'app_settings.dart';
 import 'auth_service.dart';
 import 'tmdb_service.dart';
@@ -94,6 +95,8 @@ abstract class UserLibraryService {
     _cachedLists = null;
     _cachedListsVersion = -1;
     _readCache.clear();
+    _tableSnapshots.clear();
+    _seriesBase = null;
   }
 
   // ── lists ──────────────────────────────────────────────────────────────
@@ -523,28 +526,156 @@ abstract class UserLibraryService {
     }
   }
 
-  static Future<List<Map<String, dynamic>>> fetchCurrentlyWatching() async {
-    final results = await Future.wait<dynamic>([
-      _fetchAllRows(
-        (start, end) => _client
-            .from('watch_records')
-            .select()
-            .eq('user_id', _myId)
-            .eq('media_type', 'series')
-            .range(start, end),
-      ),
-      _fetchAllRows(
-        (start, end) => _client
+  /// Last full download of a whole per-account table, plus the fingerprint
+  /// (row count + newest timestamp) it was taken at — see
+  /// [_fetchAllRowsIfChanged].
+  static final Map<
+    String,
+    ({String userId, int count, DateTime? newest, List<Map<String, dynamic>> rows})
+  >
+  _tableSnapshots = {};
+
+  static DateTime? _newestAt(
+    Iterable<Map<String, dynamic>> rows,
+    String timeColumn,
+  ) {
+    DateTime? newest;
+    for (final r in rows) {
+      final at = DateTime.tryParse(r[timeColumn] as String? ?? '');
+      if (at != null && (newest == null || at.isAfter(newest))) newest = at;
+    }
+    return newest;
+  }
+
+  /// Every row of [table] for this account (paged via [fetchPage], which
+  /// must filter on user_id only and select [timeColumn]) — but only
+  /// re-downloaded when it has actually changed. Home and Stats reload on
+  /// every library bump, including RootShell's 5-minute auto-sync, and used
+  /// to re-page these tables (several sequential 1000-row pages each for a
+  /// real watch history) every time even when nothing was different. Now
+  /// two tiny queries — row count and newest [timeColumn] — decide whether
+  /// the previous download is still current: adding a row (or touching one,
+  /// for watch_records' updated_at) moves the newest timestamp, and
+  /// removing one changes the count.
+  static Future<List<Map<String, dynamic>>> _fetchAllRowsIfChanged({
+    required String table,
+    required String timeColumn,
+    required Future<List<Map<String, dynamic>>> Function(int start, int end)
+    fetchPage,
+  }) async {
+    final snapshot = _tableSnapshots[table];
+    if (snapshot != null && snapshot.userId == _myId) {
+      try {
+        final probe = await Future.wait<dynamic>([
+          _client.from(table).count().eq('user_id', _myId),
+          _client
+              .from(table)
+              .select(timeColumn)
+              .eq('user_id', _myId)
+              .order(timeColumn, ascending: false)
+              .limit(1),
+        ]);
+        final count = probe[0] as int;
+        final newest = _newestAt(
+          (probe[1] as List).cast<Map<String, dynamic>>(),
+          timeColumn,
+        );
+        if (count == snapshot.count && newest == snapshot.newest) {
+          return snapshot.rows;
+        }
+      } catch (_) {
+        // Fall through to a full fetch.
+      }
+    }
+
+    final rows = await _fetchAllRows(fetchPage);
+    _tableSnapshots[table] = (
+      userId: _myId,
+      count: rows.length,
+      newest: _newestAt(rows, timeColumn),
+      rows: rows,
+    );
+    return rows;
+  }
+
+  static Future<List<Map<String, dynamic>>> _fetchEpisodeProgressRows() =>
+      _fetchAllRowsIfChanged(
+        table: 'episode_watch_status',
+        timeColumn: 'watched_at',
+        fetchPage: (start, end) => _client
             .from('episode_watch_status')
             .select('show_tmdb_id, season_number, episode_number, watched_at')
             .eq('user_id', _myId)
             .range(start, end),
-      ),
-      _droppedShowIds(),
+      );
+
+  /// The account's series watch_records plus its dropped show ids — both
+  /// Currently Watching and Next Episodes need exactly this, and Home starts
+  /// them together, so they used to fetch it twice side by side (4 queries
+  /// instead of 2). Shared while in flight and for a few seconds after;
+  /// any library write bumps [libraryVersion], which forces a fresh fetch.
+  static ({
+    String userId,
+    int version,
+    DateTime at,
+    Future<_SeriesBase> future,
+  })?
+  _seriesBase;
+
+  static Future<_SeriesBase> _seriesRecordsAndDropped() {
+    final cached = _seriesBase;
+    if (cached != null &&
+        cached.userId == _myId &&
+        cached.version == libraryVersion.value &&
+        DateTime.now().difference(cached.at) < const Duration(seconds: 10)) {
+      return cached.future;
+    }
+    final future = () async {
+      final results = await Future.wait<dynamic>([
+        _fetchAllRows(
+          (start, end) => _client
+              .from('watch_records')
+              .select()
+              .eq('user_id', _myId)
+              .eq('media_type', 'series')
+              .range(start, end),
+        ),
+        _droppedShowIds(),
+        fetchSyncStatus(),
+      ]);
+      final records = results[0] as List<Map<String, dynamic>>;
+      return (
+        records: records,
+        // Mobile's own Drop action (the "Dropped" list) plus shows dropped
+        // on desktop, which its push marks as status 'dropped'.
+        droppedIds: {
+          ...results[1] as Set<int>,
+          for (final r in records)
+            if (r['status'] == 'dropped') (r['tmdb_id'] as num).toInt(),
+        },
+        desktopLinked: results[2] != null,
+      );
+    }();
+    _seriesBase = (
+      userId: _myId,
+      version: libraryVersion.value,
+      at: DateTime.now(),
+      future: future,
+    );
+    // A failed fetch must not be handed to the next caller.
+    future.then((_) {}, onError: (_) {
+      if (identical(_seriesBase?.future, future)) _seriesBase = null;
+    });
+    return future;
+  }
+
+  static Future<List<Map<String, dynamic>>> fetchCurrentlyWatching() async {
+    final results = await Future.wait<dynamic>([
+      _seriesRecordsAndDropped(),
+      _fetchEpisodeProgressRows(),
     ]);
-    final records = results[0] as List<Map<String, dynamic>>;
+    final (:records, :droppedIds, :desktopLinked) = results[0] as _SeriesBase;
     final progressRows = results[1] as List<Map<String, dynamic>>;
-    final droppedIds = results[2] as Set<int>;
 
     final byId = <int, Map<String, dynamic>>{
       for (final r in records) (r['tmdb_id'] as num).toInt(): r,
@@ -570,8 +701,17 @@ abstract class UserLibraryService {
     // Only shows with at least one watched episode are candidates — a show
     // that's never actually been started has nothing to be "still behind
     // on" regardless of what watch_records.status says.
+    //
+    // When a desktop is linked, its push is the source of truth for all of
+    // this data (it wipes and re-mirrors it every cycle), so the list follows
+    // desktop's Up Next rules instead (LibraryRepository
+    // .GetCurrentlyWatchingSeriesAsync): only shows in the desktop library —
+    // which are exactly the series it pushes a watch_records row for; shows
+    // watched outside the library only push episode rows — and no
+    // earlier-season gap search (see seasonsToCheck below).
     final candidateIds = watchedByShow.keys
         .where((id) => !droppedIds.contains(id))
+        .where((id) => !desktopLinked || byId.containsKey(id))
         .toList();
 
     final todayStr = DateTime.now().toIso8601String().substring(0, 10);
@@ -616,8 +756,9 @@ abstract class UserLibraryService {
         final seasonsToCheck = <int>[
           maxSeason,
           maxSeason + 1,
-          for (final s in watchedSeasons)
-            if (s != maxSeason) s,
+          if (!desktopLinked)
+            for (final s in watchedSeasons)
+              if (s != maxSeason) s,
         ];
 
         // Checked in parallel (rather than sequentially awaiting each one) —
@@ -650,9 +791,12 @@ abstract class UserLibraryService {
           title = summary?.title;
           posterPath ??= summary?.posterPath;
         }
+        // Most recently watched episode first, like desktop's Up Next (last
+        // played). watch_records.updated_at is only a fallback: desktop's
+        // push stamps every row with the same sync time.
         final updatedAt =
-            DateTime.tryParse(record?['updated_at'] as String? ?? '') ??
-            lastProgressAt[id];
+            lastProgressAt[id] ??
+            DateTime.tryParse(record?['updated_at'] as String? ?? '');
         rows.add({
           'tmdb_id': id,
           'title': title ?? 'Untitled',
@@ -690,16 +834,11 @@ abstract class UserLibraryService {
   /// [_droppedShowIds] — `watch_records.status = 'dropped'` is never
   /// actually written, so filtering on it here was a no-op).
   static Future<List<TitleItem>> fetchNextEpisodes({int limit = 20}) async {
-    final results = await Future.wait<dynamic>([
-      _client
-          .from('watch_records')
-          .select()
-          .eq('user_id', _myId)
-          .eq('media_type', 'series'),
-      _droppedShowIds(),
-    ]);
-    final allRecords = results[0] as List<Map<String, dynamic>>;
-    final droppedIds = results[1] as Set<int>;
+    // Shared with fetchCurrentlyWatching (Home starts both at once), and
+    // paged — this used to be a single unpaged select, which Supabase's
+    // 1000-row cap would silently truncate for a very large library.
+    final (records: allRecords, :droppedIds, desktopLinked: _) =
+        await _seriesRecordsAndDropped();
     final records = allRecords
         .where((r) => !droppedIds.contains((r['tmdb_id'] as num).toInt()))
         .toList();
@@ -717,27 +856,87 @@ abstract class UserLibraryService {
         final label = next?.season != null && next?.episode != null
             ? 'S${next!.season} E${next.episode} · ${_shortDate(airDate)}'
             : _shortDate(airDate);
-        return TitleItem(
-          id: 'next-episode-$tmdbId',
-          name: r['title'] as String? ?? 'Untitled',
-          kind: TitleKind.show,
-          year: 0,
-          network: 'TV',
-          rating: 0,
-          genres: const [],
-          overview: '',
-          gradientSeed: tmdbId % 6,
-          posterPath: r['poster_path'] as String?,
+        return _nextEpisodeItem(
           tmdbId: tmdbId,
-          isSummaryOnly: true,
-          episodeSub: label,
-          releaseDate: airDate,
+          name: r['title'] as String? ?? 'Untitled',
+          posterPath: r['poster_path'] as String?,
+          label: label,
+          airDate: airDate,
         );
       }),
     );
     final items = rows.whereType<TitleItem>().toList()
       ..sort((a, b) => a.releaseDate!.compareTo(b.releaseDate!));
     return items.take(limit).toList();
+  }
+
+  static TitleItem _nextEpisodeItem({
+    required int tmdbId,
+    required String name,
+    required String? posterPath,
+    required String label,
+    required DateTime airDate,
+  }) => TitleItem(
+    id: 'next-episode-$tmdbId',
+    name: name,
+    kind: TitleKind.show,
+    year: 0,
+    network: 'TV',
+    rating: 0,
+    genres: const [],
+    overview: '',
+    gradientSeed: tmdbId % 6,
+    posterPath: posterPath,
+    tmdbId: tmdbId,
+    isSummaryOnly: true,
+    episodeSub: label,
+    releaseDate: airDate,
+  );
+
+  /// Home's last-shown rows (Next Episodes), so a cold start paints them from
+  /// disk instead of a skeleton while the live fetch runs — same idea as
+  /// [cachedCurrentlyWatching], but in a file rather than SharedPreferences.
+  static final _homeSnapshots = DiskTtlStore(
+    'home_library_snapshots_v1.json',
+    maxEntries: 8,
+  );
+
+  static Future<List<TitleItem>?> cachedNextEpisodes() async {
+    try {
+      final cached = await _homeSnapshots.read('next_episodes_$_myId');
+      final list = cached?.value;
+      if (list is! List) return null;
+      final now = DateTime.now();
+      final today = DateTime(now.year, now.month, now.day);
+      return [
+        for (final raw in list.cast<Map<String, dynamic>>())
+          if (DateTime.tryParse(raw['airDate'] as String? ?? '')
+              case final airDate? when !airDate.isBefore(today))
+            _nextEpisodeItem(
+              tmdbId: (raw['tmdbId'] as num).toInt(),
+              name: raw['name'] as String? ?? 'Untitled',
+              posterPath: raw['posterPath'] as String?,
+              label: raw['label'] as String? ?? '',
+              airDate: airDate,
+            ),
+      ];
+    } catch (_) {
+      return null;
+    }
+  }
+
+  static void saveNextEpisodesSnapshot(List<TitleItem> items) {
+    _homeSnapshots.set('next_episodes_$_myId', [
+      for (final t in items)
+        if (t.tmdbId != null && t.releaseDate != null)
+          {
+            'tmdbId': t.tmdbId,
+            'name': t.name,
+            'posterPath': t.posterPath,
+            'label': t.episodeSub,
+            'airDate': t.releaseDate!.toIso8601String(),
+          },
+    ]);
   }
 
   static String _shortDate(DateTime d) {
@@ -791,28 +990,23 @@ abstract class UserLibraryService {
             .eq('user_id', _myId)
             .range(start, end),
       ),
-      _fetchAllRows(
-        (start, end) => _client
-            .from('watch_records')
-            .select('id')
-            .eq('user_id', _myId)
-            .eq('media_type', 'movie')
-            .eq('status', 'completed')
-            .range(start, end),
-      ),
-      _fetchAllRows(
-        (start, end) => _client
-            .from('episode_watch_status')
-            .select('id')
-            .eq('user_id', _myId)
-            .range(start, end),
-      ),
+      // Server-side counts — these used to page down every matching row's id
+      // just to take `.length`, which for episode_watch_status meant pulling
+      // the account's whole episode history (several sequential 1000-row
+      // pages) at app start, in parallel with Home doing the same.
+      _client
+          .from('watch_records')
+          .count()
+          .eq('user_id', _myId)
+          .eq('media_type', 'movie')
+          .eq('status', 'completed'),
+      _client.from('episode_watch_status').count().eq('user_id', _myId),
     ]);
     final movieRows = results[0] as List<Map<String, dynamic>>;
     final seriesRows = results[1] as List<Map<String, dynamic>>;
     final logRows = results[2] as List<Map<String, dynamic>>;
-    final completedMovies = results[3] as List<Map<String, dynamic>>;
-    final watchedEpisodes = results[4] as List<Map<String, dynamic>>;
+    final completedMovieCount = results[3] as int;
+    final watchedEpisodeCount = results[4] as int;
 
     final totalMinutes = logRows.fold<int>(
       0,
@@ -830,8 +1024,8 @@ abstract class UserLibraryService {
       movies: movieTitles,
       series: seriesTitles,
       totalWatchTimeMinutes: totalMinutes,
-      totalEpisodesWatched: watchedEpisodes.length,
-      totalMoviesWatched: completedMovies.length,
+      totalEpisodesWatched: watchedEpisodeCount,
+      totalMoviesWatched: completedMovieCount,
     );
   }
 
@@ -1253,17 +1447,27 @@ abstract class UserLibraryService {
     })
   >
   fetchStatsSource() async {
+    // Both full-history tables go through _fetchAllRowsIfChanged, so Stats'
+    // reload on every library bump (incl. the 5-minute auto-sync) costs a
+    // couple of tiny probe queries instead of re-paging everything when
+    // nothing changed. Every watch_records write (this app's and the
+    // desktop sync's) sets updated_at, and watch_log rows carry logged_at.
     final results = await Future.wait([
-      _fetchAllRows(
-        (start, end) =>
+      _fetchAllRowsIfChanged(
+        table: 'watch_records',
+        timeColumn: 'updated_at',
+        fetchPage: (start, end) =>
             _client.from('watch_records').select().eq('user_id', _myId).range(start, end),
       ),
       // Was `.order(...).limit(500)` — fine for the "Last 7 Days" chart alone, but the all-time
       // "Time Watched" hero value and week/month totals sum every row here, so capping at the
       // most recent 500 silently undercounted anyone with more log entries than that (which is
       // now the common case since the export fix above started pushing full watch history).
-      _fetchAllRows(
-        (start, end) => _client.from('watch_log').select().eq('user_id', _myId).range(start, end),
+      _fetchAllRowsIfChanged(
+        table: 'watch_log',
+        timeColumn: 'logged_at',
+        fetchPage: (start, end) =>
+            _client.from('watch_log').select().eq('user_id', _myId).range(start, end),
       ),
       _fetchAllRows(
         (start, end) => _client
@@ -1353,3 +1557,9 @@ abstract class UserLibraryService {
     libraryVersion.value++;
   }
 }
+
+typedef _SeriesBase = ({
+  List<Map<String, dynamic>> records,
+  Set<int> droppedIds,
+  bool desktopLinked,
+});

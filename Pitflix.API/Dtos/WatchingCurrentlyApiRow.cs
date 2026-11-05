@@ -19,6 +19,9 @@ public sealed class WatchingCurrentlyApiRow
     public DateTime LastPlayedAtUtc { get; init; }
     /// <summary>False when the next episode has aired on TMDB but isn't downloaded yet.</summary>
     public bool NextEpisodeDownloaded { get; init; } = true;
+    public string? BackdropUrl { get; init; }
+    public string? NextEpisodeTitle { get; init; }
+    public string? NextEpisodeStillUrl { get; init; }
 
     public static WatchingCurrentlyApiRow From(CurrentlyWatchingRow r, string? posterUrl) => new()
     {
@@ -26,6 +29,9 @@ public sealed class WatchingCurrentlyApiRow
         ShowTitle = r.ShowTitle,
         ShowTmdbId = r.ShowTmdbId,
         PosterUrl = posterUrl,
+        BackdropUrl = ImageUrls.ToImageUrl(r.BackdropPath),
+        NextEpisodeTitle = string.IsNullOrWhiteSpace(r.NextEpisodeTitle) ? null : r.NextEpisodeTitle.Trim(),
+        NextEpisodeStillUrl = ImageUrls.ToImageUrl(r.NextEpisodeStillPath),
         LastWatchedLabel = $"S{r.LastWatchedSeason:D2}E{r.LastWatchedEpisode:D2}",
         NextLabel = $"S{r.NextSeason:D2}E{r.NextEpisode:D2}",
         NextSeason = r.NextSeason,

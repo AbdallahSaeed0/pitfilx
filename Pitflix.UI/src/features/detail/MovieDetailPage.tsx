@@ -1,4 +1,5 @@
 import { isTauri } from "@tauri-apps/api/core";
+import { AmbientBackdrop, HeroBackdrop } from "../../components/detail/CinematicBackdrop";
 import { ArrowLeft, ArrowRight, Check, FolderOpen, ImageIcon, Play, RefreshCw, RotateCcw, Star, Subtitles } from "lucide-react";
 import { getRatingsAggregate, queueRatingsStaleSweep } from "../../api/ratings";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
@@ -24,6 +25,10 @@ import { toPosterSrc } from "../../utils/posterSrc";
 import { RatingsPanel } from "../../components/RatingsPanel";
 import { MediaContextMenu } from "../library/MediaContextMenu";
 import { useMediaContextMenu } from "../library/useMediaContextMenu";
+import { useAppPrefsStore } from "../../store/appPrefsStore";
+import { CinematicDetailLayout } from "./layouts/CinematicDetailLayout";
+import { DossierDetailLayout } from "./layouts/DossierDetailLayout";
+import type { DetailViewModel } from "./layouts/types";
 import {
   CastCrewSection,
   ContentRatingBadge,
@@ -49,6 +54,7 @@ export function MovieDetailPage() {
   const [showRewatchPopover, setShowRewatchPopover] = useState(false);
   const watchAgainButtonRef = useRef<HTMLButtonElement>(null);
   const mid = Number(id);
+  const detailLayout = useAppPrefsStore((s) => s.detailLayout);
   const [ratingRefreshing, setRatingRefreshing] = useState(false);
   const { menu, closeMenu, handleContextMenu, runAction } = useMediaContextMenu();
   // Declared before any early return below (rules of hooks) — the callback
@@ -77,12 +83,15 @@ export function MovieDetailPage() {
     queryFn: () => getMovie(mid),
     enabled: Number.isFinite(mid) && mid > 0,
     staleTime: 30 * 60_000,
+    // The progress bar changes whenever you play the movie (either player) — cached data still paints
+    // instantly, this re-checks the resume position each time the page opens.
+    refetchOnMount: "always",
     gcTime: 60 * 60_000,
   });
   const videosQ = useQuery({
     queryKey: ["movie-videos", mid],
     queryFn: () => getMovieVideos(mid),
-    enabled: Number.isFinite(mid) && mid > 0 && !!data,
+    enabled: Number.isFinite(mid) && mid > 0,
     staleTime: 60 * 60_000,
   });
   const movieTmdbId = (data?.movie as { tmdbId?: number } | undefined)?.tmdbId;
@@ -131,16 +140,173 @@ export function MovieDetailPage() {
   const tvdbClearLogoUrl = (data.tvdbClearLogoUrl ?? null) as string | null;
   const extras = (videosQ.data?.videos ?? []) as MediaVideoItem[];
   const backdrop = toPosterSrc(movie.selectedBackdropPath || movie.backdropLocalPath || undefined);
+  // Partly watched (from watch history) — drives the progress bar and the "Continue" label.
+  const rawProgress = (data as { progress?: { resumeSeconds: number; durationSeconds: number; progressPercent: number | null } | null })
+    .progress;
+  const watchProgress =
+    rawProgress?.progressPercent && movie.watchStatus !== "Completed"
+      ? {
+          progressPercent: rawProgress.progressPercent,
+          leftLabel: (() => {
+            const left = Math.round((rawProgress.durationSeconds - rawProgress.resumeSeconds) / 60);
+            if (rawProgress.durationSeconds <= 0 || left <= 0) return null;
+            return left >= 60 ? `${Math.floor(left / 60)}h ${left % 60}m` : `${left}m`;
+          })(),
+        }
+      : null;
   const poster = toPosterSrc(
     movie.selectedPosterPath || movie.posterLocalPath || movie.posterRemoteUrl || undefined,
   );
 
+  if (detailLayout !== "classic") {
+    const moviePath = movie.mediaFilePath || movie.filePath || null;
+    const watched = movie.watchStatus === "Completed";
+    const refreshRatings = () => {
+      setRatingRefreshing(true);
+      qc.removeQueries({ predicate: (q) => q.queryKey[0] === "mdblist-ratings" && q.queryKey[1] === movie.tmdbId });
+      void queueRatingsStaleSweep().catch(() => {});
+      void getRatingsAggregate(movie.tmdbId, "movie")
+        .then((fresh) => { qc.setQueryData(["ratings-display", movie.tmdbId, "movie"], fresh); })
+        .catch(() => { void qc.refetchQueries({ queryKey: ["ratings-display", movie.tmdbId, "movie"] }); })
+        .finally(() => setRatingRefreshing(false));
+    };
+    const vm: DetailViewModel = {
+      kind: "movie",
+      libraryId: movie.id,
+      tmdbId: movie.tmdbId,
+      title: movie.title,
+      year: movie.year,
+      overview: movie.overview,
+      genres: (movie.genres ?? movie.genresCsv ?? "").split(",").map((g) => g.trim()).filter(Boolean),
+      contentRating,
+      runtimeMinutes: movie.runtime ?? null,
+      backdrop,
+      poster,
+      clearLogoUrl: tvdbClearLogoUrl,
+      watchStatus: movie.watchStatus,
+      imdbId,
+      primary: moviePath
+        ? {
+            label: watched ? "Watch again" : watchProgress ? "Resume" : "Play",
+            sub: watched
+              ? (movie.rewatchCount ?? 0) > 0
+                ? `Hold to adjust rewatch count (${movie.rewatchCount})`
+                : "Hold to adjust rewatch count"
+              : watchProgress
+                ? `${watchProgress.progressPercent}% watched${watchProgress.leftLabel ? ` \u00b7 ${watchProgress.leftLabel} left` : ""}`
+                : null,
+            progressPercent: watchProgress?.progressPercent ?? null,
+            again: watched,
+            title: watched ? "Click to watch again \u2014 hold to view/adjust rewatch count" : undefined,
+            buttonRef: watchAgainButtonRef,
+            buttonProps: watchAgainLongPress,
+            extra: watched ? (
+              <RewatchPopover
+                open={showRewatchPopover}
+                onClose={() => setShowRewatchPopover(false)}
+                anchorRef={watchAgainButtonRef}
+                count={movie.rewatchCount ?? 0}
+                onChange={(next) =>
+                  void setMovieRewatchCount(movie.id, next).then(() => qc.invalidateQueries({ queryKey: ["movie", mid] }))
+                }
+              />
+            ) : null,
+          }
+        : null,
+      toolbar: {
+        kind: "movie",
+        libraryId: movie.id,
+        tmdbId: movie.tmdbId,
+        pickHint: movie.title,
+        filePath: moviePath || undefined,
+        onDeleted: () => navigate(-1),
+        onMovieRematched: (newLibraryId) => {
+          void qc.invalidateQueries({ queryKey: ["movie", mid] });
+          void qc.invalidateQueries({ queryKey: ["movie", newLibraryId] });
+          if (newLibraryId !== mid) navigate(`/movie/${newLibraryId}`, { replace: true });
+        },
+      },
+      ratingsRefresh: { refreshing: ratingRefreshing, onRefresh: refreshRatings },
+      deviceActions: [
+        ...(isTauri() && moviePath
+          ? [{ key: "folder", label: "Open folder", icon: FolderOpen, onClick: () => openFolder(parentDir(moviePath)) }]
+          : []),
+        ...(moviePath ? [{ key: "subtitles", label: "Subtitles\u2026", icon: Subtitles, onClick: () => setSubtitlesOpen(true) }] : []),
+        { key: "artwork", label: "Change artwork\u2026", icon: ImageIcon, onClick: () => setShowArtworkPicker(true) },
+      ],
+      localPath: moviePath,
+      cast: cast ?? [],
+      crew: (data.crew ?? []) as CrewMember[],
+      similar: tmdbSimilar,
+      companies,
+      collection: collection ?? null,
+      extras,
+      onPosterClick: () => poster && setShowPosterLightbox(true),
+      onContextMenu: handleContextMenu({
+        kind: "movie",
+        libraryId: mid,
+        tmdbId: movie.tmdbId,
+        title: movie.title,
+        watchStatus: movie.watchStatus,
+      }),
+      navigate,
+      movie: {
+        filePath: moviePath,
+        rewatchCount: movie.rewatchCount ?? 0,
+        onSubtitles: () => setSubtitlesOpen(true),
+      },
+    };
+
+    return (
+      <div className="isolate">
+        <AmbientBackdrop src={backdrop} />
+        {ResumePromptModal}
+        {detailLayout === "cinematic" ? (
+          <CinematicDetailLayout key={mid} vm={vm} />
+        ) : (
+          <DossierDetailLayout key={mid} vm={vm} />
+        )}
+        {showArtworkPicker ? (
+          <PosterPickerModal
+            libraryId={movie.id}
+            tmdbId={movie.tmdbId}
+            mediaType="Movie"
+            initialTab="poster"
+            onClose={() => setShowArtworkPicker(false)}
+            onApplied={() => void qc.invalidateQueries({ queryKey: ["movie", mid] })}
+          />
+        ) : null}
+        {showPosterLightbox && poster ? <Lightbox url={poster} onClose={() => setShowPosterLightbox(false)} /> : null}
+        <SubtitleDrawer
+          open={subtitlesOpen}
+          onClose={() => setSubtitlesOpen(false)}
+          title={movie.title}
+          mode="movie"
+          movieId={movie.id}
+          movieTmdbId={movie.tmdbId}
+          videoFilePath={moviePath ?? ""}
+        />
+        {menu ? (
+          <MediaContextMenu
+            target={menu.target}
+            x={menu.x}
+            y={menu.y}
+            showRescan={menu.target.kind !== "streaming"}
+            onAction={(action) => void runAction(action)}
+            onClose={closeMenu}
+          />
+        ) : null}
+      </div>
+    );
+  }
+
   return (
-    <div>
+    <div className="isolate">
+      <AmbientBackdrop src={backdrop} />
       {ResumePromptModal}
       {/* Cinematic hero */}
       <div className="-mx-6 -mt-12">
-        <div className="relative h-[560px] overflow-hidden bg-pitflix-card">
+        <div className="relative h-[560px] overflow-hidden">
           <button
             type="button"
             onClick={() => navigate(-1)}
@@ -149,19 +315,7 @@ export function MovieDetailPage() {
             <ArrowLeft className="h-4 w-4" />
             Back
           </button>
-          <div className="pointer-events-none absolute inset-0">
-            {backdrop ? (
-              <div className="absolute inset-0 [&_img]:h-full [&_img]:w-full [&_img]:object-cover [&_img]:object-top [&_img]:opacity-75">
-                <MediaImage src={backdrop} alt="" className="h-full w-full bg-pitflix-card" fallbackText="" />
-              </div>
-            ) : (
-              <div className="absolute inset-0 bg-pitflix-card" />
-            )}
-            {/* Left fade so text stays readable */}
-            <div className="absolute inset-0 bg-gradient-to-r from-pitflix-bg via-pitflix-bg/55 to-transparent" />
-            {/* Bottom fade merges into the page */}
-            <div className="absolute bottom-0 left-0 right-0 h-2/3 bg-gradient-to-t from-pitflix-bg via-pitflix-bg/60 to-transparent" />
-          </div>
+          <HeroBackdrop src={backdrop} />
           <div
             className="absolute bottom-0 left-0 right-0 z-10 flex items-end gap-9 px-12 pb-9"
             onContextMenu={handleContextMenu({
@@ -237,6 +391,28 @@ export function MovieDetailPage() {
               <p className="mb-6 line-clamp-3 max-w-[540px] text-sm leading-[1.68] text-white/[0.58]">
                 {movie.overview}
               </p>
+              {/* Same bar as Home's Continue Watching banner (ContinueWatchingHero). */}
+              {watchProgress ? (
+                <div className="mb-5 max-w-sm">
+                  <div
+                    className="h-1.5 overflow-hidden rounded-full bg-white/20"
+                    role="progressbar"
+                    aria-valuenow={watchProgress.progressPercent}
+                    aria-valuemin={0}
+                    aria-valuemax={100}
+                    aria-label={`${watchProgress.progressPercent}% watched`}
+                  >
+                    <div
+                      className="h-full rounded-full bg-gradient-to-r from-pitflix-primary to-violet-400 transition-[width] duration-700"
+                      style={{ width: `${watchProgress.progressPercent}%` }}
+                    />
+                  </div>
+                  <p className="mt-1 text-[11px] text-pitflix-muted">
+                    {watchProgress.progressPercent}% watched
+                    {watchProgress.leftLabel ? ` · ${watchProgress.leftLabel} left` : ""}
+                  </p>
+                </div>
+              ) : null}
               <div className="flex flex-wrap items-center gap-2.5">
                 {(movie.mediaFilePath || movie.filePath) ? (
                   <>
@@ -259,7 +435,7 @@ export function MovieDetailPage() {
                       ) : (
                         <>
                           <Play className="h-4 w-4 fill-current" />
-                          Play
+                          {watchProgress ? "Continue watching" : "Play"}
                         </>
                       )}
                     </button>
@@ -341,7 +517,7 @@ export function MovieDetailPage() {
       </div>
 
       {/* Ratings */}
-      <div className="-mx-6 border-t border-white/5 px-12 py-5">
+      <div className="relative -mx-6 px-12 py-5 before:absolute before:inset-x-12 before:top-0 before:h-px before:bg-gradient-to-r before:from-transparent before:via-white/10 before:to-transparent">
         <div className="mb-3 flex items-center justify-between">
           <span className="text-[11px] font-semibold uppercase tracking-[0.12em] text-white/35">Ratings</span>
           <button
@@ -418,7 +594,7 @@ export function MovieDetailPage() {
               >
                 <div className="relative overflow-hidden rounded-xl border-2 border-transparent bg-pitflix-card transition-all group-hover:border-pitflix-primary/50 group-hover:shadow-lg">
                   {s.posterUrl ? (
-                    <img src={s.posterUrl} alt={s.title} className="aspect-[2/3] w-full object-cover" />
+                    <img src={toPosterSrc(s.posterUrl)} alt={s.title} className="aspect-[2/3] w-full object-cover" />
                   ) : (
                     <div className="flex aspect-[2/3] items-center justify-center bg-pitflix-card text-xs text-pitflix-muted px-2 text-center">
                       {s.title}
@@ -485,7 +661,7 @@ export function MovieDetailPage() {
                 className="flex h-14 min-w-[96px] items-center justify-center rounded-lg border border-pitflix-card bg-white/95 px-4 py-2 shadow transition hover:border-pitflix-primary/60 hover:-translate-y-0.5"
               >
                 {c.logoUrl ? (
-                  <img src={c.logoUrl} alt={c.name} className="max-h-9 max-w-[110px] object-contain" />
+                  <img src={toPosterSrc(c.logoUrl)} alt={c.name} className="max-h-9 max-w-[110px] object-contain" />
                 ) : (
                   <span className="text-xs font-semibold text-pitflix-bg">{c.name}</span>
                 )}

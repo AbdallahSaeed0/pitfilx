@@ -152,6 +152,8 @@ export function PlayerEmbeddedSubtitleMenu({
   subTracks,
   externalSubFiles,
   subMenuValue,
+  secondaryMenuValue,
+  onPickSecondary,
   toggleSub,
   subAppearanceOpen,
   setSubAppearanceOpen,
@@ -172,6 +174,8 @@ export function PlayerEmbeddedSubtitleMenu({
   const [menuOpen, setMenuOpen] = useState(false);
   const [placement, setPlacement] = useState<MenuPlacement | null>(null);
   const [trackFilter, setTrackFilter] = useState("");
+  /** Which subtitle the track list picks: the main one (bottom) or the second one (top, dual subs). */
+  const [pickTarget, setPickTarget] = useState<"main" | "second">("main");
 
   const embeddedRows = useMemo(() => {
     const displays = buildEmbeddedTrackDisplays(subTracks);
@@ -262,6 +266,12 @@ export function PlayerEmbeddedSubtitleMenu({
       void send({ type: "SetSid", payload: Number(v.slice(2)) });
     }
   };
+
+  const currentValue = pickTarget === "main" ? subMenuValue : secondaryMenuValue;
+  /** The track already used by the other slot — mpv can't show one track in both. */
+  const otherValue = pickTarget === "main" ? secondaryMenuValue : subMenuValue;
+  const otherPickTitle = pickTarget === "main" ? "Already the second subtitle" : "Already the main subtitle";
+  const choose = (v: string) => (pickTarget === "main" ? pickTrack(v) : onPickSecondary(v));
 
   const menuPanel = menuOpen && placement ? (
     <div
@@ -503,6 +513,29 @@ export function PlayerEmbeddedSubtitleMenu({
             </div>
           ) : (
           <div className="px-1.5 py-1.5">
+          <div className="mx-0.5 mb-1.5 grid grid-cols-2 gap-0.5 rounded-lg bg-white/[0.06] p-0.5">
+            {(["main", "second"] as const).map((t) => (
+              <button
+                key={t}
+                type="button"
+                className={cn(
+                  "flex items-center justify-center gap-1 rounded-md px-2 py-1 text-[10px] font-semibold transition-colors",
+                  pickTarget === t ? "bg-pitflix-primary text-white" : "text-white/55 hover:text-white",
+                )}
+                onClick={() => setPickTarget(t)}
+              >
+                {t === "main" ? "Main subtitle" : "Second subtitle"}
+                {t === "second" && secondaryMenuValue !== "" ? (
+                  <span className="h-1.5 w-1.5 rounded-full bg-emerald-400" aria-label="on" />
+                ) : null}
+              </button>
+            ))}
+          </div>
+          {pickTarget === "second" ? (
+            <p className="mb-1 px-2 text-[9px] leading-snug text-white/40">
+              Shown at the top together with the main subtitle — e.g. English above, Arabic below.
+            </p>
+          ) : null}
           <div className="flex items-center justify-between px-1.5 py-1">
             <p className="text-[9px] font-semibold uppercase tracking-wide text-white/55">Track</p>
             {totalTrackCount > 6 ? (
@@ -531,13 +564,13 @@ export function PlayerEmbeddedSubtitleMenu({
               disabled={sessionBlocksTransport}
               className={cn(
                 "mb-0.5 flex w-full items-center gap-2.5 rounded-lg px-2.5 py-2 text-left text-[12px] text-white transition-colors hover:bg-white/10 disabled:opacity-40",
-                subMenuValue === "" ? "bg-pitflix-primary/15 ring-1 ring-inset ring-pitflix-primary/30" : "",
+                currentValue === "" ? "bg-pitflix-primary/15 ring-1 ring-inset ring-pitflix-primary/30" : "",
               )}
-              onClick={() => pickTrack("")}
+              onClick={() => choose("")}
             >
               <EyeOff className="h-3.5 w-3.5 shrink-0 text-white/50" />
-              <span className="flex-1 font-medium">Off</span>
-              {subMenuValue === "" ? <Check className="h-3.5 w-3.5 shrink-0 text-pitflix-primary" strokeWidth={2.5} /> : null}
+              <span className="flex-1 font-medium">{pickTarget === "main" ? "Off" : "No second subtitle"}</span>
+              {currentValue === "" ? <Check className="h-3.5 w-3.5 shrink-0 text-pitflix-primary" strokeWidth={2.5} /> : null}
             </button>
           ) : null}
 
@@ -547,17 +580,19 @@ export function PlayerEmbeddedSubtitleMenu({
 
           {filteredEmbedded.map(({ track: t, display }) => {
             const val = `e:${t.id ?? ""}`;
-            const active = subMenuValue === val;
+            const active = currentValue === val;
+            const isOtherPick = otherValue !== "" && otherValue === val;
             return (
               <button
                 key={`s-${t.id ?? ""}`}
                 type="button"
-                disabled={sessionBlocksTransport}
+                disabled={sessionBlocksTransport || isOtherPick}
+                title={isOtherPick ? otherPickTitle : undefined}
                 className={cn(
                   "mb-0.5 flex w-full items-center gap-2.5 rounded-lg px-2.5 py-2 text-left text-[12px] text-white transition-colors hover:bg-white/10 disabled:opacity-40",
                   active ? "bg-pitflix-primary/15 ring-1 ring-inset ring-pitflix-primary/30" : "",
                 )}
-                onClick={() => pickTrack(val)}
+                onClick={() => choose(val)}
               >
                 {display.badge ? (
                   <span
@@ -597,18 +632,19 @@ export function PlayerEmbeddedSubtitleMenu({
 
           {filteredExternal.map(({ path: p, display }) => {
             const val = `x:${encodeURIComponent(p)}`;
-            const active = subMenuValue === val;
+            const active = currentValue === val;
+            const isOtherPick = otherValue !== "" && otherValue === val;
             return (
               <button
                 key={`ext-${p}`}
                 type="button"
-                disabled={sessionBlocksTransport}
+                disabled={sessionBlocksTransport || isOtherPick}
                 className={cn(
                   "mb-0.5 flex w-full items-start gap-2.5 rounded-lg px-2.5 py-2 text-left text-[12px] text-white transition-colors hover:bg-white/10 disabled:opacity-40",
                   active ? "bg-pitflix-primary/15 ring-1 ring-inset ring-pitflix-primary/30" : "",
                 )}
-                title={p}
-                onClick={() => pickTrack(val)}
+                title={isOtherPick ? otherPickTitle : p}
+                onClick={() => choose(val)}
               >
                 {display.badge ? (
                   <span

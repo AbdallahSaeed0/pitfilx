@@ -7,9 +7,23 @@ using Pitflix.Core.Scanner;
 
 namespace Pitflix.API.Services;
 
-/// <summary>Periodically re-scans configured library folders so new files are picked up without a manual run.</summary>
+/// <summary>
+/// Re-scans configured library folders so new files are picked up without a manual run: hourly, and
+/// within ~30 s of a new video file appearing (FileSystemWatcher on every library folder). Without the
+/// watcher a freshly downloaded episode stayed "Download episode" for up to an hour.
+/// </summary>
 public sealed class LibraryAutoScanService : BackgroundService
 {
+    /// <summary>A new file must stop growing for this long before it's scanned (download finished).</summary>
+    private static readonly TimeSpan SettleTime = TimeSpan.FromSeconds(30);
+
+    private readonly SemaphoreSlim _wake = new(0, 1);
+    private readonly object _watchLock = new();
+    private readonly List<FileSystemWatcher> _watchers = new();
+    private string _watchedRootsKey = "";
+    /// <summary>New video files seen by the watchers → (last size, when that size was first seen).</summary>
+    private readonly Dictionary<string, (long Size, DateTime StableSinceUtc)> _pending = new(StringComparer.OrdinalIgnoreCase);
+
     private readonly IServiceScopeFactory _scopes;
     private readonly ScanRuntime _scanRuntime;
     private readonly RatingsRefreshQueue _ratingsRefreshQueue;
@@ -37,8 +51,10 @@ public sealed class LibraryAutoScanService : BackgroundService
             return;
         }
 
+        using var settleTimer = new Timer(_ => CheckPendingFiles(), null, TimeSpan.FromSeconds(10), TimeSpan.FromSeconds(10));
         while (!stoppingToken.IsCancellationRequested)
         {
+            await RefreshWatchersAsync(stoppingToken).ConfigureAwait(false);
             if (!_scanRuntime.IsRunning)
             {
                 try
@@ -57,12 +73,119 @@ public sealed class LibraryAutoScanService : BackgroundService
 
             try
             {
-                await Task.Delay(TimeSpan.FromHours(1), stoppingToken).ConfigureAwait(false);
+                // Hourly, or sooner when a new video file has settled in a library folder.
+                await _wake.WaitAsync(TimeSpan.FromHours(1), stoppingToken).ConfigureAwait(false);
             }
             catch (OperationCanceledException)
             {
                 break;
             }
+        }
+
+        lock (_watchLock)
+        {
+            foreach (var w in _watchers) w.Dispose();
+            _watchers.Clear();
+        }
+    }
+
+    /// <summary>(Re)creates one recursive watcher per library folder whenever the folder list changes.</summary>
+    private async Task RefreshWatchersAsync(CancellationToken ct)
+    {
+        List<string> roots;
+        try
+        {
+            await using var scope = _scopes.CreateAsyncScope();
+            var repo = scope.ServiceProvider.GetRequiredService<LibraryRepository>();
+            roots = (await repo.GetAllLibraryPathsAsync(ct).ConfigureAwait(false))
+                .Where(r => !string.IsNullOrWhiteSpace(r))
+                .Select(r => MediaPathNormalizer.PreferredPhysicalPath(r.Trim()))
+                .Where(r => !string.IsNullOrEmpty(r) && Directory.Exists(r))
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToList()!;
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            _logger.LogDebug(ex, "Library watcher: could not read library folders");
+            return;
+        }
+
+        var key = string.Join("|", roots.OrderBy(r => r, StringComparer.OrdinalIgnoreCase));
+        lock (_watchLock)
+        {
+            if (key == _watchedRootsKey) return;
+            foreach (var w in _watchers) w.Dispose();
+            _watchers.Clear();
+            foreach (var root in roots)
+            {
+                try
+                {
+                    var w = new FileSystemWatcher(root)
+                    {
+                        IncludeSubdirectories = true,
+                        NotifyFilter = NotifyFilters.FileName | NotifyFilters.Size | NotifyFilters.LastWrite,
+                        InternalBufferSize = 64 * 1024,
+                    };
+                    w.Created += (_, e) => NoteCandidate(e.FullPath);
+                    w.Changed += (_, e) => NoteCandidate(e.FullPath);
+                    // Torrent clients often download to "name.mkv.!qB"/".part" and rename at the end.
+                    w.Renamed += (_, e) => NoteCandidate(e.FullPath);
+                    w.EnableRaisingEvents = true;
+                    _watchers.Add(w);
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogDebug(ex, "Library watcher: cannot watch {Root}", root);
+                }
+            }
+            _watchedRootsKey = key;
+            _logger.LogInformation("Library watcher: watching {Count} library folder(s) for new videos", _watchers.Count);
+        }
+    }
+
+    private void NoteCandidate(string path)
+    {
+        if (!FileScanner.IsVideoFile(path)) return;
+        lock (_pending)
+        {
+            // (Re)start the settle clock on every event — a growing file keeps pushing it back.
+            _pending[path] = (-1, DateTime.UtcNow);
+        }
+    }
+
+    /// <summary>Every 10 s: wake the scan once some new file has kept the same size for SettleTime.</summary>
+    private void CheckPendingFiles()
+    {
+        var settled = false;
+        lock (_pending)
+        {
+            if (_pending.Count == 0) return;
+            var now = DateTime.UtcNow;
+            foreach (var path in _pending.Keys.ToList())
+            {
+                long size;
+                try
+                {
+                    var fi = new FileInfo(path);
+                    if (!fi.Exists) { _pending.Remove(path); continue; }
+                    size = fi.Length;
+                }
+                catch { continue; }
+
+                var (lastSize, since) = _pending[path];
+                if (size != lastSize)
+                    _pending[path] = (size, now); // still growing (or first check) — restart the clock
+                else if (size > 0 && now - since >= SettleTime)
+                {
+                    _pending.Remove(path);
+                    settled = true;
+                }
+            }
+        }
+        if (settled && _wake.CurrentCount == 0)
+        {
+            _logger.LogInformation("Library watcher: new video file finished — scanning now");
+            try { _wake.Release(); } catch (SemaphoreFullException) { }
         }
     }
 

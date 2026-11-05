@@ -267,7 +267,11 @@ public sealed class AwardsService
         var q = AwardTitleForSearch(n.Title);
         if (string.IsNullOrWhiteSpace(q))
             return null;
-        var scoringTitle = n.Title.Trim();
+        // Score against the stripped title (e.g. "Task"), not the raw "Actor — Task" — scoring
+        // against the unstripped string tanks the Jaccard overlap for every acting-category
+        // nominee (their name's tokens dilute the real title's tokens below MinTitleScore), so the
+        // correct match was silently rejected for every "Name — Title" nominee.
+        var scoringTitle = q;
         var isTv = n.MediaType.Equals("tv", StringComparison.OrdinalIgnoreCase);
         if (isTv)
         {

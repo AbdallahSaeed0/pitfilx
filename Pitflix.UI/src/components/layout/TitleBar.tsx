@@ -1,10 +1,12 @@
 import { isTauri } from "@tauri-apps/api/core";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { Minus, Square, WifiOff, X } from "lucide-react";
-import { useAppPrefsStore } from "../../store/appPrefsStore";
+import { selectEffectiveOffline, useAppPrefsStore } from "../../store/appPrefsStore";
+import { useOfflineStatusSync } from "../../hooks/useOfflineStatus";
 
 export function TitleBar() {
-  const offlineMode = useAppPrefsStore((s) => s.offlineMode);
+  useOfflineStatusSync();
+  const offlineMode = useAppPrefsStore(selectEffectiveOffline);
 
   if (!isTauri()) {
     return offlineMode ? (

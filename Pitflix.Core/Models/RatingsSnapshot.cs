@@ -36,4 +36,6 @@ public static class RatingsSourceMask
     /// <summary>Bit value unchanged (2) for persisted rows — this tier was OMDb, now sourced from MDBList.</summary>
     public const int Mdblist = 2;
     public const int PhpImdb = 4;
+    /// <summary>IMDb rating from IMDb's own daily ratings file (ImdbDatasetService).</summary>
+    public const int ImdbDataset = 8;
 }

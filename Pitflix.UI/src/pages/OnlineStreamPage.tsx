@@ -2,7 +2,13 @@ import { useQuery } from "@tanstack/react-query";
 import { Search } from "lucide-react";
 import { useEffect, useState } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
-import { getStreamDiscover, getStreamGenrePreviews, STREAM_MOVIE_GENRES } from "../api/stream";
+import {
+  getStreamCollectionPreviews,
+  getStreamDiscover,
+  getStreamGenrePreviews,
+  STREAM_COLLECTIONS,
+  STREAM_MOVIE_GENRES,
+} from "../api/stream";
 import { searchUnmatched } from "../api/unmatched";
 import { ContentSection } from "../components/streaming/ContentSection";
 import { HeroSection } from "../components/streaming/HeroSection";
@@ -15,6 +21,7 @@ import {
   type StreamSearchRowLike,
 } from "../features/streaming/StreamSearchOverlay";
 import { cn } from "../utils/cn";
+import { LazyMount } from "../components/ui/LazyMount";
 import type { StreamingDetailsLocationState } from "./StreamingDetailsPage";
 
 const RECENT_SEARCHES_KEY = "pitflix.stream.recent_searches";
@@ -146,6 +153,15 @@ export function OnlineStreamPage() {
     (genrePreviewsQuery.data ?? []).map((g) => [g.id, g.posterUrl] as const),
   );
 
+  const collectionPreviewsQuery = useQuery({
+    queryKey: ["stream-collection-previews"],
+    queryFn: () => getStreamCollectionPreviews(STREAM_COLLECTIONS.map((c) => c.id)),
+    staleTime: 24 * 60 * 60 * 1000,
+  });
+  const collectionPosterById = new Map(
+    (collectionPreviewsQuery.data ?? []).map((c) => [c.id, c.posterUrl] as const),
+  );
+
   // Search
   const searchQuery = useQuery({
     queryKey: ["online-stream-search", debounced.trim(), kind],
@@ -236,9 +252,52 @@ export function OnlineStreamPage() {
         </HorizontalScrollRow>
       </section>
 
-      {/* Content sections */}
-      {CONTENT_SECTIONS.map((s) => (
-        <ContentSection key={s.category} title={s.title} category={s.category} />
+      {/* Collections */}
+      <section className="mb-8">
+        <h2 className="mb-3 text-xl font-bold text-white">Collections</h2>
+        <HorizontalScrollRow hideHeader className="mb-0" contentClassName="gap-3 pb-2">
+          {STREAM_COLLECTIONS.map((c) => {
+            const poster = collectionPosterById.get(c.id);
+            return (
+              <button
+                key={c.id}
+                type="button"
+                onClick={() =>
+                  navigate("/stream-collection", {
+                    state: { collectionId: c.id, collectionName: c.name },
+                  })
+                }
+                className="group relative shrink-0 w-[140px] overflow-hidden rounded-2xl focus:outline-none focus-visible:ring-2 focus-visible:ring-pitflix-primary"
+                style={{ aspectRatio: "2/3" }}
+              >
+                {poster ? (
+                  <img
+                    src={poster}
+                    alt=""
+                    aria-hidden
+                    className="absolute inset-0 h-full w-full object-cover transition-transform duration-500 group-hover:scale-110"
+                  />
+                ) : (
+                  <div className="absolute inset-0 animate-pulse bg-pitflix-card" />
+                )}
+                <div className="absolute inset-0 bg-gradient-to-t from-black/90 via-black/20 to-transparent" />
+                <div className="absolute inset-0 flex items-end p-3">
+                  <p className="text-sm font-bold leading-tight text-white drop-shadow-lg">
+                    {c.name}
+                  </p>
+                </div>
+              </button>
+            );
+          })}
+        </HorizontalScrollRow>
+      </section>
+
+      {/* Content sections — mounted as they approach the screen (like Home's), so rows far below
+          neither render their cards nor fire their discover/ratings requests until needed. */}
+      {CONTENT_SECTIONS.map((s, index) => (
+        <LazyMount key={s.category} eager={index < 2} minHeight={260}>
+          <ContentSection title={s.title} category={s.category} />
+        </LazyMount>
       ))}
 
       {searchOverlayOpen && (

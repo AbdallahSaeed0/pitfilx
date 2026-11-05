@@ -92,6 +92,10 @@ export function useScanStream() {
               // showing its pre-sync episode list until its own staleTime expires.
               void qc.invalidateQueries({ queryKey: ["movie"] });
               void qc.invalidateQueries({ queryKey: ["show"] });
+              // The season page (where "Download episode" lives) has its own query — without this an
+              // open season page kept the download button until its 10-minute staleTime ran out.
+              void qc.invalidateQueries({ queryKey: ["show-season"] });
+              void qc.invalidateQueries({ queryKey: ["library-tmdb-index"] });
             }
           } else if (type === "libraryUpdated") {
             // Lightweight broadcast from auto-scan when new files are indexed (no toast shown)
@@ -104,6 +108,10 @@ export function useScanStream() {
             void qc.invalidateQueries({ queryKey: ["home-watching-currently"] });
             void qc.invalidateQueries({ queryKey: ["movie"] });
             void qc.invalidateQueries({ queryKey: ["show"] });
+            // Background scans are what pick up a finished download — refresh the season page too
+            // so its "Download episode" button flips to the in-library card on its own.
+            void qc.invalidateQueries({ queryKey: ["show-season"] });
+            void qc.invalidateQueries({ queryKey: ["library-tmdb-index"] });
           } else if (type === "cancelled") {
             setProgress({ isRunning: false });
           } else if (type === "libraryNotification") {

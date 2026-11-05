@@ -89,6 +89,11 @@ export type WatchingCurrentlyCard = {
   lastPlayedAtUtc: string;
   /** False when the next episode has aired on TMDB but isn't downloaded into the library yet. */
   nextEpisodeDownloaded: boolean;
+  /** Show backdrop (landscape art) — null on older cached snapshots. */
+  backdropUrl: string | null;
+  /** Next episode title / still — only when that episode is in the local library. */
+  nextEpisodeTitle: string | null;
+  nextEpisodeStillUrl: string | null;
 };
 
 function normalizeWatchingRow(raw: Record<string, unknown>): WatchingCurrentlyCard {
@@ -122,6 +127,9 @@ function normalizeWatchingRow(raw: Record<string, unknown>): WatchingCurrentlyCa
     progressFraction: Number(raw.progressFraction ?? raw.ProgressFraction ?? 0) || 0,
     lastPlayedAtUtc: String(raw.lastPlayedAtUtc ?? raw.LastPlayedAtUtc ?? ""),
     nextEpisodeDownloaded: (raw.nextEpisodeDownloaded ?? raw.NextEpisodeDownloaded ?? true) !== false,
+    backdropUrl: (raw.backdropUrl ?? raw.BackdropUrl ?? null) as string | null,
+    nextEpisodeTitle: (raw.nextEpisodeTitle ?? raw.NextEpisodeTitle ?? null) as string | null,
+    nextEpisodeStillUrl: (raw.nextEpisodeStillUrl ?? raw.NextEpisodeStillUrl ?? null) as string | null,
   };
 }
 

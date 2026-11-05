@@ -11,6 +11,7 @@ import type { PlayContext } from "../../hooks/usePlayback";
 import { useResumeBeforePlay } from "../../hooks/useResumeBeforePlay";
 import { trustedResumeHeadFromRow } from "../../utils/trustedResume";
 import { cn } from "../../utils/cn";
+import { isPlayerCovering } from "../../store/playerCoverStore";
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
 
@@ -90,6 +91,8 @@ export function ContinueWatchingMenuDialog({
   useEffect(() => {
     if (!open) return;
     const onKey = (e: KeyboardEvent) => {
+      // Hidden under the full player (kept alive, see AppRoutes): its keys belong to the player.
+      if (isPlayerCovering()) return;
       if (e.key === "Escape") onCancel();
     };
     window.addEventListener("keydown", onKey);

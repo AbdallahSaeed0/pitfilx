@@ -77,6 +77,27 @@ export const matchLibraryMovieTmdb = (libraryId: number, tmdbId: number) =>
     .post<RematchMovieResult>(`/library/movies/${libraryId}/match-tmdb`, { tmdbId })
     .then((r) => r.data);
 
+/** Points a movie at its file after it was moved/renamed outside Pitflix (keeps watch state). */
+export const relocateMovieFile = (libraryId: number, path: string) =>
+  api
+    .post<{ success: boolean; error?: string }>(`/library/movies/${libraryId}/relocate`, { path })
+    .then((r) => r.data);
+
+/** Points a series at the folder it was moved to; episodes are re-found by path or SxxExx. */
+export const relocateSeriesFolder = (libraryId: number, path: string) =>
+  api
+    .post<{ success: boolean; relinked: number; missing: number; error?: string }>(
+      `/library/series/${libraryId}/relocate`,
+      { path },
+    )
+    .then((r) => r.data);
+
+/** Re-links a file matched as a movie to an episode of a series already in the library. */
+export const linkMovieToEpisode = (libraryId: number, body: { showId: number; season: number; episode: number }) =>
+  api
+    .post<RematchEpisodeResult>(`/library/movies/${libraryId}/link-to-episode`, body)
+    .then((r) => r.data);
+
 export const rematchSeriesFromFolder = (libraryId: number) =>
   api.post<RematchMovieResult>(`/library/series/${libraryId}/rematch-from-folder`).then((r) => r.data);
 

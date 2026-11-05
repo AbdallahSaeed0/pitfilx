@@ -5,12 +5,22 @@
 package io.flutter.plugins.videoplayer;
 
 import android.content.Context;
+import android.graphics.Bitmap;
 import android.media.audiofx.LoudnessEnhancer;
 import android.util.LongSparseArray;
 import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
 import androidx.annotation.OptIn;
+import androidx.media3.common.C;
+import androidx.media3.common.Format;
+import androidx.media3.common.MimeTypes;
+import androidx.media3.common.Player;
+import androidx.media3.common.TrackSelectionOverride;
+import androidx.media3.common.Tracks;
+import androidx.media3.common.text.Cue;
+import androidx.media3.common.text.CueGroup;
 import androidx.media3.common.util.UnstableApi;
+import androidx.media3.exoplayer.ExoPlayer;
 import io.flutter.FlutterInjector;
 import io.flutter.Log;
 import io.flutter.embedding.engine.plugins.FlutterPlugin;
@@ -20,6 +30,11 @@ import io.flutter.plugins.videoplayer.platformview.PlatformVideoViewFactory;
 import io.flutter.plugins.videoplayer.platformview.PlatformViewVideoPlayer;
 import io.flutter.plugins.videoplayer.texture.TextureVideoPlayer;
 import io.flutter.view.TextureRegistry;
+import java.io.ByteArrayOutputStream;
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
 
 /** Android platform implementation of the VideoPlayerPlugin. */
 public class VideoPlayerPlugin implements FlutterPlugin, AndroidVideoPlayerApi {
@@ -33,6 +48,14 @@ public class VideoPlayerPlugin implements FlutterPlugin, AndroidVideoPlayerApi {
   private static final String LOUDNESS_CHANNEL = "pitflix.dev/video_player_loudness";
   private final LongSparseArray<LoudnessEnhancer> loudnessEnhancers = new LongSparseArray<>();
   private MethodChannel loudnessChannel;
+
+  // Embedded subtitle tracks (MKV/MP4 text and image subtitles). ExoPlayer already extracts and
+  // decodes these, but the plugin renders only the video surface and exposes no text-track API,
+  // so they were unreachable. This lists/selects them and forwards decoded cues to Dart, which
+  // draws them in the player's own subtitle overlay (same place external .srt cues go).
+  private static final String TEXT_TRACKS_CHANNEL = "pitflix.dev/video_player_text_tracks";
+  private final LongSparseArray<Player.Listener> cueListeners = new LongSparseArray<>();
+  private MethodChannel textTracksChannel;
   // ── End Pitflix patch ──────────────────────────────────────────────────────
 
   private final LongSparseArray<VideoPlayer> videoPlayers = new LongSparseArray<>();
@@ -64,6 +87,8 @@ public class VideoPlayerPlugin implements FlutterPlugin, AndroidVideoPlayerApi {
     // Pitflix patch — see PITFLIX_PATCH.md.
     loudnessChannel = new MethodChannel(binding.getBinaryMessenger(), LOUDNESS_CHANNEL);
     loudnessChannel.setMethodCallHandler(this::onLoudnessMethodCall);
+    textTracksChannel = new MethodChannel(binding.getBinaryMessenger(), TEXT_TRACKS_CHANNEL);
+    textTracksChannel.setMethodCallHandler(this::onTextTracksMethodCall);
   }
 
   @Override
@@ -76,6 +101,10 @@ public class VideoPlayerPlugin implements FlutterPlugin, AndroidVideoPlayerApi {
     if (loudnessChannel != null) {
       loudnessChannel.setMethodCallHandler(null);
       loudnessChannel = null;
+    }
+    if (textTracksChannel != null) {
+      textTracksChannel.setMethodCallHandler(null);
+      textTracksChannel = null;
     }
     onDestroy();
   }
@@ -120,6 +149,151 @@ public class VideoPlayerPlugin implements FlutterPlugin, AndroidVideoPlayerApi {
     enhancer.setEnabled(gainMillibels > 0);
   }
 
+  @OptIn(markerClass = UnstableApi.class)
+  private void onTextTracksMethodCall(
+      @NonNull io.flutter.plugin.common.MethodCall call, @NonNull MethodChannel.Result result) {
+    try {
+      Number playerIdArg = call.argument("playerId");
+      if (playerIdArg == null) {
+        result.error("bad_args", "playerId is required", null);
+        return;
+      }
+      long playerId = playerIdArg.longValue();
+      ExoPlayer exoPlayer = getPlayer(playerId).getExoPlayer();
+      switch (call.method) {
+        case "attach":
+          attachCueListener(playerId, exoPlayer);
+          result.success(null);
+          return;
+        case "getTextTracks":
+          result.success(listTextTracks(exoPlayer));
+          return;
+        case "selectTextTrack":
+          {
+            Number groupArg = call.argument("groupIndex");
+            Number trackArg = call.argument("trackIndex");
+            if (groupArg == null || trackArg == null) {
+              result.error("bad_args", "groupIndex and trackIndex are required", null);
+              return;
+            }
+            attachCueListener(playerId, exoPlayer);
+            selectTextTrack(exoPlayer, groupArg.intValue(), trackArg.intValue());
+            result.success(null);
+            return;
+          }
+        case "disableTextTracks":
+          exoPlayer.setTrackSelectionParameters(
+              exoPlayer
+                  .getTrackSelectionParameters()
+                  .buildUpon()
+                  .clearOverridesOfType(C.TRACK_TYPE_TEXT)
+                  .setTrackTypeDisabled(C.TRACK_TYPE_TEXT, true)
+                  .build());
+          result.success(null);
+          return;
+        default:
+          result.notImplemented();
+      }
+    } catch (Exception e) {
+      result.error("text_tracks_error", e.getMessage(), null);
+    }
+  }
+
+  @OptIn(markerClass = UnstableApi.class)
+  private static List<Map<String, Object>> listTextTracks(ExoPlayer exoPlayer) {
+    List<Map<String, Object>> out = new ArrayList<>();
+    Tracks tracks = exoPlayer.getCurrentTracks();
+    for (int g = 0; g < tracks.getGroups().size(); g++) {
+      Tracks.Group group = tracks.getGroups().get(g);
+      if (group.getType() != C.TRACK_TYPE_TEXT) continue;
+      for (int t = 0; t < group.length; t++) {
+        Format format = group.getTrackFormat(t);
+        // Subtitles parsed during extraction (media3's default) report a generic cue mime type
+        // and keep the original codec in `codecs`.
+        String mime =
+            MimeTypes.APPLICATION_MEDIA3_CUES.equals(format.sampleMimeType)
+                ? format.codecs
+                : format.sampleMimeType;
+        Map<String, Object> track = new HashMap<>();
+        track.put("groupIndex", g);
+        track.put("trackIndex", t);
+        track.put("label", format.label);
+        track.put("language", format.language);
+        track.put("mimeType", mime);
+        track.put("supported", group.isTrackSupported(t));
+        track.put("selected", group.isTrackSelected(t));
+        track.put("forced", (format.selectionFlags & C.SELECTION_FLAG_FORCED) != 0);
+        track.put("isDefault", (format.selectionFlags & C.SELECTION_FLAG_DEFAULT) != 0);
+        out.add(track);
+      }
+    }
+    return out;
+  }
+
+  private static void selectTextTrack(ExoPlayer exoPlayer, int groupIndex, int trackIndex) {
+    Tracks tracks = exoPlayer.getCurrentTracks();
+    if (groupIndex < 0 || groupIndex >= tracks.getGroups().size()) {
+      throw new IllegalArgumentException("groupIndex out of bounds: " + groupIndex);
+    }
+    Tracks.Group group = tracks.getGroups().get(groupIndex);
+    if (group.getType() != C.TRACK_TYPE_TEXT || trackIndex < 0 || trackIndex >= group.length) {
+      throw new IllegalArgumentException("not a text track: " + groupIndex + "/" + trackIndex);
+    }
+    exoPlayer.setTrackSelectionParameters(
+        exoPlayer
+            .getTrackSelectionParameters()
+            .buildUpon()
+            .setTrackTypeDisabled(C.TRACK_TYPE_TEXT, false)
+            .setOverrideForType(
+                new TrackSelectionOverride(group.getMediaTrackGroup(), trackIndex))
+            .build());
+  }
+
+  /** Forwards every decoded cue change for this player to Dart as an "onCues" call. */
+  private void attachCueListener(long playerId, ExoPlayer exoPlayer) {
+    if (cueListeners.get(playerId) != null) return;
+    Player.Listener listener =
+        new Player.Listener() {
+          @Override
+          public void onCues(@NonNull CueGroup cueGroup) {
+            MethodChannel channel = textTracksChannel;
+            if (channel == null) return;
+            Map<String, Object> args = new HashMap<>();
+            args.put("playerId", playerId);
+            args.put("cues", serializeCues(cueGroup.cues));
+            channel.invokeMethod("onCues", args);
+          }
+        };
+    exoPlayer.addListener(listener);
+    cueListeners.put(playerId, listener);
+  }
+
+  /**
+   * Text cues as plain strings; image cues (PGS/VobSub) as PNG bytes plus their placement, as
+   * fractions of the video frame the way media3 reports them for bitmap subtitles.
+   */
+  private static List<Map<String, Object>> serializeCues(List<Cue> cues) {
+    List<Map<String, Object>> out = new ArrayList<>();
+    for (Cue cue : cues) {
+      Map<String, Object> c = new HashMap<>();
+      if (cue.bitmap != null) {
+        ByteArrayOutputStream png = new ByteArrayOutputStream();
+        cue.bitmap.compress(Bitmap.CompressFormat.PNG, 100, png);
+        c.put("png", png.toByteArray());
+        c.put("left", cue.position == Cue.DIMEN_UNSET ? 0.25 : (double) cue.position);
+        c.put("top", cue.line == Cue.DIMEN_UNSET ? 0.8 : (double) cue.line);
+        c.put("width", cue.size == Cue.DIMEN_UNSET ? 0.5 : (double) cue.size);
+        c.put("height", cue.bitmapHeight == Cue.DIMEN_UNSET ? -1.0 : (double) cue.bitmapHeight);
+      } else if (cue.text != null) {
+        c.put("text", cue.text.toString());
+      } else {
+        continue;
+      }
+      out.add(c);
+    }
+    return out;
+  }
+
   private void releaseLoudnessEnhancer(long playerId) {
     LoudnessEnhancer enhancer = loudnessEnhancers.get(playerId);
     if (enhancer != null) {
@@ -139,6 +313,7 @@ public class VideoPlayerPlugin implements FlutterPlugin, AndroidVideoPlayerApi {
       loudnessEnhancers.valueAt(i).release();
     }
     loudnessEnhancers.clear();
+    cueListeners.clear();
   }
 
   public void onDestroy() {
@@ -254,6 +429,7 @@ public class VideoPlayerPlugin implements FlutterPlugin, AndroidVideoPlayerApi {
     player.dispose();
     videoPlayers.remove(playerId);
     releaseLoudnessEnhancer(playerId); // Pitflix patch — see PITFLIX_PATCH.md.
+    cueListeners.remove(playerId); // Pitflix patch — released along with the player.
   }
 
   @Override

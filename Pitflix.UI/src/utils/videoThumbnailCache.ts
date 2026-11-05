@@ -545,6 +545,23 @@ const NATIVE_CAPTURE_SEEK_SECONDS = 15;
 const NATIVE_CAPTURE_WIDTH = 320;
 
 /**
+ * Starts the native background job that makes My Device grid thumbnails for every video under the
+ * saved locations ahead of time (device_thumbs_prewarm in thumbs.rs) — same width and frame range
+ * as captureVideoFrameNative, so it fills the very cache files the grid reads. Safe to call again:
+ * a new call replaces the running job, and finished thumbnails are skipped.
+ */
+export function prewarmDeviceThumbnails(roots: string[]): void {
+  if (roots.length === 0) return;
+  const { thumbMinPct, thumbMaxPct } = getDeviceMediaSettings();
+  void invoke("device_thumbs_prewarm", {
+    roots,
+    width: NATIVE_CAPTURE_WIDTH,
+    minPct: thumbMinPct,
+    maxPct: thumbMaxPct,
+  }).catch(() => {});
+}
+
+/**
  * Captures a video thumbnail via the native `thumb_poster` ffmpeg command instead of the
  * browser's canvas pipeline. Falls back to null (letting the caller fall back to
  * `captureVideoFrame`) on any failure — e.g. ffmpeg not found on this system.

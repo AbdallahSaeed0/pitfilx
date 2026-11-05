@@ -10,6 +10,7 @@ import { openPlayerWindow } from "../../api/player";
 import { usePlayback } from "../../hooks/usePlayback";
 import { DeviceVideoHoverPreview, LazyFolderThumb } from "./DeviceThumbs";
 import { DeviceImageViewer } from "./DeviceImageViewer";
+import { relinkMovedDeviceFiles } from "./devicePathRelink";
 import {
   clearHistory,
   fileDisplayTitle,
@@ -34,10 +35,18 @@ function toEntry(item: SavedItem): DeviceFsEntry {
   return { name: fileNameOf(item.path), path: item.path, is_directory: false, media_kind: item.mediaKind };
 }
 
-function SavedItemsGrid({ kind, privateMode }: { kind: Kind; privateMode: boolean }) {
+type LocationProps = {
+  /** Where to look for files moved outside the app (the current mode's locations). */
+  searchRoots: string[];
+  /** Never relink into these (Normal mode passes the private folders). */
+  excludeRoots: string[];
+};
+
+function SavedItemsGrid({ kind, privateMode, searchRoots, excludeRoots }: { kind: Kind; privateMode: boolean } & LocationProps) {
   const { play } = usePlayback();
   const [items, setItems] = useState<SavedItem[]>([]);
   const [missingPaths, setMissingPaths] = useState<Set<string>>(new Set());
+  const [relinking, setRelinking] = useState(false);
   const [viewingImage, setViewingImage] = useState<DeviceFsEntry | null>(null);
   const [contextMenu, setContextMenu] = useState<{ path: string; x: number; y: number } | null>(null);
 
@@ -51,6 +60,12 @@ function SavedItemsGrid({ kind, privateMode }: { kind: Kind; privateMode: boolea
 
   // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(() => { refresh(); }, [kind, privateMode]);
+  useEffect(() => {
+    const onRemapped = () => refresh();
+    window.addEventListener("pitflix-device-saved-paths-remapped", onRemapped);
+    return () => window.removeEventListener("pitflix-device-saved-paths-remapped", onRemapped);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [kind, privateMode]);
 
   // Same batched existence check used throughout My Device (device_paths_exist) — one round trip
   // for the whole list instead of one per item.
@@ -63,9 +78,17 @@ function SavedItemsGrid({ kind, privateMode }: { kind: Kind; privateMode: boolea
         const missing = new Set<string>();
         items.forEach((item, i) => { if (!flags[i]) missing.add(item.path); });
         setMissingPaths(missing);
+        if (missing.size === 0) return;
+        // Moved outside the app? Look for it by file name; a relink rewrites the saved paths and
+        // fires "pitflix-device-saved-paths-remapped", which refreshes this list.
+        setRelinking(true);
+        void relinkMovedDeviceFiles(Array.from(missing), searchRoots, excludeRoots)
+          .catch(() => 0)
+          .finally(() => { if (!cancelled) setRelinking(false); });
       })
       .catch(() => {});
     return () => { cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [items]);
 
   const removeItem = (path: string) => {
@@ -79,7 +102,9 @@ function SavedItemsGrid({ kind, privateMode }: { kind: Kind; privateMode: boolea
     void openPlayerWindow().catch(() => {});
     void play(path, fileDisplayTitle(fileNameOf(path)), null, "Movie", 0, {
       suppressContinueWatching: true,
-      returnTo: { pathname: "/my-device" },
+      // `?panel=` lets My Device land back on this exact panel (see MyDevicePage) instead of
+      // whichever view happens to win from saved state.
+      returnTo: { pathname: "/my-device", search: `?panel=${kind}` },
     });
   };
 
@@ -135,7 +160,9 @@ function SavedItemsGrid({ kind, privateMode }: { kind: Kind; privateMode: boolea
                   <div style={{ position: "absolute", inset: 0, borderRadius: 10, overflow: "hidden", border: `1px solid ${isMissing ? "rgba(239,68,68,0.35)" : "rgba(255,255,255,0.07)"}` }}>
                     {isMissing ? (
                       <div style={{ position: "absolute", inset: 0, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 8, padding: 10 }}>
-                        <span style={{ fontSize: 11, color: "rgba(239,68,68,0.8)", textAlign: "center" }}>File no longer exists</span>
+                        <span style={{ fontSize: 11, color: relinking ? "rgba(200,200,235,0.6)" : "rgba(239,68,68,0.8)", textAlign: "center" }}>
+                          {relinking ? "Looking for moved file…" : "File no longer exists"}
+                        </span>
                         <button
                           type="button"
                           onClick={(e) => { e.stopPropagation(); removeItem(item.path); }}
@@ -199,10 +226,10 @@ function SavedItemsGrid({ kind, privateMode }: { kind: Kind; privateMode: boolea
   );
 }
 
-export function DeviceFavoritesPanel({ privateMode }: { privateMode: boolean }) {
-  return <SavedItemsGrid kind="favorites" privateMode={privateMode} />;
+export function DeviceFavoritesPanel(props: { privateMode: boolean } & LocationProps) {
+  return <SavedItemsGrid kind="favorites" {...props} />;
 }
 
-export function DeviceHistoryPanel({ privateMode }: { privateMode: boolean }) {
-  return <SavedItemsGrid kind="history" privateMode={privateMode} />;
+export function DeviceHistoryPanel(props: { privateMode: boolean } & LocationProps) {
+  return <SavedItemsGrid kind="history" {...props} />;
 }

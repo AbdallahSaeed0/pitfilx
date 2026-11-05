@@ -24,11 +24,18 @@ export type PlayerCommand =
   | { type: "SeekAbsolute"; payload: number }
   | { type: "SetMute"; payload: boolean }
   | { type: "SetVolume"; payload: number }
+  /** mpv `volume-gain` in dB (separate from `volume`) — used for the open/close audio fades. */
+  | { type: "SetVolumeGain"; payload: number }
   | { type: "SetSubVisibility"; payload: boolean }
   | { type: "SetSid"; payload: number }
   | { type: "SetAid"; payload: number }
   | { type: "AddSubDelay"; payload: number }
   | { type: "SubAddSelect"; payload: string }
+  | { type: "RefreshTracks" }
+  /** Load a subtitle file without selecting it (to use as the secondary subtitle). */
+  | { type: "SubAdd"; payload: string }
+  /** Dual subtitles: mpv `secondary-sid`; -1 = off. */
+  | { type: "SetSecondarySid"; payload: number }
   | { type: "SetSpeed"; payload: number }
   | { type: "Stop" };
 

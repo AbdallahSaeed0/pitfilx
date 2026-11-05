@@ -1,14 +1,15 @@
 import { ScanLine } from "lucide-react";
 import { cn } from "../../../utils/cn";
-import { useAppPrefsStore } from "../../../store/appPrefsStore";
+import { selectEffectiveOffline, useAppPrefsStore } from "../../../store/appPrefsStore";
 import { PitflixWordmark } from "../../ui/PitflixWordmark";
 import { APP_NAV_ITEMS } from "./appNavItems";
 import { TopDockItem } from "./TopDockItem";
 import { useAppNavScan } from "./useAppNavScan";
 
 export function AppTopDock() {
-  const offlineMode = useAppPrefsStore((s) => s.offlineMode);
+  const offlineMode = useAppPrefsStore(selectEffectiveOffline);
   const liveTvEnabled = useAppPrefsStore((s) => s.liveTvEnabled);
+  const cinemasEnabled = useAppPrefsStore((s) => s.cinemasEnabled);
   const { scanRunning, scanError, runScan } = useAppNavScan();
 
   return (
@@ -32,7 +33,9 @@ export function AppTopDock() {
       </div>
 
       <nav className="flex flex-wrap items-center gap-1 px-4 pb-3">
-        {APP_NAV_ITEMS.filter((item) => item.to !== "/live" || liveTvEnabled).map((item) => (
+        {APP_NAV_ITEMS.filter(
+          (item) => (item.to !== "/live" || liveTvEnabled) && (item.to !== "/cinemas" || cinemasEnabled),
+        ).map((item) => (
           <TopDockItem key={item.to} item={item} offlineMode={offlineMode} />
         ))}
       </nav>

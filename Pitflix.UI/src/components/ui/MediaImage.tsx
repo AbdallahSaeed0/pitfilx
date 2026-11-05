@@ -11,11 +11,30 @@ export type MediaImageProps = {
   /** Extra classes on the <code>&lt;img&gt;</code> itself, e.g. a `group-hover:blur-*` effect. */
   imgClassName?: string;
   fallbackText?: string;
-  /** Prefer <code>eager</code> for above-the-fold posters so WebView/intersection quirks do not skip loading. */
+  /**
+   * Default <code>eager</code>. Lazy was tried (2026-10-10) and posters stayed on their placeholder
+   * on a fresh app start until a refresh — WebView2's lazy loading leans on intersection detection,
+   * which can miss during startup. Pages keep off-screen work down by mounting rows on approach
+   * (LazyMount on Home / Online Streaming) instead.
+   */
   loading?: "lazy" | "eager";
 };
 
 type Phase = "primary" | "fallback" | "dead";
+
+/**
+ * Backoff for retrying a dead image (~15s total). One quick retry used to be all it got, which lost
+ * to cold launches right after a PC boot: the API sidecar is still warming up and WebView2 aborts
+ * in-flight requests (localhost included) while network adapters come up, so whole rows of posters
+ * stayed on their initials until a manual refresh. Same idea as HOME_COLD_START_RETRY for the JSON.
+ */
+const DEAD_RETRY_DELAYS_MS = [450, 1000, 2000, 4000, 8000];
+
+/** Distinct URL per retry so WebView2 can't hand back its remembered failure for the same src. */
+function withRetryParam(url: string, attempt: number): string {
+  if (attempt === 0 || !/^https?:\/\//i.test(url)) return url;
+  return `${url}${url.includes("?") ? "&" : "?"}_r=${attempt}`;
+}
 
 export function MediaImage({
   src,
@@ -28,18 +47,18 @@ export function MediaImage({
 }: MediaImageProps) {
   const [phase, setPhase] = useState<Phase>("primary");
   const [loaded, setLoaded] = useState(false);
+  const [attempt, setAttempt] = useState(0);
   const imgRef = useRef<HTMLImageElement>(null);
-  const retriedDeadRef = useRef(false);
 
   useEffect(() => {
     setPhase("primary");
     setLoaded(false);
-    retriedDeadRef.current = false;
+    setAttempt(0);
   }, [src, fallbackSrc]);
 
   const primary = src?.trim() || "";
   const backup = fallbackSrc?.trim() || "";
-  const displaySrc = phase === "primary" ? primary : backup;
+  const displaySrc = withRetryParam(phase === "primary" ? primary : backup, attempt);
   const dead = phase === "dead" || !displaySrc;
 
   /** No URL at all — show initials placeholder (must not return before hooks below). */
@@ -55,16 +74,24 @@ export function MediaImage({
     }
   }, [dead, displaySrc, phase, initialsPlaceholder]);
 
-  /** Transient failures (API warming up, race): one retry so users do not need to leave and re-enter the route. */
+  /** Transient failures (API warming up, network coming up): retry with backoff so users do not need to refresh. */
   useEffect(() => {
-    if (phase !== "dead" || !primary || retriedDeadRef.current) return;
-    retriedDeadRef.current = true;
-    const t = window.setTimeout(() => {
+    if (phase !== "dead" || !primary) return;
+    const retry = () => {
+      setAttempt((a) => a + 1);
       setPhase("primary");
       setLoaded(false);
-    }, 450);
-    return () => window.clearTimeout(t);
-  }, [phase, primary]);
+    };
+    // Coming back online (e.g. Wi-Fi connecting after boot) is a good moment for one more try even
+    // after the backoff ran out.
+    window.addEventListener("online", retry);
+    const delay = DEAD_RETRY_DELAYS_MS[attempt];
+    const t = delay === undefined ? undefined : window.setTimeout(retry, delay);
+    return () => {
+      window.removeEventListener("online", retry);
+      if (t !== undefined) window.clearTimeout(t);
+    };
+  }, [phase, primary, attempt]);
 
   if (initialsPlaceholder) {
     return (
@@ -102,12 +129,16 @@ export function MediaImage({
         key={displaySrc}
         src={displaySrc}
         alt={alt}
+        // Fade in only — no blur-up. A CSS filter (even the resting `blur(0px)`) gave every poster its
+        // own GPU layer for as long as it stayed on screen, ~200 on Home / Online Streaming, all
+        // recomposited while scrolling; the shimmer placeholder above already covers loading.
         className={cn(
-          "h-full w-full object-cover transition-[opacity,filter,transform] duration-500 ease-out",
-          loaded ? "opacity-100 blur-0" : "opacity-30 blur-xl",
+          "h-full w-full object-cover transition-[opacity,transform] duration-300 ease-out",
+          loaded ? "opacity-100" : "opacity-0",
           imgClassName,
         )}
         loading={loading}
+        decoding="async"
         onLoad={() => setLoaded(true)}
         onError={() => {
           if (phase === "primary" && backup) {

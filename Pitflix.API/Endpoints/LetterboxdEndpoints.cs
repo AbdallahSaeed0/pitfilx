@@ -58,7 +58,53 @@ public static class LetterboxdEndpoints
 
         app.MapGet("/api/letterboxd/sync/status", (LetterboxdService svc) =>
             Results.Json(MapSyncStatus(svc.GetSyncStatus()), jsonSerializerOptions));
+
+        // ── Watchlist → Pitflix list sync ────────────────────────────────────
+        app.MapGet("/api/letterboxd/watchlist-sync", async (LetterboxdWatchlistSyncService sync,
+            Pitflix.Core.Database.LibraryRepository repo, CancellationToken ct) =>
+        {
+            var st = sync.Status;
+            var enabled = await repo.GetSettingAsync(LetterboxdWatchlistSyncService.EnabledKey, ct).ConfigureAwait(false) == "1";
+            var listIdStr = await repo.GetSettingAsync(LetterboxdWatchlistSyncService.ListIdKey, ct).ConfigureAwait(false);
+            return Results.Json(new
+            {
+                enabled,
+                listId = int.TryParse(listIdStr, out var lid) ? lid : (int?)null,
+                running = st.Running,
+                phase = st.Phase,
+                lastRunUtc = st.LastRunUtc,
+                onWatchlist = st.OnWatchlist,
+                added = st.Added,
+                removed = st.Removed,
+                unresolved = st.Unresolved,
+                lastError = st.LastError,
+            }, jsonSerializerOptions);
+        });
+
+        app.MapPost("/api/letterboxd/watchlist-sync", async (WatchlistSyncSettingsBody body, LetterboxdWatchlistSyncService sync,
+            Pitflix.Core.Database.LibraryRepository repo, CancellationToken ct) =>
+        {
+            await repo.SaveSettingAsync(LetterboxdWatchlistSyncService.EnabledKey, body.Enabled ? "1" : "0", ct).ConfigureAwait(false);
+            if (body.ListId is int id)
+                await repo.SaveSettingAsync(LetterboxdWatchlistSyncService.ListIdKey, id.ToString(), ct).ConfigureAwait(false);
+            if (body.Enabled) StartSyncInBackground(sync);
+            return Results.Json(new { ok = true }, jsonSerializerOptions);
+        });
+
+        app.MapPost("/api/letterboxd/watchlist-sync/run", (LetterboxdWatchlistSyncService sync) =>
+        {
+            StartSyncInBackground(sync);
+            return Results.Json(new { ok = true }, jsonSerializerOptions);
+        });
     }
+
+    /// <summary>Fire-and-forget forced run — it can take minutes on a first sync (one page per new film).</summary>
+    private static void StartSyncInBackground(LetterboxdWatchlistSyncService sync) =>
+        _ = Task.Run(async () =>
+        {
+            try { await sync.RunIfEnabledAsync(force: true, CancellationToken.None).ConfigureAwait(false); }
+            catch { /* status carries the error */ }
+        });
 
     private static object MapSyncStatus(LetterboxdSyncStatus status) => new
     {
@@ -73,3 +119,4 @@ public static class LetterboxdEndpoints
 }
 
 public sealed record LetterboxdSessionBody(string? CookieHeader, string? UserAgent);
+public sealed record WatchlistSyncSettingsBody(bool Enabled, int? ListId);

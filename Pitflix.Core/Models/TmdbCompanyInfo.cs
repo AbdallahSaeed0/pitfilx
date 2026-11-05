@@ -9,3 +9,10 @@ public class TmdbCompanyInfo
     /// <summary>"network" (TMDB TV networks — where streaming originals live) or "company" (production studio).</summary>
     public string Kind { get; set; } = "company";
 }
+
+/// <summary>Combined result of <see cref="Pitflix.Core.Api.TmdbClient.TryGetCompaniesAndCollectionAsync"/> —
+/// companies/networks plus (movies only) the collection a title belongs to, from a single TMDB call.</summary>
+public sealed record TmdbCompaniesAndCollection(
+    IReadOnlyList<TmdbCompanyInfo> Companies,
+    int? CollectionId,
+    string? CollectionName);

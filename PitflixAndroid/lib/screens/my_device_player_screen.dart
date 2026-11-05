@@ -11,6 +11,7 @@ import 'package:wakelock_plus/wakelock_plus.dart';
 
 import '../models/my_device_subtitle_cue.dart';
 import '../models/my_device_video.dart';
+import '../services/my_device_embedded_subtitles.dart';
 import '../services/my_device_loudness_boost.dart';
 import '../services/my_device_resume_store.dart';
 import '../services/my_device_settings.dart';
@@ -102,6 +103,14 @@ class _MyDevicePlayerScreenState extends State<MyDevicePlayerScreen> {
   List<MyDeviceSubtitleCue> _cues = const [];
   MyDeviceSubtitleCue? _activeCue;
 
+  /// Cues currently on screen from a subtitle track inside the video file
+  /// (see MyDeviceEmbeddedSubtitles) — ExoPlayer times these itself, so
+  /// unlike [_cues] there's no position lookup on this side.
+  List<MyDeviceEmbeddedCue> _embeddedCues = const [];
+  bool _embeddedTrackActive = false;
+  StreamSubscription<({int playerId, List<MyDeviceEmbeddedCue> cues})>?
+  _embeddedCueSubscription;
+
   bool _inPip = false;
   StreamSubscription<bool>? _pipSubscription;
   StreamSubscription<String>? _playbackEventsSubscription;
@@ -122,6 +131,19 @@ class _MyDevicePlayerScreenState extends State<MyDevicePlayerScreen> {
     SystemChrome.setEnabledSystemUIMode(SystemUiMode.immersiveSticky);
     _loadVideo(_currentIndex);
     _initBrightness();
+
+    _embeddedCueSubscription = MyDeviceEmbeddedSubtitles.cues.listen((event) {
+      final controller = _controller;
+      // Cues from a previous video's player can still be in flight.
+      // ignore: invalid_use_of_visible_for_testing_member
+      if (!mounted || controller == null || event.playerId != controller.playerId) {
+        return;
+      }
+      setState(() {
+        _embeddedCues = event.cues;
+        if (event.cues.isNotEmpty) _embeddedTrackActive = true;
+      });
+    });
 
     _pipSubscription = PipService.isInPipStream.listen((inPip) {
       if (!mounted) return;
@@ -193,6 +215,8 @@ class _MyDevicePlayerScreenState extends State<MyDevicePlayerScreen> {
       _error = null;
       _cues = const [];
       _activeCue = null;
+      _embeddedCues = const [];
+      _embeddedTrackActive = false;
       _videoPath = null;
     });
 
@@ -239,6 +263,10 @@ class _MyDevicePlayerScreenState extends State<MyDevicePlayerScreen> {
     if (!mounted) return;
 
     await _applyVolumeTo(controller, _volume);
+    // So a track the file flags as default/forced (which ExoPlayer selects by
+    // itself) is shown without the user having to pick it.
+    // ignore: invalid_use_of_visible_for_testing_member
+    await MyDeviceEmbeddedSubtitles.attach(controller.playerId);
 
     final resumeAt = await MyDeviceResumeStore.loadPosition(_video.id);
     // Don't resume into the last few seconds — that's almost always the
@@ -290,7 +318,19 @@ class _MyDevicePlayerScreenState extends State<MyDevicePlayerScreen> {
       local.first.path,
     );
     if (!mounted) return;
+    await _disableEmbeddedSubtitles();
     setState(() => _cues = cues);
+  }
+
+  Future<void> _disableEmbeddedSubtitles() async {
+    final controller = _controller;
+    // ignore: invalid_use_of_visible_for_testing_member
+    if (controller != null) await MyDeviceEmbeddedSubtitles.disable(controller.playerId);
+    if (!mounted) return;
+    setState(() {
+      _embeddedCues = const [];
+      _embeddedTrackActive = false;
+    });
   }
 
   void _onControllerUpdate() {
@@ -504,23 +544,61 @@ class _MyDevicePlayerScreenState extends State<MyDevicePlayerScreen> {
 
   Future<void> _openSubtitlePicker() async {
     final path = _videoPath;
-    if (path == null) return;
-    final selected = await showModalBottomSheet<MyDeviceSubtitleOption>(
+    final controller = _controller;
+    if (path == null || controller == null) return;
+    // ignore: invalid_use_of_visible_for_testing_member
+    final playerId = controller.playerId;
+    final embedded = await MyDeviceEmbeddedSubtitles.tracks(playerId);
+    if (!mounted) return;
+    final selected = await showModalBottomSheet<Object>(
       context: context,
+      isScrollControlled: true,
       backgroundColor: const Color(0xFF161616),
       shape: const RoundedRectangleBorder(
         borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
       ),
-      builder: (context) =>
-          _SubtitlePickerSheet(videoPath: path, videoTitle: _video.title),
+      builder: (context) => _SubtitlePickerSheet(
+        videoPath: path,
+        videoTitle: _video.title,
+        embeddedTracks: embedded,
+        subtitlesOn: _cues.isNotEmpty || _embeddedTrackActive,
+      ),
     );
     if (selected == null || !mounted) return;
+    if (selected is _SubtitlesOff) {
+      await _disableEmbeddedSubtitles();
+      setState(() {
+        _cues = const [];
+        _activeCue = null;
+      });
+      return;
+    }
+    if (selected is MyDeviceEmbeddedSubtitleTrack) {
+      try {
+        await MyDeviceEmbeddedSubtitles.select(playerId, selected);
+        if (!mounted) return;
+        setState(() {
+          _cues = const [];
+          _activeCue = null;
+          _embeddedCues = const [];
+          _embeddedTrackActive = true;
+        });
+      } catch (e) {
+        if (!mounted) return;
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text("Couldn't load subtitle: $e")));
+      }
+      return;
+    }
+    if (selected is! MyDeviceSubtitleOption) return;
     try {
       final localPath = selected.isLocal
           ? selected.path
           : await MyDeviceSubtitleService.downloadAndSave(selected, path);
       final cues = await MyDeviceSubtitleService.loadCuesFromFile(localPath);
       if (!mounted) return;
+      await _disableEmbeddedSubtitles();
       setState(() => _cues = cues);
     } catch (e) {
       if (!mounted) return;
@@ -660,6 +738,7 @@ class _MyDevicePlayerScreenState extends State<MyDevicePlayerScreen> {
     _sleepTimerTicker?.cancel();
     _pipSubscription?.cancel();
     _playbackEventsSubscription?.cancel();
+    _embeddedCueSubscription?.cancel();
     _controller?.removeListener(_onControllerUpdate);
     _controller?.dispose();
     _restoreSystemChrome();
@@ -712,11 +791,32 @@ class _MyDevicePlayerScreenState extends State<MyDevicePlayerScreen> {
                           Center(
                             child: AspectRatio(
                               aspectRatio: _controller!.value.aspectRatio,
-                              child: VideoPlayer(_controller!),
+                              child: Stack(
+                                fit: StackFit.expand,
+                                children: [
+                                  VideoPlayer(_controller!),
+                                  // Image subtitles (PGS/VobSub) are placed
+                                  // relative to the video frame, not the screen.
+                                  if (_embeddedCues.any((c) => c.png != null))
+                                    _ImageSubtitleLayer(
+                                      cues: [
+                                        for (final c in _embeddedCues)
+                                          if (c.png != null) c,
+                                      ],
+                                    ),
+                                ],
+                              ),
                             ),
                           ),
                           if (_activeCue != null)
-                            _SubtitleOverlay(text: _activeCue!.text),
+                            _SubtitleOverlay(text: _activeCue!.text)
+                          else if (_embeddedCues.any((c) => c.text != null))
+                            _SubtitleOverlay(
+                              text: [
+                                for (final c in _embeddedCues)
+                                  if (c.text != null) c.text!,
+                              ].join('\n'),
+                            ),
                           if (_volumeHudValue != null)
                             _VolumeHud(value: _volumeHudValue!),
                           if (_brightnessHudValue != null)
@@ -734,7 +834,8 @@ class _MyDevicePlayerScreenState extends State<MyDevicePlayerScreen> {
                               scrubbing: _scrubbing,
                               scrubValue: _scrubValue,
                               volume: _volume,
-                              hasSubtitles: _cues.isNotEmpty,
+                              hasSubtitles:
+                                  _cues.isNotEmpty || _embeddedTrackActive,
                               hasPrev: _hasPrev,
                               hasNext: _hasNext,
                               onClose: _close,
@@ -1728,13 +1829,56 @@ class _CustomSleepDurationSheetState
   }
 }
 
+/// Returned by [_SubtitlePickerSheet] when the user turns subtitles off.
+class _SubtitlesOff {
+  const _SubtitlesOff();
+}
+
+/// Draws image-based embedded subtitles (PGS/VobSub) at the position the
+/// track specifies, as fractions of the video frame this sits on top of.
+class _ImageSubtitleLayer extends StatelessWidget {
+  final List<MyDeviceEmbeddedCue> cues;
+
+  const _ImageSubtitleLayer({required this.cues});
+
+  @override
+  Widget build(BuildContext context) {
+    return IgnorePointer(
+      child: LayoutBuilder(
+        builder: (context, box) => Stack(
+          children: [
+            for (final cue in cues)
+              Positioned(
+                left: cue.left * box.maxWidth,
+                top: cue.top * box.maxHeight,
+                width: cue.width * box.maxWidth,
+                height: cue.height == null ? null : cue.height! * box.maxHeight,
+                child: Image.memory(
+                  cue.png!,
+                  fit: BoxFit.fill,
+                  gaplessPlayback: true,
+                ),
+              ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
 class _SubtitlePickerSheet extends StatefulWidget {
   final String videoPath;
   final String videoTitle;
 
+  /// Subtitle tracks inside the video file itself.
+  final List<MyDeviceEmbeddedSubtitleTrack> embeddedTracks;
+  final bool subtitlesOn;
+
   const _SubtitlePickerSheet({
     required this.videoPath,
     required this.videoTitle,
+    this.embeddedTracks = const [],
+    this.subtitlesOn = false,
   });
 
   @override
@@ -1792,7 +1936,7 @@ class _SubtitlePickerSheetState extends State<_SubtitlePickerSheet> {
   @override
   Widget build(BuildContext context) {
     return SafeArea(
-      child: Padding(
+      child: SingleChildScrollView(
         padding: const EdgeInsets.fromLTRB(20, 16, 20, 20),
         child: Column(
           mainAxisSize: MainAxisSize.min,
@@ -1807,6 +1951,76 @@ class _SubtitlePickerSheetState extends State<_SubtitlePickerSheet> {
               ),
             ),
             const SizedBox(height: 12),
+            if (widget.subtitlesOn)
+              ListTile(
+                contentPadding: EdgeInsets.zero,
+                leading: const Icon(
+                  Icons.subtitles_off_outlined,
+                  color: _PlayerColors.textMuted,
+                  size: 18,
+                ),
+                title: Text(
+                  'Off',
+                  style: GoogleFonts.dmSans(
+                    fontSize: 13,
+                    color: _PlayerColors.textPrimary,
+                  ),
+                ),
+                onTap: () => Navigator.of(context).pop(const _SubtitlesOff()),
+              ),
+            if (widget.embeddedTracks.isNotEmpty) ...[
+              Text(
+                'IN THIS VIDEO',
+                style: GoogleFonts.dmSans(
+                  fontSize: 11,
+                  fontWeight: FontWeight.w700,
+                  letterSpacing: 0.8,
+                  color: _PlayerColors.textMuted,
+                ),
+              ),
+              for (final (i, track) in widget.embeddedTracks.indexed)
+                ListTile(
+                  contentPadding: EdgeInsets.zero,
+                  enabled: track.supported,
+                  leading: Icon(
+                    track.selected
+                        ? Icons.check_circle
+                        : Icons.closed_caption_outlined,
+                    color: track.selected
+                        ? _PlayerColors.primary
+                        : _PlayerColors.textMuted,
+                    size: 18,
+                  ),
+                  title: Text(
+                    track.displayName(i + 1),
+                    style: GoogleFonts.dmSans(
+                      fontSize: 13,
+                      color: _PlayerColors.textPrimary,
+                    ),
+                  ),
+                  subtitle: Text(
+                    [
+                      if (track.formatTag.isNotEmpty) track.formatTag,
+                      if (!track.supported) 'not supported on this device',
+                    ].join(' · '),
+                    style: GoogleFonts.dmSans(
+                      fontSize: 11,
+                      color: _PlayerColors.textMuted,
+                    ),
+                  ),
+                  onTap: () => Navigator.of(context).pop(track),
+                ),
+              const SizedBox(height: 8),
+              Text(
+                'FILES',
+                style: GoogleFonts.dmSans(
+                  fontSize: 11,
+                  fontWeight: FontWeight.w700,
+                  letterSpacing: 0.8,
+                  color: _PlayerColors.textMuted,
+                ),
+              ),
+            ],
             if (_local.isEmpty && _online == null)
               Text(
                 'No local subtitle files found next to this video.',

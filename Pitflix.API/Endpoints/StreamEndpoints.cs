@@ -65,7 +65,7 @@ public static class StreamEndpoints
             return Results.Json(rows, jsonSerializerOptions);
         });
 
-        app.MapGet("/api/stream/tv/{tmdbId:int}/season/{seasonNumber:int}/episodes", async (int tmdbId, int seasonNumber, HttpContext httpContext, IMemoryCache memoryCache, IHttpClientFactory httpFactory, IResolvedApiKeysAccessor apiKeys, CancellationToken ct) =>
+        app.MapGet("/api/stream/tv/{tmdbId:int}/season/{seasonNumber:int}/episodes", async (int tmdbId, int seasonNumber, HttpContext httpContext, IMemoryCache memoryCache, IHttpClientFactory httpFactory, IResolvedApiKeysAccessor apiKeys, RatingsAggregationService ratings, CancellationToken ct) =>
         {
             var apiKey = apiKeys.ResolvedTmdbApiKey;
             if (!AppSettings.IsValidTmdbKey(apiKey) || tmdbId <= 0 || seasonNumber <= 0)
@@ -101,6 +101,8 @@ public static class StreamEndpoints
                     ? null : $"https://image.tmdb.org/t/p/w342{seasonPosterPath}";
 
                 var episodes = new List<object>();
+                var episodeNumbers = new List<int>();
+                var missingImdb = false;
                 if (root.TryGetProperty("episodes", out var epsArr) && epsArr.ValueKind == JsonValueKind.Array)
                 {
                     foreach (var ep in epsArr.EnumerateArray())
@@ -114,6 +116,16 @@ public static class StreamEndpoints
                         var stillPath = Str(ep, "still_path");
                         var stillUrl = string.IsNullOrWhiteSpace(stillPath)
                             ? null : $"https://image.tmdb.org/t/p/w300{stillPath}";
+                        // Cache-only — never blocks this response on MDBList's 1 req/sec limit (same
+                        // pattern the local-library season page already uses). Anything missing gets
+                        // backfilled by the warm call fired after the loop, for next visit.
+                        var imdbVote = epNum > 0
+                            ? await ratings.TryGetCachedEpisodeImdbRatingAsync(tmdbId, seasonNumber, epNum, ct).ConfigureAwait(false)
+                            : null;
+                        if (epNum > 0)
+                            episodeNumbers.Add(epNum);
+                        if (imdbVote is null or <= 0)
+                            missingImdb = true;
 
                         episodes.Add(new
                         {
@@ -123,15 +135,24 @@ public static class StreamEndpoints
                             airDate,
                             runtime,
                             voteAverage = vote,
+                            imdbVoteAverage = imdbVote,
                             stillUrl,
                         });
                     }
                 }
 
+                if (episodeNumbers.Count > 0)
+                    _ = ratings.WarmShowEpisodeRatingsAsync(tmdbId, seasonNumber, episodeNumbers);
+
                 var payload = JsonSerializer.Serialize(
                     new { seasonName, seasonOverview, seasonPosterUrl, episodes, error = (string?)null }, jsonSerializerOptions);
-                memoryCache.Set(cacheKey, payload, TimeSpan.FromHours(6));
-                httpContext.Response.Headers["Cache-Control"] = "public,max-age=21600";
+                // Short-lived cache while any episode's IMDb rating is still missing, so the warm
+                // backfill fired above actually shows up on the next visit instead of being masked by
+                // this response's own cache for up to 6 hours. Once every episode has a rating, cache
+                // the full window like before — nothing left to backfill.
+                var ttl = missingImdb ? TimeSpan.FromMinutes(3) : TimeSpan.FromHours(6);
+                memoryCache.Set(cacheKey, payload, ttl);
+                httpContext.Response.Headers["Cache-Control"] = missingImdb ? "public,max-age=180" : "public,max-age=21600";
                 return Results.Text(payload, "application/json");
             }
             catch (Exception ex)
@@ -837,6 +858,54 @@ public static class StreamEndpoints
             var fetched = await Task.WhenAll(genreIds.Select(FetchOneAsync)).ConfigureAwait(false);
             var payload = JsonSerializer.Serialize(
                 fetched.Select(r => new { id = r.Id, posterUrl = r.PosterUrl }), jsonSerializerOptions);
+            httpContext.Response.Headers["Cache-Control"] = "public,max-age=86400";
+            return Results.Text(payload, "application/json");
+        });
+
+        // —— Collection tile previews for the online-stream "Collections" row ——
+        // Returns {id, name, posterUrl} for each requested TMDB collection id, so the
+        // frontend can render a curated row of franchise tiles (Harry Potter, Star Wars, …)
+        // without one full collection+parts round-trip per tile.
+        app.MapGet("/api/stream/collection-previews", async (string? ids, HttpContext httpContext, IMemoryCache memoryCache, ITmdbClientFactory tmdbClientFactory, CancellationToken ct) =>
+        {
+            if (string.IsNullOrWhiteSpace(ids))
+                return Results.Json(Array.Empty<object>(), jsonSerializerOptions);
+
+            var tmdb = tmdbClientFactory.Create();
+            if (tmdb == null)
+                return Results.Json(Array.Empty<object>(), jsonSerializerOptions);
+
+            var collectionIds = ids.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+                .Select(s => int.TryParse(s, out var v) ? v : 0)
+                .Where(v => v > 0)
+                .Distinct()
+                .Take(30)
+                .ToList();
+
+            async Task<(int Id, string? Name, string? PosterUrl)> FetchOneAsync(int collectionId)
+            {
+                var cacheKey = $"stream:collection-preview:{collectionId}";
+                if (memoryCache.TryGetValue(cacheKey, out (string? Name, string? PosterUrl) cached))
+                    return (collectionId, cached.Name, cached.PosterUrl);
+
+                try
+                {
+                    var col = await tmdb.TryGetCollectionAsync(collectionId, ct).ConfigureAwait(false);
+                    string? posterUrl = string.IsNullOrEmpty(col?.PosterPath)
+                        ? null
+                        : $"https://image.tmdb.org/t/p/w342{col!.PosterPath}";
+                    memoryCache.Set(cacheKey, (col?.Name, posterUrl), TimeSpan.FromHours(24));
+                    return (collectionId, col?.Name, posterUrl);
+                }
+                catch
+                {
+                    return (collectionId, null, null);
+                }
+            }
+
+            var fetched = await Task.WhenAll(collectionIds.Select(FetchOneAsync)).ConfigureAwait(false);
+            var payload = JsonSerializer.Serialize(
+                fetched.Select(r => new { id = r.Id, name = r.Name, posterUrl = r.PosterUrl }), jsonSerializerOptions);
             httpContext.Response.Headers["Cache-Control"] = "public,max-age=86400";
             return Results.Text(payload, "application/json");
         });

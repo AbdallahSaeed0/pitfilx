@@ -12,24 +12,24 @@ const STYLE_OPTIONS: {
     description: "Full-bleed hero + a separate Up Next carousel — the Pitflix default.",
   },
   {
-    id: "1a",
-    title: "Compact Spotlight",
-    description: "Contained card with a landscape Up Next shelf, all in one panel.",
+    id: "billboard",
+    title: "Cinematic Billboard",
+    description: "Full-bleed hero with a thumbnail rail and wide episode cards below.",
   },
   {
-    id: "1b",
-    title: "Ambient Immersion",
-    description: "Full-bleed color wash hero with tall poster cards below.",
+    id: "preview",
+    title: "Preview Window",
+    description: "Wide drifting backdrop, title underneath, labelled tiles (stills or posters).",
   },
   {
-    id: "1c",
-    title: "Watchlist Queue",
-    description: "Inbox-style queue on the left, featured preview on the right.",
+    id: "backdropRow",
+    title: "Backdrop Row",
+    description: "Up Next laid on the backdrop — pick a card to swap the whole hero.",
   },
   {
-    id: "1d",
-    title: "Split Wide",
-    description: "60/40 hero split with an episode-first Up Next shelf.",
+    id: "posterShelf",
+    title: "Poster Shelf",
+    description: "Tall posters; the picked one opens into a wide card with the next episodes.",
   },
 ];
 
@@ -50,62 +50,73 @@ function StylePreview({ style }: { style: LibrarySectionsStyle }) {
         </>
       ) : null}
 
-      {style === "1a" ? (
+      {style === "billboard" ? (
         <>
-          <div className="absolute inset-x-[6%] top-[10%] flex h-[38%] items-stretch overflow-hidden rounded-md border border-white/10 bg-white/[0.04]">
-            <span className="w-[16%] shrink-0 bg-violet-500/50" />
-            <span className="flex-1" />
-            <span className="my-auto mr-2 h-[45%] w-[12%] rounded-full bg-violet-400/70" />
-          </div>
-          <div className="absolute bottom-[8%] left-[6%] flex gap-1">
+          <div className="absolute inset-x-[6%] top-[8%] h-[54%] rounded-md bg-gradient-to-r from-white/[0.10] to-white/[0.03]" />
+          <div className="absolute left-[10%] top-[40%] h-1.5 w-[32%] rounded-full bg-white/35" />
+          <div className="absolute left-[10%] top-[50%] h-[7%] w-[14%] rounded-sm bg-violet-500/70" />
+          <div className="absolute right-[10%] top-[12%] flex gap-0.5">
             {[0, 1, 2].map((i) => (
-              <span key={i} className="h-[22%] w-[16%] rounded-sm bg-white/15" />
+              <span key={i} className={i === 0 ? "h-2 w-3 rounded-[2px] ring-1 ring-white/70" : "h-2 w-3 rounded-[2px] bg-white/20"} />
             ))}
-          </div>
-        </>
-      ) : null}
-
-      {style === "1b" ? (
-        <>
-          <div className="absolute inset-x-[6%] top-[8%] h-[44%] overflow-hidden rounded-md bg-gradient-to-t from-violet-600/60 via-violet-800/30 to-transparent" />
-          <div className="absolute left-[8%] top-[36%] h-2 w-[36%] rounded-full bg-white/30" />
-          <div className="absolute bottom-[8%] left-[6%] flex gap-1">
-            {[0, 1, 2].map((i) => (
-              <span key={i} className="h-[24%] w-[13%] rounded-sm bg-white/15" />
-            ))}
-          </div>
-        </>
-      ) : null}
-
-      {style === "1c" ? (
-        <>
-          <div className="absolute inset-x-[6%] top-[10%] flex h-[46%] overflow-hidden rounded-md border border-white/10">
-            <span className="w-[40%] shrink-0 bg-violet-500/25" />
-            <span className="flex-1 bg-white/[0.05]" />
-          </div>
-          <div className="absolute bottom-[8%] left-[6%] right-[6%] flex flex-col gap-1">
-            {[0, 1].map((i) => (
-              <span key={i} className="h-[14%] w-full rounded-sm bg-white/10" />
-            ))}
-          </div>
-        </>
-      ) : null}
-
-      {style === "1d" ? (
-        <>
-          <div className="absolute inset-x-[6%] top-[10%] flex h-[40%] overflow-hidden rounded-md border border-white/10">
-            <span className="w-[62%] shrink-0 bg-white/[0.06]" />
-            <span className="flex-1 bg-violet-500/20" />
           </div>
           <div className="absolute bottom-[8%] left-[6%] right-[6%] flex gap-1">
-            {[0, 1, 2].map((i) => (
-              <span key={i} className="h-[24%] flex-1 rounded-sm bg-white/10" />
+            {[0, 1, 2, 3].map((i) => (
+              <span key={i} className="h-[20%] flex-1 rounded-sm bg-white/15" />
             ))}
           </div>
         </>
       ) : null}
 
-      <div className="absolute inset-x-[34%] top-[28%] h-[10%] rounded-md border border-white/[0.06] bg-white/[0.03]" />
+      {style === "preview" ? (
+        <>
+          <div className="absolute inset-x-[6%] top-[8%] h-[40%] rounded-md bg-white/[0.10]" />
+          <div className="absolute left-[6%] top-[54%] h-1.5 w-[30%] rounded-full bg-white/35" />
+          <div className="absolute right-[6%] top-[52%] h-[7%] w-[13%] rounded-sm bg-white/70" />
+          <div className="absolute bottom-[8%] left-[6%] right-[6%] flex gap-1">
+            {[0, 1, 2, 3, 4].map((i) => (
+              <span key={i} className="relative h-[20%] flex-1 rounded-sm bg-white/15">
+                {i < 2 ? <span className="absolute bottom-0.5 left-0 h-1 w-[60%] bg-red-600/80" /> : null}
+              </span>
+            ))}
+          </div>
+        </>
+      ) : null}
+
+      {style === "backdropRow" ? (
+        <>
+          <div className="absolute inset-[6%] rounded-md bg-gradient-to-t from-white/[0.03] to-white/[0.11]" />
+          <div className="absolute left-[11%] top-[18%] h-2 w-[36%] rounded-full bg-white/35" />
+          <div className="absolute left-[11%] top-[30%] h-[7%] w-[14%] rounded-sm bg-violet-500/70" />
+          <div className="absolute bottom-[12%] left-[11%] right-[11%] flex gap-1">
+            {[0, 1, 2, 3].map((i) => (
+              <span
+                key={i}
+                className={i === 0 ? "h-4 flex-[2] rounded-sm ring-1 ring-white/70" : "h-4 flex-1 rounded-sm bg-white/15"}
+              />
+            ))}
+          </div>
+        </>
+      ) : null}
+
+      {style === "posterShelf" ? (
+        <>
+          <div className="absolute bottom-[26%] left-[6%] right-[6%] top-[10%] flex gap-1">
+            <span className="relative flex-[3] rounded-md bg-white/[0.11] ring-1 ring-white/60">
+              <span className="absolute bottom-[18%] left-[10%] h-1.5 w-[50%] rounded-full bg-white/40" />
+            </span>
+            {[0, 1, 2].map((i) => (
+              <span key={i} className="flex-1 rounded-md bg-white/15" />
+            ))}
+          </div>
+          <div className="absolute bottom-[8%] left-[6%] right-[6%] flex gap-1">
+            {[0, 1, 2, 3].map((i) => (
+              <span key={i} className="h-2 flex-1 rounded-sm bg-white/10" />
+            ))}
+          </div>
+        </>
+      ) : null}
+
     </div>
   );
 }

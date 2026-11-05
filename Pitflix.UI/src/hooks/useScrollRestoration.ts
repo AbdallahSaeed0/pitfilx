@@ -1,4 +1,5 @@
 import { useEffect, useRef } from "react";
+import { SCROLL_RESET_EVENT } from "../components/layout/PageTransition";
 
 // Keyed by route pathname+search so filters that change the URL count as a new scroll position.
 const positions = new Map<string, number>();
@@ -14,11 +15,22 @@ export function useScrollRestoration(key: string, ready: boolean) {
   useEffect(() => {
     const el = getScrollEl();
     if (!el) return;
-    const onScroll = () => positions.set(key, el.scrollTop);
+    // <main> is shared by every page. When the next page opens, PageTransition announces a reset
+    // and jumps it to the top — and that jump's scroll event (plus this effect's passive cleanup)
+    // can land before React tears this page down, which recorded 0 as this page's position. Stop
+    // recording as soon as the reset is announced; the last real position is already saved.
+    let leaving = false;
+    const onScroll = () => {
+      if (!leaving) positions.set(key, el.scrollTop);
+    };
+    const onReset = () => {
+      leaving = true;
+    };
     el.addEventListener("scroll", onScroll, { passive: true });
+    el.addEventListener(SCROLL_RESET_EVENT, onReset);
     return () => {
-      positions.set(key, el.scrollTop);
       el.removeEventListener("scroll", onScroll);
+      el.removeEventListener(SCROLL_RESET_EVENT, onReset);
     };
   }, [key]);
 

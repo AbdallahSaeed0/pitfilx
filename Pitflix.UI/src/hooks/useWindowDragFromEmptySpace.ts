@@ -1,6 +1,7 @@
 import { isTauri } from "@tauri-apps/api/core";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { useEffect } from "react";
+import { isPlayerCovering } from "../store/playerCoverStore";
 
 /** Elements that must NOT start a window drag — interactive controls, text fields,
  *  the existing Tauri drag strip, and anything that opts out with `.no-window-drag`
@@ -27,6 +28,9 @@ export function useWindowDragFromEmptySpace() {
 
     const onPointerDown = (e: PointerEvent) => {
       if (e.button !== 0) return; // primary button only
+      // MainLayout stays mounted under the full player now (see AppRoutes) — presses there are
+      // the player's (seek bar, video), and must not start moving the whole window.
+      if (isPlayerCovering()) return;
       const target = e.target as HTMLElement | null;
       if (!target) return;
       // Don't arm on interactive controls or opt-out regions.

@@ -1,0 +1,228 @@
+{
+  "awardId": "primetime-emmys",
+  "year": 2026,
+  "label": "78th Primetime Emmy Awards (2026 ceremony)",
+  "categories": [
+    {
+      "id": "outstanding-drama-series",
+      "name": "Outstanding Drama Series",
+      "nominees": [
+        { "title": "The Pitt", "mediaType": "tv", "tmdbId": null, "winner": true },
+        { "title": "The Diplomat", "mediaType": "tv", "tmdbId": null, "winner": false },
+        { "title": "The Gilded Age", "mediaType": "tv", "tmdbId": null, "winner": false },
+        { "title": "A Knight of the Seven Kingdoms", "mediaType": "tv", "tmdbId": null, "winner": false },
+        { "title": "Paradise", "mediaType": "tv", "tmdbId": null, "winner": false },
+        { "title": "Pluribus", "mediaType": "tv", "tmdbId": null, "winner": false },
+        { "title": "Slow Horses", "mediaType": "tv", "tmdbId": null, "winner": false },
+        { "title": "Your Friends & Neighbors", "mediaType": "tv", "tmdbId": null, "winner": false }
+      ]
+    },
+    {
+      "id": "outstanding-comedy-series",
+      "name": "Outstanding Comedy Series",
+      "nominees": [
+        { "title": "Widow's Bay", "mediaType": "tv", "tmdbId": null, "winner": true },
+        { "title": "Abbott Elementary", "mediaType": "tv", "tmdbId": null, "winner": false },
+        { "title": "The Bear", "mediaType": "tv", "tmdbId": null, "winner": false },
+        { "title": "Hacks", "mediaType": "tv", "tmdbId": null, "winner": false },
+        { "title": "Margo's Got Money Troubles", "mediaType": "tv", "tmdbId": null, "winner": false },
+        { "title": "Nobody Wants This", "mediaType": "tv", "tmdbId": null, "winner": false },
+        { "title": "Only Murders in the Building", "mediaType": "tv", "tmdbId": null, "winner": false },
+        { "title": "Shrinking", "mediaType": "tv", "tmdbId": null, "winner": false }
+      ]
+    },
+    {
+      "id": "outstanding-limited-series",
+      "name": "Outstanding Limited or Anthology Series",
+      "nominees": [
+        { "title": "DTF St. Louis", "mediaType": "tv", "tmdbId": null, "winner": true },
+        { "title": "All Her Fault", "mediaType": "tv", "tmdbId": null, "winner": false },
+        { "title": "The Beast in Me", "mediaType": "tv", "tmdbId": null, "winner": false },
+        { "title": "Beef", "mediaType": "tv", "tmdbId": null, "winner": false },
+        { "title": "Love Story: John F. Kennedy Jr. & Carolyn Bessette", "mediaType": "tv", "tmdbId": null, "winner": false }
+      ]
+    },
+    {
+      "id": "emmy-lead-actor-drama",
+      "name": "Outstanding Lead Actor in a Drama Series",
+      "nominees": [
+        { "title": "Noah Wyle — The Pitt", "mediaType": "tv", "tmdbId": null, "winner": true },
+        { "title": "Sterling K. Brown — Paradise", "mediaType": "tv", "tmdbId": null, "winner": false },
+        { "title": "Gary Oldman — Slow Horses", "mediaType": "tv", "tmdbId": null, "winner": false },
+        { "title": "Mark Ruffalo — Task", "mediaType": "tv", "tmdbId": null, "winner": false },
+        { "title": "Rufus Sewell — The Diplomat", "mediaType": "tv", "tmdbId": null, "winner": false }
+      ]
+    },
+    {
+      "id": "emmy-lead-actor-comedy",
+      "name": "Outstanding Lead Actor in a Comedy Series",
+      "nominees": [
+        { "title": "Matthew Rhys — Widow's Bay", "mediaType": "tv", "tmdbId": null, "winner": true },
+        { "title": "Yahya Abdul-Mateen II — Wonder Man", "mediaType": "tv", "tmdbId": null, "winner": false },
+        { "title": "Steve Carell — Rooster", "mediaType": "tv", "tmdbId": null, "winner": false },
+        { "title": "Jason Segel — Shrinking", "mediaType": "tv", "tmdbId": null, "winner": false },
+        { "title": "Martin Short — Only Murders in the Building", "mediaType": "tv", "tmdbId": null, "winner": false }
+      ]
+    },
+    {
+      "id": "emmy-lead-actress-drama",
+      "name": "Outstanding Lead Actress in a Drama Series",
+      "nominees": [
+        { "title": "Rhea Seehorn — Pluribus", "mediaType": "tv", "tmdbId": null, "winner": true },
+        { "title": "Carrie Coon — The Gilded Age", "mediaType": "tv", "tmdbId": null, "winner": false },
+        { "title": "Chase Infiniti — The Testaments", "mediaType": "tv", "tmdbId": null, "winner": false },
+        { "title": "Keri Russell — The Diplomat", "mediaType": "tv", "tmdbId": null, "winner": false },
+        { "title": "Zendaya — Euphoria", "mediaType": "tv", "tmdbId": null, "winner": false }
+      ]
+    },
+    {
+      "id": "emmy-lead-actress-comedy",
+      "name": "Outstanding Lead Actress in a Comedy Series",
+      "nominees": [
+        { "title": "Jean Smart — Hacks", "mediaType": "tv", "tmdbId": null, "winner": true },
+        { "title": "Quinta Brunson — Abbott Elementary", "mediaType": "tv", "tmdbId": null, "winner": false },
+        { "title": "Ayo Edebiri — The Bear", "mediaType": "tv", "tmdbId": null, "winner": false },
+        { "title": "Elle Fanning — Margo's Got Money Troubles", "mediaType": "tv", "tmdbId": null, "winner": false },
+        { "title": "Lisa Kudrow — The Comeback", "mediaType": "tv", "tmdbId": null, "winner": false }
+      ]
+    },
+    {
+      "id": "emmy-supporting-actor-drama",
+      "name": "Outstanding Supporting Actor in a Drama Series",
+      "nominees": [
+        { "title": "Tom Pelphrey — Task", "mediaType": "tv", "tmdbId": null, "winner": true },
+        { "title": "Patrick Ball — The Pitt", "mediaType": "tv", "tmdbId": null, "winner": false },
+        { "title": "Billy Crudup — The Morning Show", "mediaType": "tv", "tmdbId": null, "winner": false },
+        { "title": "Shawn Hatosy — The Pitt", "mediaType": "tv", "tmdbId": null, "winner": false },
+        { "title": "Gerran Howell — The Pitt", "mediaType": "tv", "tmdbId": null, "winner": false },
+        { "title": "Jack Lowden — Slow Horses", "mediaType": "tv", "tmdbId": null, "winner": false },
+        { "title": "Carlos-Manuel Vesga — Pluribus", "mediaType": "tv", "tmdbId": null, "winner": false }
+      ]
+    },
+    {
+      "id": "emmy-supporting-actor-comedy",
+      "name": "Outstanding Supporting Actor in a Comedy Series",
+      "nominees": [
+        { "title": "Stephen Root — Widow's Bay", "mediaType": "tv", "tmdbId": null, "winner": true },
+        { "title": "Colman Domingo — The Four Seasons", "mediaType": "tv", "tmdbId": null, "winner": false },
+        { "title": "Paul W. Downs — Hacks", "mediaType": "tv", "tmdbId": null, "winner": false },
+        { "title": "Harrison Ford — Shrinking", "mediaType": "tv", "tmdbId": null, "winner": false },
+        { "title": "Nick Offerman — Margo's Got Money Troubles", "mediaType": "tv", "tmdbId": null, "winner": false },
+        { "title": "Michael Urie — Shrinking", "mediaType": "tv", "tmdbId": null, "winner": false },
+        { "title": "Tyler James Williams — Abbott Elementary", "mediaType": "tv", "tmdbId": null, "winner": false }
+      ]
+    },
+    {
+      "id": "emmy-supporting-actress-drama",
+      "name": "Outstanding Supporting Actress in a Drama Series",
+      "nominees": [
+        { "title": "Allison Janney — The Diplomat", "mediaType": "tv", "tmdbId": null, "winner": true },
+        { "title": "Taylor Dearden — The Pitt", "mediaType": "tv", "tmdbId": null, "winner": false },
+        { "title": "Fiona Dourif — The Pitt", "mediaType": "tv", "tmdbId": null, "winner": false },
+        { "title": "Katherine LaNasa — The Pitt", "mediaType": "tv", "tmdbId": null, "winner": false },
+        { "title": "Sepideh Moafi — The Pitt", "mediaType": "tv", "tmdbId": null, "winner": false },
+        { "title": "Julianne Nicholson — Paradise", "mediaType": "tv", "tmdbId": null, "winner": false },
+        { "title": "Karolina Wydra — Pluribus", "mediaType": "tv", "tmdbId": null, "winner": false }
+      ]
+    },
+    {
+      "id": "emmy-supporting-actress-comedy",
+      "name": "Outstanding Supporting Actress in a Comedy Series",
+      "nominees": [
+        { "title": "Kate O'Flynn — Widow's Bay", "mediaType": "tv", "tmdbId": null, "winner": true },
+        { "title": "Dale Dickey — Widow's Bay", "mediaType": "tv", "tmdbId": null, "winner": false },
+        { "title": "Hannah Einbinder — Hacks", "mediaType": "tv", "tmdbId": null, "winner": false },
+        { "title": "Janelle James — Abbott Elementary", "mediaType": "tv", "tmdbId": null, "winner": false },
+        { "title": "Michelle Pfeiffer — Margo's Got Money Troubles", "mediaType": "tv", "tmdbId": null, "winner": false },
+        { "title": "Megan Stalter — Hacks", "mediaType": "tv", "tmdbId": null, "winner": false },
+        { "title": "Jessica Williams — Shrinking", "mediaType": "tv", "tmdbId": null, "winner": false }
+      ]
+    },
+    {
+      "id": "emmy-directing-drama",
+      "name": "Outstanding Directing for a Drama Series",
+      "nominees": [
+        { "title": "Slow Horses", "mediaType": "tv", "tmdbId": null, "winner": true },
+        { "title": "The Gilded Age", "mediaType": "tv", "tmdbId": null, "winner": false },
+        { "title": "Paradise", "mediaType": "tv", "tmdbId": null, "winner": false },
+        { "title": "The Pitt", "mediaType": "tv", "tmdbId": null, "winner": false },
+        { "title": "Pluribus", "mediaType": "tv", "tmdbId": null, "winner": false },
+        { "title": "Task", "mediaType": "tv", "tmdbId": null, "winner": false }
+      ]
+    },
+    {
+      "id": "emmy-directing-comedy",
+      "name": "Outstanding Directing for a Comedy Series",
+      "nominees": [
+        { "title": "Widow's Bay", "mediaType": "tv", "tmdbId": null, "winner": true },
+        { "title": "Abbott Elementary", "mediaType": "tv", "tmdbId": null, "winner": false },
+        { "title": "The Bear", "mediaType": "tv", "tmdbId": null, "winner": false },
+        { "title": "The Chair Company", "mediaType": "tv", "tmdbId": null, "winner": false },
+        { "title": "Hacks", "mediaType": "tv", "tmdbId": null, "winner": false },
+        { "title": "The Ms. Pat Show", "mediaType": "tv", "tmdbId": null, "winner": false }
+      ]
+    },
+    {
+      "id": "emmy-directing-limited",
+      "name": "Outstanding Directing for a Limited or Anthology Series or Movie",
+      "nominees": [
+        { "title": "DTF St. Louis", "mediaType": "tv", "tmdbId": null, "winner": true },
+        { "title": "Beef (It Will Stay This Way And You Will Obey)", "mediaType": "tv", "tmdbId": null, "winner": false },
+        { "title": "Beef (Oh, The Comfort, The Inexpressible Comfort)", "mediaType": "tv", "tmdbId": null, "winner": false },
+        { "title": "Black Rabbit", "mediaType": "tv", "tmdbId": null, "winner": false }
+      ]
+    },
+    {
+      "id": "emmy-writing-drama",
+      "name": "Outstanding Writing for a Drama Series",
+      "nominees": [
+        { "title": "Pluribus", "mediaType": "tv", "tmdbId": null, "winner": true },
+        { "title": "The Diplomat", "mediaType": "tv", "tmdbId": null, "winner": false },
+        { "title": "The Pitt (1:00 P.M.)", "mediaType": "tv", "tmdbId": null, "winner": false },
+        { "title": "The Pitt (12:00 P.M.)", "mediaType": "tv", "tmdbId": null, "winner": false },
+        { "title": "Slow Horses", "mediaType": "tv", "tmdbId": null, "winner": false },
+        { "title": "Task", "mediaType": "tv", "tmdbId": null, "winner": false }
+      ]
+    },
+    {
+      "id": "emmy-writing-comedy",
+      "name": "Outstanding Writing for a Comedy Series",
+      "nominees": [
+        { "title": "Widow's Bay", "mediaType": "tv", "tmdbId": null, "winner": true },
+        { "title": "Abbott Elementary", "mediaType": "tv", "tmdbId": null, "winner": false },
+        { "title": "The Chair Company", "mediaType": "tv", "tmdbId": null, "winner": false },
+        { "title": "The Comeback", "mediaType": "tv", "tmdbId": null, "winner": false },
+        { "title": "Hacks", "mediaType": "tv", "tmdbId": null, "winner": false },
+        { "title": "Jury Duty Presents: Company Retreat", "mediaType": "tv", "tmdbId": null, "winner": false }
+      ]
+    },
+    {
+      "id": "emmy-writing-limited",
+      "name": "Outstanding Writing for a Limited or Anthology Series or Movie",
+      "nominees": [
+        { "title": "DTF St. Louis", "mediaType": "tv", "tmdbId": null, "winner": true },
+        { "title": "All Her Fault", "mediaType": "tv", "tmdbId": null, "winner": false },
+        { "title": "The Beast in Me", "mediaType": "tv", "tmdbId": null, "winner": false },
+        { "title": "Beef", "mediaType": "tv", "tmdbId": null, "winner": false },
+        { "title": "Death by Lightning", "mediaType": "tv", "tmdbId": null, "winner": false }
+      ]
+    }
+  ],
+  "dataSource": "televisionacademy.com-official-nominees-winners-2026",
+  "notes": "Compiled from televisionacademy.com/awards/nominees-winners/2026/* (official Television Academy results) plus news-outlet cross-checks (CBS News, ABC7, IndieWire) for the 78th Primetime Emmy Awards, ceremony held September 2026. tmdbId left null; enrich separately.",
+  "qa": {
+    "version": 1,
+    "lastAuditAt": "2026-09-25T00:00:00.000Z",
+    "isSeedEdition": false,
+    "needsNomineeBackfill": false,
+    "needsTmdbEnrichment": true,
+    "warnings": [],
+    "stats": {
+      "categoryCount": 17,
+      "nomineeCount": 102,
+      "winnerCount": 17,
+      "tmdbNull": 102,
+      "tmdbSet": 0
+    }
+  }
+}

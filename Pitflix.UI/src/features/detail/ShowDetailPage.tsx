@@ -1,4 +1,5 @@
 import { isTauri } from "@tauri-apps/api/core";
+import { AmbientBackdrop, HeroBackdrop } from "../../components/detail/CinematicBackdrop";
 import { ArrowLeft, Ban, Check, Download, FolderOpen, ImageIcon, Play, RefreshCw, Star } from "lucide-react";
 import { getRatingsAggregate, queueRatingsStaleSweep } from "../../api/ratings";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
@@ -24,6 +25,10 @@ import { toPosterSrc } from "../../utils/posterSrc";
 import { cn } from "../../utils/cn";
 import { RatingsPanel } from "../../components/RatingsPanel";
 import { ParentsGuideSection } from "../../components/ParentsGuideSection";
+import { useAppPrefsStore } from "../../store/appPrefsStore";
+import { CinematicDetailLayout } from "./layouts/CinematicDetailLayout";
+import { DossierDetailLayout } from "./layouts/DossierDetailLayout";
+import type { DetailViewModel } from "./layouts/types";
 import {
   CastCrewSection,
   ContentRatingBadge,
@@ -65,6 +70,7 @@ export function ShowDetailPage() {
   const [wsmSeasonDownload, setWsmSeasonDownload] = useState<number | null>(null);
   const [dropBusy, setDropBusy] = useState(false);
   const sid = Number(id);
+  const detailLayout = useAppPrefsStore((s) => s.detailLayout);
   const { menu, closeMenu, handleContextMenu, runAction } = useMediaContextMenu();
   const { data, isLoading } = useQuery({
     queryKey: ["show", sid],
@@ -81,7 +87,7 @@ export function ShowDetailPage() {
   const showVideosQ = useQuery({
     queryKey: ["show-videos", sid],
     queryFn: () => getShowVideos(sid),
-    enabled: Number.isFinite(sid) && sid > 0 && !!data,
+    enabled: Number.isFinite(sid) && sid > 0,
     staleTime: 60 * 60_000,
   });
 
@@ -164,12 +170,158 @@ export function ShowDetailPage() {
     show.selectedPosterPath || show.posterLocalPath || show.posterRemoteUrl || undefined,
   );
 
+  const playEpisode = (ep: { id: number; filePath: string; episodeNumber: number; title?: string | null }, season: number) =>
+    void requestPlay({
+      filePath: ep.filePath,
+      title: `${show.title} \u00b7 ${ep.title?.trim() || `S${season}E${ep.episodeNumber}`}`,
+      posterPath: show.selectedPosterPath || show.posterLocalPath || null,
+      mediaType: "Series",
+      durationSeconds: 0,
+      context: { libraryShowId: show.id, libraryEpisodeId: ep.id, season, episodeNumber: ep.episodeNumber },
+    });
+
+  const refreshRatings = () => {
+    setRatingRefreshing(true);
+    qc.removeQueries({ predicate: (q) => q.queryKey[0] === "mdblist-ratings" && q.queryKey[1] === show.tmdbId });
+    void queueRatingsStaleSweep().catch(() => {});
+    void getRatingsAggregate(show.tmdbId, "tv")
+      .then((fresh) => { qc.setQueryData(["ratings-display", show.tmdbId, "tv"], fresh); })
+      .catch(() => { void qc.refetchQueries({ queryKey: ["ratings-display", show.tmdbId, "tv"] }); })
+      .finally(() => setRatingRefreshing(false));
+  };
+
+  if (detailLayout !== "classic") {
+    const firstLocalSeason = seasonsSummary.find((s) => s.inLibrary !== false && s.seasonNumber > 0)?.seasonNumber;
+    const vm: DetailViewModel = {
+      kind: "series",
+      libraryId: show.id,
+      tmdbId: show.tmdbId,
+      title: show.title,
+      year: show.year,
+      overview: show.overview,
+      genres: (show.genres ?? show.genresCsv ?? "").split(",").map((g) => g.trim()).filter(Boolean),
+      contentRating: contentRatingShow,
+      backdrop,
+      poster,
+      clearLogoUrl: tvdbClearLogoUrl,
+      watchStatus: show.watchStatus,
+      imdbId,
+      primary: nextEpisode
+        ? {
+            label: `Continue S${nextEpisode.season} E${nextEpisode.episodeNumber}`,
+            sub: nextEpisode.title?.trim() ? `\u201c${nextEpisode.title.trim()}\u201d` : null,
+            onClick: () => playEpisode(nextEpisode, nextEpisode.season),
+          }
+        : firstEpisode
+          ? {
+              label: "Watch again",
+              sub: `From S${firstEpisode.season} E${firstEpisode.episode.episodeNumber}`,
+              again: true,
+              onClick: () => playEpisode(firstEpisode.episode, firstEpisode.season),
+            }
+          : null,
+      toolbar: {
+        kind: "series",
+        libraryId: show.id,
+        tmdbId: show.tmdbId,
+        pickHint: show.title,
+        folderPath: show.folderPath || undefined,
+        onDeleted: () => navigate(-1),
+        onShowRematched: (newLibraryId) => {
+          void qc.invalidateQueries({ queryKey: ["show", sid] });
+          void qc.invalidateQueries({ queryKey: ["show", newLibraryId] });
+          if (newLibraryId !== sid) navigate(`/series/${newLibraryId}`, { replace: true });
+        },
+      },
+      ratingsRefresh: { refreshing: ratingRefreshing, onRefresh: refreshRatings },
+      deviceActions: [
+        ...(isTauri() && show.folderPath
+          ? [{ key: "folder", label: "Open folder", icon: FolderOpen, onClick: () => openFolder(show.folderPath!) }]
+          : []),
+        { key: "artwork", label: "Change artwork\u2026", icon: ImageIcon, onClick: () => setShowArtworkPicker(true) },
+        {
+          key: "drop",
+          label: isDropped ? "Resume tracking in Up Next" : "Drop show (hide from Up Next)",
+          icon: Ban,
+          disabled: dropBusy,
+          onClick: toggleDropped,
+        },
+      ],
+      localPath: show.folderPath ?? null,
+      cast: cast ?? [],
+      crew: (data.crew ?? []) as CrewMember[],
+      similar: tmdbSimilarShow,
+      companies,
+      extras: showExtras,
+      onPosterClick: () => poster && setShowPosterLightbox(true),
+      onContextMenu: handleContextMenu({
+        kind: "series",
+        libraryId: sid,
+        tmdbId: show.tmdbId,
+        title: show.title,
+        watchStatus: show.watchStatus,
+      }),
+      navigate,
+      series: {
+        seasonsSummary,
+        focusSeason: nextEpisode?.season ?? firstLocalSeason ?? seasons[0] ?? null,
+        isDropped,
+        playEpisode,
+        onDownloadSeason: (season) => setWsmSeasonDownload(season),
+      },
+    };
+
+    return (
+      <div className="isolate">
+        <AmbientBackdrop src={backdrop} />
+        {ResumePromptModal}
+        {detailLayout === "cinematic" ? (
+          <CinematicDetailLayout key={sid} vm={vm} />
+        ) : (
+          <DossierDetailLayout key={sid} vm={vm} />
+        )}
+        {showArtworkPicker ? (
+          <PosterPickerModal
+            libraryId={show.id}
+            tmdbId={show.tmdbId}
+            mediaType="Series"
+            initialTab="poster"
+            onClose={() => setShowArtworkPicker(false)}
+            onApplied={() => void qc.invalidateQueries({ queryKey: ["show", sid] })}
+          />
+        ) : null}
+        {showPosterLightbox && poster ? <Lightbox url={poster} onClose={() => setShowPosterLightbox(false)} /> : null}
+        <WsmDownloadModal
+          isOpen={wsmSeasonDownload != null}
+          onClose={() => setWsmSeasonDownload(null)}
+          mode="season"
+          tmdbId={show.tmdbId ?? 0}
+          imdbId={imdbId}
+          title={show.title ?? "Series"}
+          season={wsmSeasonDownload ?? undefined}
+          episodeLabel={wsmSeasonDownload != null ? `Season ${wsmSeasonDownload}` : undefined}
+        />
+        {menu ? (
+          <MediaContextMenu
+            target={menu.target}
+            x={menu.x}
+            y={menu.y}
+            showRescan={menu.target.kind !== "streaming"}
+            onAction={(action) => void runAction(action)}
+            onClose={closeMenu}
+          />
+        ) : null}
+      </div>
+    );
+  }
+
   return (
-    <div>
+    <div className="isolate">
+      <AmbientBackdrop src={backdrop} />
       {ResumePromptModal}
       {/* Cinematic hero */}
       <div className="-mx-6 -mt-12">
-        <div className="relative h-[560px] overflow-hidden bg-pitflix-card">
+        <div className="relative h-[560px] overflow-hidden">
           <button
             type="button"
             onClick={() => navigate(-1)}
@@ -178,19 +330,7 @@ export function ShowDetailPage() {
             <ArrowLeft className="h-4 w-4" />
             Back
           </button>
-          <div className="pointer-events-none absolute inset-0">
-            {backdrop ? (
-              <div className="absolute inset-0 [&_img]:h-full [&_img]:w-full [&_img]:object-cover [&_img]:object-top [&_img]:opacity-75">
-                <MediaImage src={backdrop} alt="" className="h-full w-full bg-pitflix-card" fallbackText="" />
-              </div>
-            ) : (
-              <div className="absolute inset-0 bg-pitflix-card" />
-            )}
-            {/* Left fade so text stays readable */}
-            <div className="absolute inset-0 bg-gradient-to-r from-pitflix-bg via-pitflix-bg/55 to-transparent" />
-            {/* Bottom fade merges into the page */}
-            <div className="absolute bottom-0 left-0 right-0 h-2/3 bg-gradient-to-t from-pitflix-bg via-pitflix-bg/60 to-transparent" />
-          </div>
+          <HeroBackdrop src={backdrop} />
           <div
             className="absolute bottom-0 left-0 right-0 z-10 flex items-end gap-9 px-12 pb-9"
             onContextMenu={handleContextMenu({
@@ -380,7 +520,7 @@ export function ShowDetailPage() {
       </div>
 
       {/* Ratings */}
-      <div className="-mx-6 border-t border-white/5 px-12 py-5">
+      <div className="relative -mx-6 px-12 py-5 before:absolute before:inset-x-12 before:top-0 before:h-px before:bg-gradient-to-r before:from-transparent before:via-white/10 before:to-transparent">
         <div className="mb-3 flex items-center justify-between">
           <span className="text-[11px] font-semibold uppercase tracking-[0.12em] text-white/35">Ratings</span>
           <button
@@ -447,7 +587,7 @@ export function ShowDetailPage() {
                       </button>
                     ) : null}
                     <MediaImage
-                      src={s.posterUrl ?? undefined}
+                      src={toPosterSrc(s.posterUrl ?? undefined)}
                       alt=""
                       className={cn(
                         "h-full w-full object-cover transition-transform duration-300",
@@ -540,7 +680,7 @@ export function ShowDetailPage() {
                 className="flex h-14 min-w-[96px] items-center justify-center rounded-lg border border-pitflix-card bg-white/95 px-4 py-2 shadow transition hover:border-pitflix-primary/60 hover:-translate-y-0.5"
               >
                 {c.logoUrl ? (
-                  <img src={c.logoUrl} alt={c.name} className="max-h-9 max-w-[110px] object-contain" />
+                  <img src={toPosterSrc(c.logoUrl)} alt={c.name} className="max-h-9 max-w-[110px] object-contain" />
                 ) : (
                   <span className="text-xs font-semibold text-pitflix-bg">{c.name}</span>
                 )}
@@ -572,7 +712,7 @@ export function ShowDetailPage() {
               >
                 <div className="relative overflow-hidden rounded-xl border-2 border-transparent bg-pitflix-card transition-all group-hover:border-pitflix-primary/50 group-hover:shadow-lg">
                   {s.posterUrl ? (
-                    <img src={s.posterUrl} alt={s.title} className="aspect-[2/3] w-full object-cover" />
+                    <img src={toPosterSrc(s.posterUrl)} alt={s.title} className="aspect-[2/3] w-full object-cover" />
                   ) : (
                     <div className="flex aspect-[2/3] items-center justify-center bg-pitflix-card px-2 text-center text-xs text-pitflix-muted">
                       {s.title}

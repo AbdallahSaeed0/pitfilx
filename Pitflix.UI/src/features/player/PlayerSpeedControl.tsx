@@ -1,5 +1,6 @@
 import { Gauge } from "lucide-react";
 import { cn } from "../../utils/cn";
+import { LiquidGlass } from "../../components/ui/liquidGlass/LiquidGlass";
 
 export const PLAYBACK_SPEED_PRESETS = [0.75, 1, 1.25, 1.5, 1.75, 2] as const;
 
@@ -55,16 +56,16 @@ export function PlayerSpeedControl({
           </>
         )}
       </summary>
-      <div
+      <LiquidGlass
+        radius={10}
+        bezel={10}
+        strength={12}
         className={cn(
           "absolute z-[60] min-w-[108px] rounded-[10px] border border-white/10 p-[5px] shadow-xl",
           isFooter ? "bottom-full right-0 mb-2" : "left-1/2 top-full mt-2 -translate-x-1/2 min-w-[10rem]",
         )}
-        style={
-          isFooter
-            ? { background: "rgba(14,12,26,0.96)", backdropFilter: "blur(20px)" }
-            : undefined
-        }
+        glassStyle={{ background: "rgba(14,12,26,0.72)" }}
+        fallbackStyle={isFooter ? { background: "rgba(14,12,26,0.96)", backdropFilter: "blur(20px)" } : undefined}
       >
         {isFooter ? null : (
           <p className="mb-1.5 px-1 text-[9px] font-semibold uppercase tracking-wide text-white/55">Speed</p>
@@ -99,7 +100,7 @@ export function PlayerSpeedControl({
             );
           })}
         </div>
-      </div>
+      </LiquidGlass>
     </details>
   );
 }

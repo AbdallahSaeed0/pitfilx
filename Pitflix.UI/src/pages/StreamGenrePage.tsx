@@ -1,7 +1,7 @@
 import { useInfiniteQuery } from "@tanstack/react-query";
 import { ArrowLeft, Loader2 } from "lucide-react";
 import { PosterGridSkeleton } from "../components/ui/Skeleton";
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import { getStreamDiscoverPage, type StreamDiscoverItem, type StreamDiscoverSort } from "../api/stream";
 import { MediaImage } from "../components/ui/MediaImage";
@@ -95,6 +95,24 @@ export function StreamGenrePage() {
   const imdbRatingsMap = useImdbRatingsMap(
     items.map((i) => ({ tmdbId: i.id, mediaType: i.mediaType })),
   );
+
+  const sentinelRef = useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    const sentinel = sentinelRef.current;
+    if (!sentinel || !query.hasNextPage) return;
+
+    const observer = new IntersectionObserver(
+      (entries) => {
+        if (entries[0]?.isIntersecting && !query.isFetchingNextPage) {
+          void query.fetchNextPage();
+        }
+      },
+      { rootMargin: "600px" },
+    );
+    observer.observe(sentinel);
+    return () => observer.disconnect();
+  }, [query.hasNextPage, query.isFetchingNextPage, query.fetchNextPage]);
 
   function openItem(item: StreamDiscoverItem) {
     const detailState: StreamingDetailsLocationState = {
@@ -191,22 +209,13 @@ export function StreamGenrePage() {
           </div>
 
           {query.hasNextPage && (
-            <div className="mt-8 flex justify-center">
-              <button
-                type="button"
-                onClick={() => void query.fetchNextPage()}
-                disabled={query.isFetchingNextPage}
-                className="flex items-center gap-2 rounded-lg border border-pitflix-card bg-pitflix-surface px-6 py-2.5 text-sm font-semibold text-white transition hover:border-pitflix-primary/50 hover:bg-pitflix-primary/10 disabled:cursor-not-allowed disabled:opacity-60"
-              >
-                {query.isFetchingNextPage ? (
-                  <>
-                    <Loader2 className="h-4 w-4 animate-spin" />
-                    Loading…
-                  </>
-                ) : (
-                  "Load More"
-                )}
-              </button>
+            <div ref={sentinelRef} className="mt-8 flex justify-center">
+              {query.isFetchingNextPage && (
+                <div className="flex items-center gap-2 text-sm font-semibold text-pitflix-muted">
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                  Loading…
+                </div>
+              )}
             </div>
           )}
         </>

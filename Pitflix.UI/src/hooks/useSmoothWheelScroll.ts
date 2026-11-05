@@ -1,4 +1,5 @@
 import { useEffect } from "react";
+import { SCROLL_RESET_EVENT } from "../components/layout/PageTransition";
 
 // Tuned by feel in the live app — see PROJECT memory for the reasoning if these ever need revisiting.
 const MULTIPLIER = 1.6; // how far one wheel notch travels, relative to the browser's raw delta
@@ -162,9 +163,20 @@ export function useSmoothWheelScroll(ref: React.RefObject<HTMLElement | null>) {
       if (rafId == null) rafId = requestAnimationFrame(loop);
     };
 
+    // A page change jumps the scroller (PageTransition's ResetScrollOnEnter) — drop any glide still
+    // running, or it would keep pulling the new page toward the old page's target.
+    const onScrollReset = () => {
+      if (rafId != null) cancelAnimationFrame(rafId);
+      rafId = null;
+      lastFrameAt = 0;
+      current = target = el.scrollTop;
+    };
+
     el.addEventListener("wheel", onWheel, { passive: false });
+    el.addEventListener(SCROLL_RESET_EVENT, onScrollReset);
     return () => {
       el.removeEventListener("wheel", onWheel);
+      el.removeEventListener(SCROLL_RESET_EVENT, onScrollReset);
       if (rafId != null) cancelAnimationFrame(rafId);
     };
   }, [ref]);

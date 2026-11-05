@@ -2,6 +2,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { CalendarClock, Pin, Trash2, Video } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 import { getComingSoon as getPinnedComingSoon, unpinComingSoon, type ComingSoonItem } from "../../api/comingSoon";
+import { HOME_COLD_START_RETRY } from "../../api/client";
 import { AirDateCountdown } from "../../components/ui/AirDateCountdown";
 import { HorizontalScrollRow } from "../../components/ui/HorizontalScrollRow";
 import { MediaImage } from "../../components/ui/MediaImage";
@@ -114,6 +115,7 @@ export function PinnedComingSoonSection() {
     queryKey: ["pinned-coming-soon"],
     queryFn: getPinnedComingSoon,
     staleTime: 30_000,
+    ...HOME_COLD_START_RETRY,
   });
 
   const unpinMut = useMutation({

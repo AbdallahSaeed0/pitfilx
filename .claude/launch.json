@@ -21,6 +21,12 @@
       "runtimeArgs": ["run", "-d", "web-server", "--web-port", "5959"],
       "cwd": "PitflixAndroid",
       "port": 5959
+    },
+    {
+      "name": "3alShebbak-web",
+      "runtimeExecutable": "python",
+      "runtimeArgs": ["-m", "http.server", "6060", "--directory", "F:/3alShebbak/app/build/web"],
+      "port": 6060
     }
   ]
 }

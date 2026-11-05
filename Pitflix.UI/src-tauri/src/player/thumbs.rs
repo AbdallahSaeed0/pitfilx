@@ -4,11 +4,13 @@
 //!
 //!   • One ffmpeg keyframe scan at a time, on a background thread.
 //!   • Each file is scanned at most once (marker file under cache dir).
-//!   • Background bulk scan: one frame every 5s for fast warm cache.
+//!   • Background bulk scan, two passes: keyframes only first (~12x faster, covers most
+//!     buckets within seconds), then the full-decode pass that makes every bucket exact.
 //!   • Hover preview: 5s buckets — instant disk lookup, ffmpeg only on miss.
 //!   • Cache root: `%LOCALAPPDATA%\Pitflix\thumbs\<sha1(filePath)>`.
 
 use std::{
+    collections::HashMap,
     fs,
     path::{Path, PathBuf},
     process::{Command, Stdio},
@@ -76,30 +78,68 @@ fn hover_second(seconds: f64) -> i64 {
     ((seconds / HOVER_STEP_SECS as f64).round() as i64 * HOVER_STEP_SECS).max(0)
 }
 
-fn find_nearest_cached_frame_path(file_path: &str, second: i64) -> Option<PathBuf> {
-    if let Some(p) = hover_frame_file(file_path, second) {
-        return Some(p);
+/// Nearest saved frame and the real time (seconds) it shows. Hover-cache frames were extracted at
+/// exactly their second; bulk frames are keyframes, whose real time comes from the scan's index —
+/// so the player can seek to precisely the frame the preview showed.
+fn find_nearest_cached_frame_path(file_path: &str, second: i64) -> Option<(PathBuf, f64)> {
+    let at = |s: i64| -> Option<(PathBuf, f64)> {
+        if let Some(p) = hover_frame_file(file_path, s) {
+            return Some((p, s as f64));
+        }
+        bulk_frame_file(file_path, s).map(|p| (p, bulk_frame_time(file_path, s)))
+    };
+    if let Some(hit) = at(second) {
+        return Some(hit);
     }
-    if let Some(p) = bulk_frame_file(file_path, second) {
-        return Some(p);
-    }
-    for step in [HOVER_STEP_SECS, HOVER_STEP_SECS * 2] {
+    // Out to ±20 s: keyframes can be far apart (25 s gaps measured in a 10-bit HEVC episode), and a
+    // nearby frame now is better than an empty box while the exact one is fetched.
+    for step in [HOVER_STEP_SECS, HOVER_STEP_SECS * 2, HOVER_STEP_SECS * 3, HOVER_STEP_SECS * 4] {
         if second >= step {
-            if let Some(p) = hover_frame_file(file_path, second - step) {
-                return Some(p);
-            }
-            if let Some(p) = bulk_frame_file(file_path, second - step) {
-                return Some(p);
+            if let Some(hit) = at(second - step) {
+                return Some(hit);
             }
         }
-        if let Some(p) = hover_frame_file(file_path, second + step) {
-            return Some(p);
-        }
-        if let Some(p) = bulk_frame_file(file_path, second + step) {
-            return Some(p);
+        if let Some(hit) = at(second + step) {
+            return Some(hit);
         }
     }
     None
+}
+
+/// Real timestamps of the keyframes saved per bucket, written by the keyframe scan (`frames.idx`:
+/// "bucket seconds" per line). Cached for the file last asked about.
+static FRAME_TIMES: Mutex<Option<(String, HashMap<i64, f64>)>> = Mutex::new(None);
+
+fn frame_times_path(file_path: &str) -> PathBuf {
+    file_cache_dir(file_path).join("frames.idx")
+}
+
+/// A bulk frame's real time; the bucket itself for caches scanned before the index existed.
+fn bulk_frame_time(file_path: &str, bucket: i64) -> f64 {
+    let mut g = FRAME_TIMES.lock().unwrap();
+    if g.as_ref().map(|(f, _)| f.as_str()) != Some(file_path) {
+        let map = fs::read_to_string(frame_times_path(file_path))
+            .map(|s| {
+                s.lines()
+                    .filter_map(|l| {
+                        let (b, t) = l.split_once(' ')?;
+                        Some((b.parse::<i64>().ok()?, t.parse::<f64>().ok()?))
+                    })
+                    .collect::<HashMap<_, _>>()
+            })
+            .unwrap_or_default();
+        *g = Some((file_path.to_string(), map));
+    }
+    g.as_ref().and_then(|(_, m)| m.get(&bucket).copied()).unwrap_or(bucket as f64)
+}
+
+/// Frame bytes prefixed with the frame's real time (f64, little-endian) — the player reads it to
+/// label the preview and to seek to exactly the frame it showed. JPEG data follows.
+fn with_frame_time(time: f64, jpeg: Vec<u8>) -> Vec<u8> {
+    let mut out = Vec::with_capacity(8 + jpeg.len());
+    out.extend_from_slice(&time.to_le_bytes());
+    out.extend_from_slice(&jpeg);
+    out
 }
 
 fn frame_path(file_path: &str, bucket: i64) -> PathBuf {
@@ -114,6 +154,11 @@ fn hover_frame_path(file_path: &str, second: i64) -> PathBuf {
 
 fn done_marker(file_path: &str) -> PathBuf {
     file_cache_dir(file_path).join(".done")
+}
+
+/// Set once the quick keyframe pass finished, so reopening a file goes straight to the exact pass.
+fn keyframes_marker(file_path: &str) -> PathBuf {
+    file_cache_dir(file_path).join(".keyframes")
 }
 
 /// Search candidate locations for an ffmpeg.exe. Bundled copy is checked first.
@@ -181,18 +226,100 @@ fn find_ffmpeg() -> Option<PathBuf> {
     None
 }
 
+/// Last file handed to `file_prewarm`, so the per-tick calls near an episode's end read it once.
+static PREWARMED: Mutex<Option<String>> = Mutex::new(None);
+
+/// Reads the start and end of the file that will play next, in the background, shortly before the
+/// current one ends. That spins up a sleeping drive (opens from H: were stalling ~1 s) and leaves
+/// what mpv reads first — the header, and for MKV the seek index stored at the end — in the OS file
+/// cache, so the next episode starts without waiting on the disk. Read-only; streams/missing files
+/// are ignored.
+#[tauri::command]
+pub fn file_prewarm(file_path: String) {
+    if file_path.is_empty() || file_path.contains("://") {
+        return;
+    }
+    {
+        let mut last = PREWARMED.lock().unwrap();
+        if last.as_deref() == Some(file_path.as_str()) {
+            return;
+        }
+        *last = Some(file_path.clone());
+    }
+    thread::spawn(move || {
+        use std::io::{Read, Seek, SeekFrom};
+        const HEAD: u64 = 16 << 20;
+        const TAIL: u64 = 4 << 20;
+        let t0 = Instant::now();
+        let Ok(mut f) = fs::File::open(&file_path) else { return };
+        let len = f.metadata().map(|m| m.len()).unwrap_or(0);
+        let mut buf = vec![0u8; 1 << 20];
+        let mut read_span = |f: &mut fs::File, start: u64, bytes: u64| {
+            if f.seek(SeekFrom::Start(start)).is_err() {
+                return;
+            }
+            let mut left = bytes;
+            while left > 0 {
+                let want = left.min(buf.len() as u64) as usize;
+                match f.read(&mut buf[..want]) {
+                    Ok(0) | Err(_) => break,
+                    Ok(n) => left -= n as u64,
+                }
+            }
+        };
+        read_span(&mut f, 0, HEAD.min(len));
+        if len > HEAD + TAIL {
+            read_span(&mut f, len - TAIL, TAIL);
+        }
+        eprintln!("[thumb] file_prewarm {}ms path={file_path}", t0.elapsed().as_millis());
+    });
+}
+
+/// The file to scan once the current scan is done (the next episode / playlist item), so its
+/// previews are ready the moment it starts. Only ever one, and it never interrupts a running scan.
+static NEXT_TARGET: Mutex<Option<String>> = Mutex::new(None);
+
+#[tauri::command]
+pub fn thumb_note_next(file_path: String) {
+    if file_path.is_empty() || file_path.contains("://") || scan_complete(&file_path) {
+        return;
+    }
+    if SCAN_RUNNING.swap(true, Ordering::SeqCst) {
+        // A scan is running — queue it; scan_loop picks it up when that scan finishes.
+        *NEXT_TARGET.lock().unwrap() = Some(file_path);
+        return;
+    }
+    *SCAN_TARGET.lock().unwrap() = Some(file_path);
+    SCAN_GEN.fetch_add(1, Ordering::SeqCst);
+    thread::spawn(scan_loop);
+}
+
 #[tauri::command]
 pub fn thumb_note_current(file_path: String) {
     if file_path.is_empty() {
         return;
     }
+    // Now playing — no longer something to scan "next".
+    {
+        let mut next = NEXT_TARGET.lock().unwrap();
+        if next.as_deref() == Some(file_path.as_str()) {
+            *next = None;
+        }
+    }
     // Already fully scanned?
-    if done_marker(&file_path).is_file() {
+    if scan_complete(&file_path) {
         return;
     }
     {
         let mut g = SCAN_TARGET.lock().unwrap();
-        *g = Some(file_path);
+        let displaced = g.replace(file_path.clone());
+        // If this pre-empts a queued next-file scan already in progress, keep it queued for after.
+        if let Some(prev) = displaced.filter(|p| *p != file_path) {
+            let mut next = NEXT_TARGET.lock().unwrap();
+            if next.is_none() && !scan_complete(&prev) {
+                *next = Some(prev);
+            }
+        }
     }
     SCAN_GEN.fetch_add(1, Ordering::SeqCst);
     if SCAN_RUNNING.swap(true, Ordering::SeqCst) {
@@ -224,9 +351,15 @@ fn scan_loop() {
 
         let _ = scan_file(&path, gen);
 
-        // Clear if target wasn't changed during the scan.
+        // Target unchanged during the scan: move on to the queued next file, if any, else stop.
         let mut g = SCAN_TARGET.lock().unwrap();
         if SCAN_GEN.load(Ordering::SeqCst) == gen {
+            let next = NEXT_TARGET.lock().unwrap().take().filter(|n| *n != path && !scan_complete(n));
+            if let Some(next) = next {
+                *g = Some(next);
+                SCAN_GEN.fetch_add(1, Ordering::SeqCst);
+                continue;
+            }
             *g = None;
             SCAN_RUNNING.store(false, Ordering::SeqCst);
             return;
@@ -234,14 +367,85 @@ fn scan_loop() {
     }
 }
 
+/// True when the bulk scan finished AND actually left frames in the cache. Markers alone aren't
+/// trusted: after the data folder moved to another drive (D:\Pitflix) every frame failed to move
+/// out of the temp folder, yet both passes were still marked done — so nothing was ever cached and
+/// hover previews only showed once the slow on-demand frame arrived.
+fn scan_complete(file_path: &str) -> bool {
+    // frames.idx (each saved frame's real time) too — caches from before it existed get one
+    // background rescan so clicks can land exactly on the previewed frame.
+    done_marker(file_path).is_file() && has_bucket_frames(file_path) && frame_times_path(file_path).is_file()
+}
+
+fn has_bucket_frames(file_path: &str) -> bool {
+    let Ok(rd) = fs::read_dir(file_cache_dir(file_path)) else { return false };
+    rd.flatten().any(|e| {
+        let name = e.file_name();
+        let name = name.to_string_lossy();
+        name.ends_with(".jpg") && name[..name.len() - 4].chars().all(|c| c.is_ascii_digit())
+    })
+}
+
+/// Rename, or copy + delete when that fails — the temp folder and the cache can be on different
+/// drives (a rename can't cross drives).
+fn move_file(src: &Path, dst: &Path) -> bool {
+    if fs::rename(src, dst).is_ok() {
+        return true;
+    }
+    let copied = fs::copy(src, dst).is_ok();
+    let _ = fs::remove_file(src);
+    copied
+}
+
 fn scan_file(file_path: &str, gen: u64) -> Result<(), String> {
-    if done_marker(file_path).is_file() {
+    if scan_complete(file_path) {
         return Ok(());
+    }
+    // Marked done but nothing saved, or saved without the frame-time index (see scan_complete):
+    // forget the markers and scan again.
+    if !has_bucket_frames(file_path) || !frame_times_path(file_path).is_file() {
+        let _ = fs::remove_file(done_marker(file_path));
+        let _ = fs::remove_file(keyframes_marker(file_path));
     }
     let ffmpeg = find_ffmpeg().ok_or_else(|| "ffmpeg not found".to_string())?;
     let cache_dir = file_cache_dir(file_path);
     fs::create_dir_all(&cache_dir).ok();
 
+    // Keyframes only: decoding every frame took minutes per movie (17-20 s per 10 min of video);
+    // decoding only keyframes covers the same 10 min in ~1.5 s. A keyframe is only used for the
+    // bucket it rounds to (never more than 2.5 s off); empty buckets are served by the nearest
+    // saved one (find_nearest_cached_frame_path) until the exact frame is fetched on rest.
+    if !keyframes_marker(file_path).is_file() {
+        let t0 = Instant::now();
+        if !run_scan_pass(&ffmpeg, file_path, gen, ScanPass::Keyframes)? {
+            return Ok(());
+        }
+        // Only remember the pass if it really saved frames; otherwise it's retried next time.
+        if has_bucket_frames(file_path) {
+            let _ = fs::write(keyframes_marker(file_path), b"ok");
+        }
+        eprintln!("[thumb] keyframe pass done in {}ms", t0.elapsed().as_millis());
+    }
+
+    // No second, exact pass any more: it decoded the WHOLE file again (minutes for a 57-min 1080p
+    // 10-bit HEVC episode) in the background, hogging the disk and CPU that on-demand previews and
+    // playback needed — on-demand frames went from ~1.2-1.7 s to 2-3 s+ while it ran. Same lesson
+    // as PitflixPlayer's ThumbWorker: one keyframe pass, hover reads the nearest saved frame, and
+    // the exact frame is only fetched for the second the pointer rests on.
+    if has_bucket_frames(file_path) {
+        let _ = fs::write(done_marker(file_path), b"ok");
+    }
+    Ok(())
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum ScanPass {
+    Keyframes,
+}
+
+/// Runs one ffmpeg pass over the whole file, publishing frames into the cache as they appear.
+/// Returns `Ok(false)` when it was cancelled because the user moved on to another file.
+fn run_scan_pass(ffmpeg: &Path, file_path: &str, gen: u64, pass: ScanPass) -> Result<bool, String> {
     let tmp = std::env::temp_dir().join(format!("pf-thumbgen-{}", uuid::Uuid::new_v4()));
     fs::create_dir_all(&tmp).ok();
 
@@ -254,24 +458,23 @@ fn scan_file(file_path: &str, gen: u64) -> Result<(), String> {
     // reliably mean "N * BUCKET_SECS seconds in". `showinfo` reports each
     // emitted frame's real `pts_time`, which the stderr reader thread below
     // parses so buckets are keyed by actual timestamp, not by frame count.
-    let mut cmd = Command::new(&ffmpeg);
-    cmd.args([
-        "-hide_banner",
-        "-loglevel",
-        "info",
-        "-hwaccel",
-        "auto",
-        "-i",
-        file_path,
-        "-an",
-        "-sn",
-        "-dn",
-        "-vf",
-        &format!("fps=1/{BUCKET_SECS},scale={PIXEL_WIDTH}:-2,showinfo"),
-        "-qscale:v",
-        "5",
-        "-y",
-    ]);
+    let mut cmd = Command::new(ffmpeg);
+    cmd.args(["-hide_banner", "-loglevel", "info"]);
+    match pass {
+        // GPU decode (d3d11va): the device setup is paid once per scan, and on heavy sources it
+        // wins clearly — 1080p 10-bit HEVC: 4.2 s vs 6.2 s per 10 min of video. (Single on-demand
+        // frames stay on the CPU: there the setup cost dominates and the GPU was slower.) ffmpeg
+        // falls back to software by itself if the GPU can't decode a codec. `select` keeps at
+        // most one frame per 2 s for all-intra sources, where every frame is a keyframe.
+        ScanPass::Keyframes => {
+            cmd.args(["-hwaccel", "d3d11va", "-skip_frame", "nokey", "-i", file_path, "-an", "-sn", "-dn", "-vf"]);
+            cmd.arg(format!(
+                "select='isnan(prev_selected_t)+gte(t-prev_selected_t\\,2)',scale={PIXEL_WIDTH}:-2,showinfo"
+            ));
+            cmd.args(["-fps_mode", "passthrough"]);
+        }
+    }
+    cmd.args(["-qscale:v", "5", "-y"]);
     let out_pattern = tmp.join("f_%05d.jpg");
     cmd.arg(&out_pattern);
     cmd.stdin(Stdio::null())
@@ -319,11 +522,13 @@ fn scan_file(file_path: &str, gen: u64) -> Result<(), String> {
     // the cache as they appear so the hover tooltip starts hitting cache quickly.
     let mut next_bucket: i64 = 0;
     let mut last_publish = Instant::now();
+    // bucket -> (distance from the bucket, real time) of the keyframe kept for it.
+    let mut keyframe_best: HashMap<i64, (f64, f64)> = HashMap::new();
     loop {
         if SCAN_GEN.load(Ordering::SeqCst) != gen {
             let _ = child.kill();
             let _ = fs::remove_dir_all(&tmp);
-            return Ok(());
+            return Ok(false);
         }
         match child.try_wait() {
             Ok(Some(_)) => break,
@@ -332,7 +537,8 @@ fn scan_file(file_path: &str, gen: u64) -> Result<(), String> {
         }
         // Every ~150 ms, publish any new f_NNNNN.jpg files into cache as bucket files.
         if last_publish.elapsed().as_millis() > 150 {
-            next_bucket = publish_new_frames(&tmp, file_path, next_bucket, &pts_by_index);
+            next_bucket =
+                publish_new_frames(&tmp, file_path, next_bucket, &pts_by_index, pass, &mut keyframe_best);
             last_publish = Instant::now();
         }
         thread::sleep(Duration::from_millis(40));
@@ -344,11 +550,17 @@ fn scan_file(file_path: &str, gen: u64) -> Result<(), String> {
         let _ = handle.join();
     }
     // Final publish pass.
-    let _ = publish_new_frames(&tmp, file_path, next_bucket, &pts_by_index);
+    let _ = publish_new_frames(&tmp, file_path, next_bucket, &pts_by_index, pass, &mut keyframe_best);
+
+    // Record each saved keyframe's real time (see bulk_frame_time).
+    let mut index: Vec<(i64, f64)> = keyframe_best.iter().map(|(b, (_, t))| (*b, *t)).collect();
+    index.sort_by_key(|(b, _)| *b);
+    let text: String = index.iter().map(|(b, t)| format!("{b} {t:.3}\n")).collect();
+    let _ = fs::write(frame_times_path(file_path), text);
+    *FRAME_TIMES.lock().unwrap() = None;
 
     let _ = fs::remove_dir_all(&tmp);
-    let _ = fs::write(done_marker(file_path), b"ok");
-    Ok(())
+    Ok(true)
 }
 
 fn parse_showinfo_pts_time(line: &str) -> Option<f64> {
@@ -366,6 +578,8 @@ fn publish_new_frames(
     file_path: &str,
     start_idx: i64,
     pts_by_index: &Mutex<Vec<f64>>,
+    pass: ScanPass,
+    keyframe_best: &mut HashMap<i64, (f64, f64)>,
 ) -> i64 {
     let mut idx = start_idx;
     loop {
@@ -380,18 +594,22 @@ fn publish_new_frames(
             return idx;
         };
         let bucket = ((pts / BUCKET_SECS as f64).round() as i64) * BUCKET_SECS;
-        let naive_bucket = idx * BUCKET_SECS;
-        if (bucket - naive_bucket).abs() >= BUCKET_SECS {
-            eprintln!(
-        "[thumb] bulk-scan drift frame={idx} pts={pts:.2}s bucket={bucket} naive_bucket={naive_bucket} drift={}s",
-        bucket - naive_bucket
-      );
-        }
         let dst = frame_path(file_path, bucket);
-        // Bulk-scan frames are timeline-accurate; replace any quick on-demand placeholder.
-        let _ = fs::remove_file(&dst);
-        let _ = fs::rename(&src, &dst);
         idx += 1;
+        if pass == ScanPass::Keyframes {
+            // Keep only the keyframe closest to the bucket, and never replace a frame an earlier
+            // exact pass (from a previous, interrupted session) already wrote.
+            let dist = (pts - bucket as f64).abs();
+            let closer = keyframe_best.get(&bucket).map_or(!dst.is_file(), |&(best, _)| dist < best);
+            if !closer {
+                let _ = fs::remove_file(&src);
+                continue;
+            }
+            keyframe_best.insert(bucket, (dist, pts));
+        }
+        // Exact-pass frames are timeline-accurate; replace any keyframe/on-demand placeholder.
+        let _ = fs::remove_file(&dst);
+        move_file(&src, &dst);
     }
 }
 
@@ -462,8 +680,8 @@ fn build_extract_cmd(ffmpeg: &Path, file_path: &str, second: i64, dst: &Path) ->
         "-hide_banner",
         "-loglevel",
         "error",
-        "-hwaccel",
-        "auto",
+        // No `-hwaccel auto` here: for a single frame the GPU device setup dominates. Measured
+        // on 720p x264/HEVC: 490-1000 ms with it (3.3 s on a cold first call), 160-430 ms without.
         "-ss",
         &sec_s,
         "-i",
@@ -477,8 +695,6 @@ fn build_extract_cmd(ffmpeg: &Path, file_path: &str, second: i64, dst: &Path) ->
         &format!("scale={PIXEL_WIDTH}:-2"),
         "-qscale:v",
         "8",
-        "-threads",
-        "4",
         "-y",
     ]);
     cmd.arg(dst);
@@ -510,14 +726,14 @@ fn extract_frame_at_second(file_path: &str, second: i64) -> Result<PathBuf, Stri
     Ok(dst)
 }
 
-fn thumb_at_quick_sync(file_path: String, seconds: f64) -> Result<String, String> {
+fn thumb_at_quick_sync(file_path: String, seconds: f64) -> Result<(String, f64), String> {
     if file_path.is_empty() {
         return Err("empty file_path".to_string());
     }
     let t0 = Instant::now();
     let second = hover_second(seconds);
     let result = find_nearest_cached_frame_path(&file_path, second)
-        .map(|p| p.to_string_lossy().into_owned())
+        .map(|(p, t)| (p.to_string_lossy().into_owned(), t))
         .ok_or_else(|| "no cached thumbnail".to_string());
     eprintln!(
         "[thumb] thumb_at_quick second={second} hit={} total={}ms",
@@ -527,13 +743,16 @@ fn thumb_at_quick_sync(file_path: String, seconds: f64) -> Result<String, String
     result
 }
 
+/// Frame at the exact (whole) second — what the player shows after a click there (mpv seeks
+/// `absolute exact`). Bucket rounding here used to make the "accurate" preview up to 2.5 s off.
 fn thumb_at_sync(file_path: String, seconds: f64) -> Result<String, String> {
     if file_path.is_empty() {
         return Err("empty file_path".to_string());
     }
     let t0 = Instant::now();
-    let second = hover_second(seconds);
+    let second = if seconds.is_finite() { seconds.round().max(0.0) as i64 } else { 0 };
 
+    // The hover cache only ever holds frames extracted at exactly their second.
     if let Some(p) = hover_frame_file(&file_path, second) {
         eprintln!(
             "[thumb] thumb_at second={second} source=hover-cache total={}ms",
@@ -542,16 +761,8 @@ fn thumb_at_sync(file_path: String, seconds: f64) -> Result<String, String> {
         return Ok(p.to_string_lossy().into_owned());
     }
 
-    if let Some(p) = bulk_frame_file(&file_path, second) {
-        // Promote bulk frame into hover cache so the next lookup is instant.
-        let hover_dst = hover_frame_path(&file_path, second);
-        let _ = fs::copy(&p, &hover_dst);
-        eprintln!(
-            "[thumb] thumb_at second={second} source=bulk-cache total={}ms",
-            t0.elapsed().as_millis()
-        );
-        return Ok(hover_dst.to_string_lossy().into_owned());
-    }
+    // Bulk frames are keyframes (only the keyframe pass runs now), i.e. near this second but not at
+    // it — never an answer for the exact frame.
 
     // Only one ffmpeg extraction runs at a time (see ACCURATE_EXTRACT_LOCK doc
     // comment). Register this request as the latest before waiting for the
@@ -592,9 +803,9 @@ fn thumb_at_sync(file_path: String, seconds: f64) -> Result<String, String> {
 /// sweep than paying JSON overhead was. One round trip, raw bytes, done.
 #[tauri::command]
 pub fn thumb_at_quick(file_path: String, seconds: f64) -> Result<Response, String> {
-    let path = thumb_at_quick_sync(file_path, seconds)?;
+    let (path, time) = thumb_at_quick_sync(file_path, seconds)?;
     let bytes = fs::read(&path).map_err(|e| e.to_string())?;
-    Ok(Response::new(bytes))
+    Ok(Response::new(with_frame_time(time, bytes)))
 }
 
 /// Return raw JPEG bytes for `seconds`. Uses cache first, then ffmpeg on
@@ -603,6 +814,7 @@ pub fn thumb_at_quick(file_path: String, seconds: f64) -> Result<Response, Strin
 #[tauri::command]
 pub async fn thumb_at(file_path: String, seconds: f64) -> Result<Response, String> {
     let dispatch_t0 = Instant::now();
+    let exact_time = if seconds.is_finite() { seconds.round().max(0.0) } else { 0.0 };
     let path = tauri::async_runtime::spawn_blocking(move || {
         let pool_wait_ms = dispatch_t0.elapsed().as_millis();
         if pool_wait_ms > 20 {
@@ -617,7 +829,7 @@ pub async fn thumb_at(file_path: String, seconds: f64) -> Result<Response, Strin
         "[thumb] thumb_at command round-trip total={}ms",
         dispatch_t0.elapsed().as_millis()
     );
-    Ok(Response::new(bytes))
+    Ok(Response::new(with_frame_time(exact_time, bytes)))
 }
 
 /// One-shot single-frame poster for a file (for playlist tiles, and My Device folder thumbnails).
@@ -657,7 +869,7 @@ pub async fn thumb_poster(
 /// not a decode. Needed so `min_pct`/`max_pct` below can be resolved into an actual seek time
 /// without probing duration client-side (which would mean going back to loading the file into a
 /// browser `<video>` element — the exact per-file cost native capture exists to avoid).
-fn probe_duration_seconds(ffmpeg: &Path, file_path: &str) -> Option<f64> {
+pub(crate) fn probe_duration_seconds(ffmpeg: &Path, file_path: &str) -> Option<f64> {
     let mut cmd = Command::new(ffmpeg);
     cmd.args(["-hide_banner", "-i", file_path]);
     cmd.stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::piped());
@@ -746,10 +958,18 @@ fn try_extract_poster(
     let mut cmd = Command::new(ffmpeg);
     cmd.args([
         "-hide_banner",
+        // A grid thumbnail doesn't need the exact frame at `at` (it's a random point in the user's
+        // range anyway): decode keyframes only, so there's no decoding forward from the previous
+        // keyframe — that forward decode is most of the cost on long-GOP movie files.
+        "-skip_frame",
+        "nokey",
         "-ss",
         &format!("{at}"),
         "-i",
         file_path,
+        "-an",
+        "-sn",
+        "-dn",
         "-frames:v",
         "1",
         "-vf",
@@ -800,6 +1020,256 @@ fn try_extract_poster(
     }
 }
 
+/// A video's duration read straight from its container header — MP4/MOV `mvhd`, Matroska/WebM
+/// `Info` — without spawning ffmpeg (whose startup alone is ~200-250 ms). None for other formats or
+/// anything unexpected; callers then fall back to `probe_duration_seconds`.
+pub(crate) fn fast_duration_seconds(path: &str) -> Option<f64> {
+    let ext = Path::new(path).extension()?.to_str()?.to_ascii_lowercase();
+    let d = match ext.as_str() {
+        "mp4" | "m4v" | "mov" => mp4_duration_seconds(path),
+        "mkv" | "webm" => mkv_duration_seconds(path),
+        _ => None,
+    }?;
+    (d.is_finite() && d > 0.0).then_some(d)
+}
+
+fn mp4_duration_seconds(path: &str) -> Option<f64> {
+    use std::io::{Read, Seek, SeekFrom};
+    let mut f = fs::File::open(path).ok()?;
+    let len = f.metadata().ok()?.len();
+    // Walk the top-level boxes (headers only) to `moov` — it can be at the start or the end.
+    let mut pos = 0u64;
+    for _ in 0..64 {
+        if pos + 8 > len {
+            return None;
+        }
+        f.seek(SeekFrom::Start(pos)).ok()?;
+        let mut hdr = [0u8; 16];
+        f.read_exact(&mut hdr[..8]).ok()?;
+        let mut size = u32::from_be_bytes(hdr[0..4].try_into().ok()?) as u64;
+        let mut header_len = 8u64;
+        if size == 1 {
+            f.read_exact(&mut hdr[8..16]).ok()?;
+            size = u64::from_be_bytes(hdr[8..16].try_into().ok()?);
+            header_len = 16;
+        } else if size == 0 {
+            size = len - pos;
+        }
+        if size < header_len {
+            return None;
+        }
+        if &hdr[4..8] == b"moov" {
+            let end = pos + size;
+            let mut c = pos + header_len;
+            while c + 8 <= end {
+                f.seek(SeekFrom::Start(c)).ok()?;
+                let mut ch = [0u8; 8];
+                f.read_exact(&mut ch).ok()?;
+                let csize = u32::from_be_bytes(ch[0..4].try_into().ok()?) as u64;
+                if &ch[4..8] == b"mvhd" {
+                    let mut body = [0u8; 32];
+                    f.read_exact(&mut body).ok()?;
+                    let (timescale, duration) = if body[0] == 1 {
+                        (
+                            u32::from_be_bytes(body[20..24].try_into().ok()?),
+                            u64::from_be_bytes(body[24..32].try_into().ok()?),
+                        )
+                    } else {
+                        (
+                            u32::from_be_bytes(body[12..16].try_into().ok()?),
+                            u32::from_be_bytes(body[16..20].try_into().ok()?) as u64,
+                        )
+                    };
+                    return (timescale > 0).then(|| duration as f64 / timescale as f64);
+                }
+                if csize < 8 {
+                    return None;
+                }
+                c += csize;
+            }
+            return None;
+        }
+        pos += size;
+    }
+    None
+}
+
+/// Matroska variable-length integer. IDs keep their length marker bits; sizes don't, and an
+/// all-ones size means "unknown" (returned as u64::MAX).
+fn read_ebml_vint(r: &mut impl std::io::Read, is_id: bool) -> Option<u64> {
+    let mut b = [0u8; 1];
+    r.read_exact(&mut b).ok()?;
+    let first = b[0];
+    if first == 0 {
+        return None;
+    }
+    let len = first.leading_zeros() as usize + 1;
+    let mut val = if is_id { first as u64 } else { (first as u32 & (0xFFu32 >> len)) as u64 };
+    for _ in 1..len {
+        r.read_exact(&mut b).ok()?;
+        val = (val << 8) | b[0] as u64;
+    }
+    if !is_id && val == (1u64 << (7 * len)) - 1 {
+        return Some(u64::MAX);
+    }
+    Some(val)
+}
+
+fn mkv_duration_seconds(path: &str) -> Option<f64> {
+    use std::io::{BufReader, Cursor, Read};
+    let mut f = BufReader::new(fs::File::open(path).ok()?);
+    if read_ebml_vint(&mut f, true)? != 0x1A45_DFA3 {
+        return None; // not EBML
+    }
+    let ebml_size = read_ebml_vint(&mut f, false)?;
+    f.seek_relative(i64::try_from(ebml_size).ok()?).ok()?;
+    if read_ebml_vint(&mut f, true)? != 0x1853_8067 {
+        return None; // no Segment
+    }
+    read_ebml_vint(&mut f, false)?; // Segment size (often "unknown")
+    for _ in 0..64 {
+        let id = read_ebml_vint(&mut f, true)?;
+        let size = read_ebml_vint(&mut f, false)?;
+        match id {
+            0x1549_A966 => {
+                // Info: small; read it whole and pick TimecodeScale + Duration.
+                if size > 1 << 20 {
+                    return None;
+                }
+                let mut info = vec![0u8; size as usize];
+                f.read_exact(&mut info).ok()?;
+                let mut cur = Cursor::new(info.as_slice());
+                let (mut scale, mut duration) = (1_000_000u64, None::<f64>);
+                while (cur.position() as usize) < info.len() {
+                    let cid = read_ebml_vint(&mut cur, true)?;
+                    let csize = read_ebml_vint(&mut cur, false)? as usize;
+                    let start = cur.position() as usize;
+                    let bytes = info.get(start..start.checked_add(csize)?)?;
+                    match (cid, csize) {
+                        (0x2A_D7B1, 1..=8) => scale = bytes.iter().fold(0u64, |a, b| (a << 8) | *b as u64),
+                        (0x4489, 4) => duration = Some(f32::from_be_bytes(bytes.try_into().ok()?) as f64),
+                        (0x4489, 8) => duration = Some(f64::from_be_bytes(bytes.try_into().ok()?)),
+                        _ => {}
+                    }
+                    cur.set_position((start + csize) as u64);
+                }
+                return duration.map(|d| d * scale as f64 / 1e9);
+            }
+            0x1F43_B675 => return None, // reached the first Cluster without an Info
+            _ if size == u64::MAX => return None,
+            _ => f.seek_relative(i64::try_from(size).ok()?).ok()?,
+        }
+    }
+    None
+}
+
+const DEVICE_VIDEO_EXTS: &[&str] = &["mp4", "mkv", "avi", "mov", "webm", "m4v", "wmv", "mpg", "mpeg"];
+/// Bumped per `device_thumbs_prewarm` call; a running walk stops when it's no longer the latest.
+static DEVICE_PREWARM_GEN: AtomicU64 = AtomicU64::new(0);
+
+fn collect_device_videos(dir: &Path, depth: u32, out: &mut Vec<String>) {
+    const MAX_DEPTH: u32 = 4;
+    const MAX_FILES: usize = 20_000;
+    let Ok(rd) = fs::read_dir(dir) else { return };
+    for entry in rd.flatten() {
+        if out.len() >= MAX_FILES {
+            return;
+        }
+        let name = entry.file_name();
+        let name = name.to_string_lossy();
+        if name.starts_with('.') || name.starts_with('$') {
+            continue;
+        }
+        let path = entry.path();
+        let Ok(ft) = entry.file_type() else { continue };
+        if ft.is_dir() {
+            if depth < MAX_DEPTH {
+                collect_device_videos(&path, depth + 1, out);
+            }
+        } else if path
+            .extension()
+            .and_then(|e| e.to_str())
+            .map(|e| DEVICE_VIDEO_EXTS.contains(&e.to_ascii_lowercase().as_str()))
+            .unwrap_or(false)
+        {
+            out.push(path.to_string_lossy().into_owned());
+        }
+    }
+}
+
+fn libmpv_playing(app: &tauri::AppHandle) -> bool {
+    use tauri::Manager;
+    app.try_state::<crate::player::libmpv_session::LibMpvHostState>()
+        .and_then(|s| s.0.lock().ok().map(|g| g.is_some()))
+        .unwrap_or(false)
+}
+
+/// Makes My Device grid thumbnails for every video under the user's saved locations ahead of time
+/// — the same `poster_w{width}.jpg` files `thumb_poster` serves the grid from — so opening a
+/// folder shows them straight away instead of extracting each one on view. One file at a time,
+/// skipping ones already made, and waiting whenever a video is playing so it never competes with
+/// playback for the disk. A new call (app start, locations changed) supersedes a running one.
+#[tauri::command]
+pub fn device_thumbs_prewarm(
+    app: tauri::AppHandle,
+    roots: Vec<String>,
+    width: Option<i32>,
+    min_pct: Option<f64>,
+    max_pct: Option<f64>,
+) {
+    let gen = DEVICE_PREWARM_GEN.fetch_add(1, Ordering::SeqCst) + 1;
+    thread::spawn(move || {
+        let width = width.unwrap_or(320);
+        let t0 = Instant::now();
+        let mut files = Vec::new();
+        for root in &roots {
+            collect_device_videos(Path::new(root), 0, &mut files);
+        }
+        let mut made = 0usize;
+        for file in &files {
+            if DEVICE_PREWARM_GEN.load(Ordering::SeqCst) != gen {
+                return;
+            }
+            let dst = file_cache_dir(file).join(format!("poster_w{width}.jpg"));
+            if fs::metadata(&dst).map(|m| m.len() > 0).unwrap_or(false) {
+                continue;
+            }
+            while libmpv_playing(&app) {
+                thread::sleep(Duration::from_secs(3));
+                if DEVICE_PREWARM_GEN.load(Ordering::SeqCst) != gen {
+                    return;
+                }
+            }
+            if thumb_poster_sync(file.clone(), Some(15.0), Some(width), min_pct, max_pct).is_ok() {
+                made += 1;
+            }
+            thread::sleep(Duration::from_millis(100));
+        }
+        eprintln!(
+            "[thumb] device_thumbs_prewarm made={made} of {} videos in {}s",
+            files.len(),
+            t0.elapsed().as_secs()
+        );
+    });
+}
+
+#[cfg(test)]
+mod duration_tests {
+    /// Compares the header readers with ffmpeg on real files. Machine-specific, so only runs when
+    /// PITFLIX_DURATION_SAMPLES lists files (separated by `|`).
+    #[test]
+    fn header_duration_matches_ffmpeg() {
+        let Ok(list) = std::env::var("PITFLIX_DURATION_SAMPLES") else { return };
+        let ffmpeg = super::find_ffmpeg().expect("ffmpeg");
+        for path in list.split('|').filter(|p| !p.is_empty()) {
+            let fast = super::fast_duration_seconds(path).expect(path);
+            let probed = super::probe_duration_seconds(&ffmpeg, path).expect(path);
+            println!("{path}: header={fast:.2}s ffmpeg={probed:.2}s");
+            assert!((fast - probed).abs() < 1.0, "{path}: {fast} vs {probed}");
+        }
+    }
+}
+
 fn thumb_poster_sync(
     file_path: String,
     at_seconds: Option<f64>,
@@ -833,7 +1303,11 @@ fn thumb_poster_sync(
     // every video. Probing duration costs one extra (bounded, metadata-only) ffmpeg run per file,
     // but is the only way to honor "the middle third of the video" instead of "15 seconds in".
     let at = match (min_pct, max_pct) {
-        (Some(min_pct), Some(max_pct)) => match probe_duration_seconds(&ffmpeg, &file_path) {
+        // The container header first (a few ms, no process): an ffmpeg run just to learn the
+        // duration was ~300 ms of the ~1.1 s each My Device thumbnail cost, measured on H:\AR.TV.
+        (Some(min_pct), Some(max_pct)) => match fast_duration_seconds(&file_path)
+            .or_else(|| probe_duration_seconds(&ffmpeg, &file_path))
+        {
             Some(duration) => {
                 let lo = duration * (min_pct / 100.0).max(0.0);
                 let hi = duration * (max_pct / 100.0).max(0.0);

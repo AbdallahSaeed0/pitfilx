@@ -74,7 +74,7 @@ export function HorizontalScrollRow({
             type="button"
             aria-label="Scroll left"
             onClick={() => scrollByDir(-1)}
-            className="absolute left-0 top-1/2 z-10 hidden h-10 w-10 -translate-y-1/2 items-center justify-center rounded-full border border-white/10 bg-pitflix-bg/95 text-white shadow-lg shadow-black/50 backdrop-blur-sm transition hover:bg-pitflix-card sm:flex"
+            className="absolute left-0 top-1/2 z-10 hidden h-10 w-10 -translate-y-1/2 items-center justify-center rounded-full border border-white/10 bg-pitflix-bg/95 text-white shadow-lg shadow-black/50 transition hover:bg-pitflix-card sm:flex"
           >
             <ChevronLeft className="h-6 w-6" strokeWidth={2} />
           </button>
@@ -84,7 +84,7 @@ export function HorizontalScrollRow({
             type="button"
             aria-label="Scroll right"
             onClick={() => scrollByDir(1)}
-            className="absolute right-0 top-1/2 z-10 hidden h-10 w-10 -translate-y-1/2 items-center justify-center rounded-full border border-white/10 bg-pitflix-bg/95 text-white shadow-lg shadow-black/50 backdrop-blur-sm transition hover:bg-pitflix-card sm:flex"
+            className="absolute right-0 top-1/2 z-10 hidden h-10 w-10 -translate-y-1/2 items-center justify-center rounded-full border border-white/10 bg-pitflix-bg/95 text-white shadow-lg shadow-black/50 transition hover:bg-pitflix-card sm:flex"
           >
             <ChevronRight className="h-6 w-6" strokeWidth={2} />
           </button>

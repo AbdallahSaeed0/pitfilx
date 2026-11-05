@@ -45,6 +45,19 @@ internal sealed class ShowNextAiringRow
 
 public static class HomeEndpoints
 {
+    /// <summary>The (view, limit) combos the UI requests from /api/home/next-episodes (NextEpisodesSection.tsx, NextEpisodesPage.tsx).</summary>
+    internal static readonly string[] NextEpisodesCacheKeys =
+        { "home:next-episodes:priority:56", "home:next-episodes:all:160", "home:next-episodes:all:200" };
+
+    /// <summary>Drops the server-side Home row caches (Continue Watching / Up Next / next episodes) —
+    /// for changes that alter what those rows show, like newly picked artwork.</summary>
+    public static void InvalidateHomeCaches(IMemoryCache memoryCache)
+    {
+        memoryCache.Remove("home:watching-currently");
+        foreach (var key in NextEpisodesCacheKeys)
+            memoryCache.Remove(key);
+    }
+
     private const string HomeWatchingCurrentlySettingKey = "Cache_HomeWatchingCurrently";
 
     /// <summary>Recomputes Up Next, updates the in-memory cache, and persists a snapshot for the next
@@ -343,7 +356,7 @@ public static class HomeEndpoints
     // Invalidate /api/home/next-episodes's cache (see there) — otherwise a pin/unpin wouldn't
     // reorder the list for up to 3 minutes. Keyed on the (view, limit) combos the UI actually
     // requests (NextEpisodesSection.tsx, NextEpisodesPage.tsx).
-    foreach (var key in new[] { "home:next-episodes:priority:56", "home:next-episodes:all:160", "home:next-episodes:all:200" })
+    foreach (var key in NextEpisodesCacheKeys)
         memoryCache.Remove(key);
     return Results.Ok();
 });

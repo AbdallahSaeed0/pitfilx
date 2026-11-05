@@ -1,7 +1,9 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:io';
 
 import 'package:flutter/foundation.dart';
+import 'package:path_provider/path_provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 /// Disk-backed cache of raw TMDB responses, so a cold start paints from what the app already knew
@@ -15,16 +17,29 @@ import 'package:shared_preferences/shared_preferences.dart';
 /// built from TMDB's payload shape via `fromTmdbSummary`, so caching the payload needs no
 /// serialization code of its own and can't drift from the models.
 ///
-/// Deliberately small and bounded — SharedPreferences keeps its whole store in memory, so this holds
-/// a capped number of entries and is only used for the handful of list endpoints that gate a screen's
-/// first paint, never for per-title lookups (which would grow without limit during a library import).
+/// Bounded, and only used for the list endpoints that gate a screen's first paint — never for
+/// per-title lookups (which would grow without limit during a library import; those go through
+/// DiskTtlStore as compact extracted values instead).
+///
+/// Lives in its own file, not SharedPreferences: it used to, capped at 24 entries to keep prefs small,
+/// but Discover alone persists 20 pages (11 genres x movie/tv) and Home another 11 — so every launch
+/// evicted Home's Trending/Coming Soon pages and Home went back to the network for them.
 class PersistentJsonCache {
   PersistentJsonCache._();
 
-  static const _prefsKey = 'tmdb_response_cache_v1';
+  /// Where this cache used to live — removed on load so the old blob stops bloating prefs.
+  static const _legacyPrefsKey = 'tmdb_response_cache_v1';
+  static const _fileName = 'tmdb_response_cache_v2.json';
 
-  /// Above this many entries the oldest are dropped.
-  static const _maxEntries = 24;
+  /// Above this many entries the oldest are dropped. Room for Home + Discover + Onboarding's lists.
+  @visibleForTesting
+  static const maxEntries = 64;
+
+  @visibleForTesting
+  static Future<File> Function() fileProvider = () async {
+    final dir = await getApplicationSupportDirectory();
+    return File('${dir.path}/$_fileName');
+  };
 
   /// Skip persisting anything unreasonably large — a runaway response shouldn't bloat the prefs file.
   static const _maxEntryBytes = 256 * 1024;
@@ -40,10 +55,11 @@ class PersistentJsonCache {
   static Future<void> load() async {
     if (_loaded) return;
     _loaded = true;
+    unawaited(_removeLegacyPrefs());
     try {
-      final prefs = await SharedPreferences.getInstance();
-      final raw = prefs.getString(_prefsKey);
-      if (raw == null) return;
+      final file = await fileProvider();
+      if (!await file.exists()) return;
+      final raw = await file.readAsString();
       final decoded = jsonDecode(raw) as Map<String, dynamic>;
       final restored = <({String key, DateTime at, String body})>[];
       for (final entry in decoded.entries) {
@@ -92,7 +108,7 @@ class PersistentJsonCache {
     // exactly that, and ties made eviction drop the newest entry rather than the oldest.
     _entries.remove(key);
     _entries[key] = (at: DateTime.now(), body: body);
-    while (_entries.length > _maxEntries) {
+    while (_entries.length > maxEntries) {
       _entries.remove(_entries.keys.first);
     }
     _scheduleWrite();
@@ -103,11 +119,25 @@ class PersistentJsonCache {
     _writeTimer?.cancel();
     _writeTimer = null;
     try {
-      final prefs = await SharedPreferences.getInstance();
-      await prefs.remove(_prefsKey);
+      final file = await fileProvider();
+      if (await file.exists()) await file.delete();
     } catch (_) {
       // Nothing to do — worst case a stale blob is overwritten on the next write.
     }
+  }
+
+  static Future<void> _removeLegacyPrefs() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.remove(_legacyPrefsKey);
+    } catch (_) {}
+  }
+
+  /// Writes immediately instead of after the debounce — for tests.
+  @visibleForTesting
+  static Future<void> flush() async {
+    _writeTimer?.cancel();
+    await _write();
   }
 
   /// Debounced so a burst of parallel Home fetches results in one serialize + write, not one each.
@@ -123,8 +153,8 @@ class PersistentJsonCache {
         for (final e in _entries.entries)
           e.key: {'at': e.value.at.toIso8601String(), 'body': e.value.body},
       };
-      final prefs = await SharedPreferences.getInstance();
-      await prefs.setString(_prefsKey, jsonEncode(payload));
+      final file = await fileProvider();
+      await file.writeAsString(jsonEncode(payload), flush: true);
     } catch (e) {
       debugPrint('PersistentJsonCache: could not persist ($e)');
     }

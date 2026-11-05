@@ -4,6 +4,7 @@ import { CalendarClock, Clapperboard, Pin, PinOff, X } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 import { getComingSoon, type ComingSoonItem } from "../../api/homeDiscover";
 import { getComingSoon as getPinnedItems, pinComingSoon, unpinComingSoon } from "../../api/comingSoon";
+import { HOME_COLD_START_RETRY } from "../../api/client";
 import { getTrailerEmbedUrl } from "../../api/trailers";
 import type { StreamPlayerLocationState } from "../../pages/StreamPlayerPage";
 import type { StreamingDetailsLocationState } from "../../pages/StreamingDetailsPage";
@@ -195,12 +196,14 @@ export function ComingSoonSection({ embedded = false }: ComingSoonProps) {
     queryKey: ["home-coming-soon"],
     queryFn: getComingSoon,
     staleTime: 120_000,
+    ...HOME_COLD_START_RETRY,
   });
 
   const pinnedQ = useQuery({
     queryKey: ["pinned-coming-soon"],
     queryFn: getPinnedItems,
     staleTime: 30_000,
+    ...HOME_COLD_START_RETRY,
   });
 
   const pinnedMap = useMemo(() => {

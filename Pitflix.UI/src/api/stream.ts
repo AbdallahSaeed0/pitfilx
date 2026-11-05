@@ -102,6 +102,8 @@ export type StreamSeasonEpisode = {
   airDate: string | null;
   runtime: number;
   voteAverage: number;
+  /** Real IMDb score (cache-only lookup; null until the background warm call fills it in). */
+  imdbVoteAverage: number | null;
   stillUrl: string | null;
 };
 
@@ -207,6 +209,32 @@ export type StreamGenrePreview = { id: number; posterUrl: string | null };
 export function getStreamGenrePreviews(ids: number[]) {
   return api
     .get<StreamGenrePreview[]>("/stream/genre-previews", { params: { ids: ids.join(",") } })
+    .then((r) => r.data);
+}
+
+/** Curated, well-known franchise collections shown in the "Collections" row. */
+export const STREAM_COLLECTIONS = [
+  { id: 1241, name: "Harry Potter" },
+  { id: 10, name: "Star Wars" },
+  { id: 86311, name: "The Avengers" },
+  { id: 119, name: "The Lord of the Rings" },
+  { id: 121938, name: "The Hobbit" },
+  { id: 263, name: "The Dark Knight" },
+  { id: 131635, name: "The Hunger Games" },
+  { id: 328, name: "Jurassic Park" },
+  { id: 9485, name: "Fast & Furious" },
+  { id: 645, name: "James Bond" },
+  { id: 2344, name: "The Matrix" },
+  { id: 295, name: "Pirates of the Caribbean" },
+  { id: 87359, name: "Mission: Impossible" },
+  { id: 404609, name: "John Wick" },
+] as const;
+
+export type StreamCollectionPreview = { id: number; name: string | null; posterUrl: string | null };
+
+export function getStreamCollectionPreviews(ids: number[]) {
+  return api
+    .get<StreamCollectionPreview[]>("/stream/collection-previews", { params: { ids: ids.join(",") } })
     .then((r) => r.data);
 }
 

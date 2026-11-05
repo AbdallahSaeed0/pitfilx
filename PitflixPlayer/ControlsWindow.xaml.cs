@@ -89,11 +89,15 @@ public partial class ControlsWindow : Window
 
     // ── Subtitle / audio ─────────────────────────────────────────────────────
     private int _activeSubtitleIndex = 0;  // 0 = Off
+    private int _activeSecondaryIndex = 0; // 0 = Off — dual subtitles (mpv secondary-sid, shown at the top)
     private int _activeAudioIndex    = -1; // -1 = not set
 
     // ── Playback speed ────────────────────────────────────────────────────────
     private double _currentSpeed = 1.0;
     private static readonly double[] SpeedOptions = { 0.25, 0.5, 0.75, 1.0, 1.25, 1.5, 2.0 };
+
+    // ── Skip amount (arrow keys + mouse-wheel seek zone) ─────────────────────
+    private static readonly int[] SkipSecondsOptions = { 5, 10, 15, 20, 30, 60 };
 
     // ── Auto-hide ─────────────────────────────────────────────────────────────
     private bool   _controlsVisible = true;
@@ -1941,6 +1945,25 @@ public partial class ControlsWindow : Window
                     : $"{t.Language} · {t.Title}";
                 SubtitleTrackList.Children.Add(MakeSubBtn(label, t.Index));
             }
+
+            // Dual subtitles: a second track shown at the top (e.g. English above, Arabic below).
+            SubtitleTrackList.Children.Add(new TextBlock
+            {
+                Text       = "SECOND SUBTITLE (TOP)",
+                Foreground = new SolidColorBrush(Color.FromRgb(0x8A, 0x8A, 0x9A)),
+                FontFamily = new FontFamily("Segoe UI"),
+                FontSize   = 9,
+                FontWeight = FontWeights.SemiBold,
+                Margin     = new Thickness(10, 10, 10, 4),
+            });
+            SubtitleTrackList.Children.Add(MakeSubBtn("Off", 0, secondary: true));
+            foreach (var t in subTracks)
+            {
+                string label = string.IsNullOrWhiteSpace(t.Title)
+                    ? t.Language
+                    : $"{t.Language} · {t.Title}";
+                SubtitleTrackList.Children.Add(MakeSubBtn(label, t.Index, secondary: true));
+            }
             SubtitlePopup.IsOpen = true;
         });
     }
@@ -1958,9 +1981,11 @@ public partial class ControlsWindow : Window
         ).ToList();
     }
 
-    private Button MakeSubBtn(string label, int index)
+    private Button MakeSubBtn(string label, int index, bool secondary = false)
     {
-        bool isActive  = index == _activeSubtitleIndex && index >= 0;
+        bool isActive  = index == (secondary ? _activeSecondaryIndex : _activeSubtitleIndex) && index >= 0;
+        // mpv can't show one track in both slots.
+        bool takenByOther = index > 0 && index == (secondary ? _activeSubtitleIndex : _activeSecondaryIndex);
         bool isLoading = index == -99;
         bool isOff     = index == 0;
 
@@ -2017,8 +2042,33 @@ public partial class ControlsWindow : Window
                             ? new SolidColorBrush(Color.FromArgb(0x33, 0x7B, 0x2F, 0xBE))
                             : Brushes.Transparent,
         };
-        if (!isLoading) btn.Click += OnSubtitleTrackClick;
+        if (takenByOther)
+        {
+            btn.IsEnabled = false;
+            btn.Opacity   = 0.4;
+            btn.ToolTip   = secondary ? "Already the main subtitle" : "Already the second subtitle";
+        }
+        if (!isLoading) btn.Click += secondary ? OnSecondarySubtitleTrackClick : OnSubtitleTrackClick;
         return btn;
+    }
+
+    private void OnSecondarySubtitleTrackClick(object sender, RoutedEventArgs e)
+    {
+        if (sender is not Button { Tag: int idx } || idx < 0) return;
+        _activeSecondaryIndex = idx;
+        SubtitlePopup.IsOpen = false;
+        _ = _ipc?.SendAsync("set_property", "secondary-sid", idx == 0 ? (object)"no" : idx);
+
+        var picked = idx == 0 ? null : _cachedSubTracks.FirstOrDefault(t => t.Index == idx);
+        if (idx == 0 || picked is not null)
+        {
+            RecordShowTrackChoice(p =>
+            {
+                p.SecondaryMode  = idx == 0 ? "off" : "lang";
+                p.SecondaryLang  = NullIfBlank(picked?.Language);
+                p.SecondaryTitle = NullIfBlank(picked?.Title);
+            });
+        }
     }
 
     private static Border MakeSubBadge(string text, byte r, byte g, byte b)
@@ -2076,7 +2126,20 @@ public partial class ControlsWindow : Window
             }
         }
         App.Settings.Save();
+
+        var pickedTrack = idx == 0 ? null : _cachedSubTracks.FirstOrDefault(t => t.Index == idx);
+        if (idx == 0 || pickedTrack is not null)
+        {
+            RecordShowTrackChoice(p =>
+            {
+                p.SubMode  = idx == 0 ? "off" : "lang";
+                p.SubLang  = NullIfBlank(pickedTrack?.Language);
+                p.SubTitle = NullIfBlank(pickedTrack?.Title);
+            });
+        }
     }
+
+    private static string? NullIfBlank(string? s) => string.IsNullOrWhiteSpace(s) ? null : s.Trim();
 
     /// <summary>
     /// Re-apply the persisted subtitle preference to the currently-loaded
@@ -2085,9 +2148,17 @@ public partial class ControlsWindow : Window
     /// its new track list, so we can pick the best language match and send
     /// the corresponding sid.  No-op when the user's mode is "default".
     /// </summary>
-    public async Task ApplyPreferredSubtitleAsync()
+    public async Task ApplyPreferredSubtitleAsync(string? filePath = null)
     {
         if (_ipc is null) return;
+
+        // Per-show memory (audio + subtitle) wins over the global subtitle preference below.
+        var path = filePath ?? _currentSessionFilePath;
+        var showKey = string.IsNullOrEmpty(path) ? null : await ResolveShowTrackKeyAsync(path).ConfigureAwait(false);
+        var showPref = showKey is null ? null : App.Settings.GetShowTrackPref(showKey);
+        if (showPref is not null && await ApplyShowTrackPrefAsync(showPref).ConfigureAwait(false))
+            return;
+
         string mode = App.Settings.PreferredSubMode;
         if (mode == "default") return;
 
@@ -2123,6 +2194,147 @@ public partial class ControlsWindow : Window
                 App.Log($"ApplyPreferredSubtitle: no track matches lang='{App.Settings.PreferredSubLang}' — leaving mpv default");
             }
         }
+    }
+
+    // =========================================================================
+    // Per-show track memory
+    // =========================================================================
+
+    // file path → "show:<id>" / "dir:<folder>" / null (movie). Avoids a resolve round-trip per click.
+    private readonly Dictionary<string, string?> _showKeyCache = new(StringComparer.OrdinalIgnoreCase);
+    private List<SubtitleTrack> _cachedAudioTracks = new();
+
+    private async Task<string?> ResolveShowTrackKeyAsync(string filePath)
+    {
+        lock (_showKeyCache)
+            if (_showKeyCache.TryGetValue(filePath, out var cached)) return cached;
+
+        var resolved = await PlayerApiClient.ResolveByPathAsync(filePath).ConfigureAwait(false);
+        string? key;
+        if (resolved?.LibraryShowId is int showId && showId > 0)
+            key = $"show:{showId}";
+        else if (string.Equals(resolved?.MediaType, "Movie", StringComparison.OrdinalIgnoreCase))
+            key = null;
+        else
+        {
+            // Unmatched local file (or API unreachable) — treat the folder as the show.
+            var dir = System.IO.Path.GetDirectoryName(filePath);
+            key = string.IsNullOrEmpty(dir) ? null : $"dir:{dir.Replace('\\', '/').ToLowerInvariant()}";
+        }
+        // Don't cache a folder fallback caused by an unreachable API — retry next time.
+        if (resolved is not null)
+            lock (_showKeyCache) _showKeyCache[filePath] = key;
+        return key;
+    }
+
+    /// <summary>Best track for a remembered identity: exact lang+title, then same lang (same forced/SDH kind), then title.</summary>
+    private static SubtitleTrack? MatchTrack(IReadOnlyList<SubtitleTrack> tracks, string? lang, string? title)
+    {
+        static string Kind(string? s)
+        {
+            var l = (s ?? "").ToLowerInvariant();
+            return l.Contains("forced") ? "forced" : (l.Contains("sdh") || l.Contains("hearing")) ? "sdh" : "full";
+        }
+        bool Eq(string? a, string? b) => string.Equals((a ?? "").Trim(), (b ?? "").Trim(), StringComparison.OrdinalIgnoreCase);
+
+        if (!string.IsNullOrWhiteSpace(lang))
+        {
+            if (!string.IsNullOrWhiteSpace(title))
+            {
+                var exact = tracks.FirstOrDefault(t => Eq(t.Language, lang) && Eq(t.Title, title));
+                if (exact is not null) return exact;
+            }
+            var sameLang = tracks.Where(t => Eq(t.Language, lang)).ToList();
+            return sameLang.FirstOrDefault(t => Kind(t.Title) == Kind(title)) ?? sameLang.FirstOrDefault();
+        }
+        return string.IsNullOrWhiteSpace(title) ? null : tracks.FirstOrDefault(t => Eq(t.Title, title));
+    }
+
+    /// <summary>Applies a show's remembered tracks. Returns true when the subtitle side was handled.</summary>
+    private async Task<bool> ApplyShowTrackPrefAsync(ShowTrackPref pref)
+    {
+        // Same settle delay as the global path — the track list lags the file change.
+        await Task.Delay(200).ConfigureAwait(false);
+        List<SubtitleTrack> all;
+        try { all = await PlayerApiClient.GetSubtitleTracksAsync().ConfigureAwait(false); }
+        catch { all = new(); }
+
+        var audio = all.Where(t => t.Type.Equals("audio", StringComparison.OrdinalIgnoreCase)).ToList();
+        _cachedAudioTracks = audio;
+        if (pref.AudioLang is not null || pref.AudioTitle is not null)
+        {
+            var match = MatchTrack(audio, pref.AudioLang, pref.AudioTitle);
+            if (match is not null)
+            {
+                await _ipc!.SendAsync("set_property", "aid", match.Index).ConfigureAwait(false);
+                await Dispatcher.InvokeAsync(() => _activeAudioIndex = match.Index);
+                App.Log($"ShowTrackMemory: aid={match.Index} ('{match.Language}' '{match.Title}')");
+            }
+        }
+
+        var subs = all.Where(t => !t.Type.Equals("audio", StringComparison.OrdinalIgnoreCase)
+                               && !t.Type.Equals("video", StringComparison.OrdinalIgnoreCase)).ToList();
+        _cachedSubTracks = subs;
+
+        var handled = false;
+        int? mainIndex = null;
+        if (pref.SubMode == "off")
+        {
+            await _ipc!.SendAsync("set_property", "sid", "no").ConfigureAwait(false);
+            await Dispatcher.InvokeAsync(() => _activeSubtitleIndex = 0);
+            App.Log("ShowTrackMemory: sid=no");
+            handled = true;
+        }
+        else if (pref.SubMode == "lang")
+        {
+            var match = MatchTrack(subs, pref.SubLang, pref.SubTitle);
+            if (match is not null)
+            {
+                await _ipc!.SendAsync("set_property", "sid", match.Index).ConfigureAwait(false);
+                await Dispatcher.InvokeAsync(() => _activeSubtitleIndex = match.Index);
+                App.Log($"ShowTrackMemory: sid={match.Index} ('{match.Language}' '{match.Title}')");
+                mainIndex = match.Index;
+                handled = true;
+            }
+            else
+            {
+                App.Log($"ShowTrackMemory: no sub matches '{pref.SubLang}' '{pref.SubTitle}' — falling back to global preference");
+            }
+        }
+
+        // Dual subtitles: the second (top) subtitle, never the same track as the main one.
+        if (pref.SecondaryMode == "off")
+        {
+            await _ipc!.SendAsync("set_property", "secondary-sid", "no").ConfigureAwait(false);
+            await Dispatcher.InvokeAsync(() => _activeSecondaryIndex = 0);
+        }
+        else if (pref.SecondaryMode == "lang")
+        {
+            var second = MatchTrack(subs.Where(t => t.Index != mainIndex).ToList(), pref.SecondaryLang, pref.SecondaryTitle);
+            if (second is not null)
+            {
+                await _ipc!.SendAsync("set_property", "secondary-sid", second.Index).ConfigureAwait(false);
+                await Dispatcher.InvokeAsync(() => _activeSecondaryIndex = second.Index);
+                App.Log($"ShowTrackMemory: secondary-sid={second.Index} ('{second.Language}' '{second.Title}')");
+            }
+        }
+        return handled;
+    }
+
+    /// <summary>Records a user track pick against the current file's show (fire-and-forget).</summary>
+    private void RecordShowTrackChoice(Action<ShowTrackPref> update)
+    {
+        var path = _currentSessionFilePath;
+        if (string.IsNullOrEmpty(path)) return;
+        _ = Task.Run(async () =>
+        {
+            try
+            {
+                var key = await ResolveShowTrackKeyAsync(path).ConfigureAwait(false);
+                if (key is not null) App.Settings.UpdateShowTrackPref(key, update);
+            }
+            catch (Exception ex) { App.Log($"ShowTrackMemory: record failed: {ex.Message}"); }
+        });
     }
 
     // =========================================================================
@@ -2212,6 +2424,19 @@ public partial class ControlsWindow : Window
                 double oy = ContextMenuPopup.VerticalOffset;
                 ContextMenuPopup.IsOpen = false;
                 ShowSpeedMenu(ox, oy);
+            }
+        ));
+
+        // Skip Amount — seconds jumped by the arrow keys and mouse-wheel seek zone.
+        ContextMenuItems.Children.Add(MakeMenuRow(
+            Geometry.Parse("M8,16 L16,8 M8,16 L16,24 M16,16 L24,8 M16,16 L24,24"),
+            $"Skip Amount  {App.Settings.SkipSeconds}s",
+            () =>
+            {
+                double ox = ContextMenuPopup.HorizontalOffset;
+                double oy = ContextMenuPopup.VerticalOffset;
+                ContextMenuPopup.IsOpen = false;
+                ShowSkipSecondsMenu(ox, oy);
             }
         ));
 
@@ -2410,6 +2635,60 @@ public partial class ControlsWindow : Window
         SpeedPopup.IsOpen = true;
     }
 
+    private void ShowSkipSecondsMenu(double ox, double oy)
+    {
+        SkipSecondsMenuItems.Children.Clear();
+        foreach (var seconds in SkipSecondsOptions)
+        {
+            bool active = App.Settings.SkipSeconds == seconds;
+
+            var check = new TextBlock
+            {
+                Text              = "✓",
+                Foreground        = BrushPurple,
+                FontSize          = 13,
+                Width             = 18,
+                VerticalAlignment = VerticalAlignment.Center,
+                Visibility        = active ? Visibility.Visible : Visibility.Collapsed,
+            };
+            var tb = new TextBlock
+            {
+                Text              = $"{seconds}s",
+                Foreground        = Brushes.White,
+                FontFamily        = new FontFamily("Segoe UI"),
+                FontSize          = 13,
+                VerticalAlignment = VerticalAlignment.Center,
+                Margin            = new Thickness(6, 0, 0, 0),
+            };
+            var sp = new StackPanel
+            {
+                Orientation       = Orientation.Horizontal,
+                VerticalAlignment = VerticalAlignment.Center,
+                Margin            = new Thickness(10, 0, 12, 0),
+            };
+            sp.Children.Add(check);
+            sp.Children.Add(tb);
+
+            var captured = seconds;
+            var row = new Border { Height = 34, Background = Brushes.Transparent,
+                                   Cursor = Cursors.Hand, Child = sp };
+            row.MouseEnter += (_, _) => row.Background =
+                new SolidColorBrush(Color.FromRgb(0x2A, 0x2A, 0x2A));
+            row.MouseLeave += (_, _) => row.Background = Brushes.Transparent;
+            row.MouseLeftButtonUp += (_, _) =>
+            {
+                SkipSecondsPopup.IsOpen = false;
+                App.Settings.SkipSeconds = captured;
+                App.Settings.Save();
+            };
+            SkipSecondsMenuItems.Children.Add(row);
+        }
+
+        SkipSecondsPopup.HorizontalOffset = ox;
+        SkipSecondsPopup.VerticalOffset   = oy;
+        SkipSecondsPopup.IsOpen = true;
+    }
+
     private void UpdateSpeedLabels()
     {
         bool atNormal = Math.Abs(_currentSpeed - 1.0) < 0.01;
@@ -2445,6 +2724,7 @@ public partial class ControlsWindow : Window
         var audioTracks = all
             .Where(t => t.Type.Equals("audio", StringComparison.OrdinalIgnoreCase))
             .ToList();
+        _cachedAudioTracks = audioTracks;
 
         await Dispatcher.InvokeAsync(() =>
         {
@@ -2493,6 +2773,16 @@ public partial class ControlsWindow : Window
         _activeAudioIndex = idx;
         AudioPopup.IsOpen = false;
         _ = _ipc?.SendAsync("set_property", "aid", idx);
+
+        var picked = _cachedAudioTracks.FirstOrDefault(t => t.Index == idx);
+        if (picked is not null && (NullIfBlank(picked.Language) ?? NullIfBlank(picked.Title)) is not null)
+        {
+            RecordShowTrackChoice(p =>
+            {
+                p.AudioLang  = NullIfBlank(picked.Language);
+                p.AudioTitle = NullIfBlank(picked.Title);
+            });
+        }
     }
 
     // =========================================================================

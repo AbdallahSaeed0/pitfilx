@@ -69,6 +69,8 @@
     "allow-remote-player",
     "allow-my-device",
     "allow-browse",
+    "allow-stream-player",
+    "allow-cinemas",
     "allow-open-file-path",
     "allow-folder-action",
     "core:window:allow-set-progress-bar",

@@ -40,6 +40,17 @@ class ComingSoonItem {
     seasonNumber: (json['seasonNumber'] as num?)?.toInt(),
   );
 
+  Map<String, dynamic> toJson() => {
+    'tmdbId': tmdbId,
+    'mediaType': mediaType,
+    'title': title,
+    'posterUrl': posterUrl,
+    'releaseDate': releaseDate?.toIso8601String(),
+    'overview': overview,
+    'voteAverage': voteAverage,
+    'seasonNumber': seasonNumber,
+  };
+
   bool get isShow => mediaType == 'tv';
 
   String? get seasonLabel =>

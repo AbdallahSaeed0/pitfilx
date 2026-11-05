@@ -12,6 +12,7 @@ public sealed class RatingsEnrichmentService
 {
     private readonly RatingsSnapshotRepository _snapshots;
     private readonly MdbListService _mdbList;
+    private readonly ImdbDatasetService _imdbDataset;
     private readonly PhpImdbGrabberClient _phpImdb;
     private readonly ITmdbClientFactory _tmdbClientFactory;
     private readonly IResolvedApiKeysAccessor _apiKeys;
@@ -20,6 +21,7 @@ public sealed class RatingsEnrichmentService
     public RatingsEnrichmentService(
         RatingsSnapshotRepository snapshots,
         MdbListService mdbList,
+        ImdbDatasetService imdbDataset,
         PhpImdbGrabberClient phpImdb,
         ITmdbClientFactory tmdbClientFactory,
         IResolvedApiKeysAccessor apiKeys,
@@ -27,6 +29,7 @@ public sealed class RatingsEnrichmentService
     {
         _snapshots = snapshots;
         _mdbList = mdbList;
+        _imdbDataset = imdbDataset;
         _phpImdb = phpImdb;
         _tmdbClientFactory = tmdbClientFactory;
         _apiKeys = apiKeys;
@@ -74,7 +77,11 @@ public sealed class RatingsEnrichmentService
         MdbListRatings? mdbResult = null;
         try
         {
-            mdbResult = await _mdbList.GetRatingsAsync(imdbId, tmdbId, ct).ConfigureAwait(false);
+            // This year's releases: re-ask MDBList after 12 h instead of its 7-day cache — a new
+            // show's Rotten Tomatoes / Metacritic still move day to day.
+            var newRelease = anchor.Year is { } year && year >= DateTime.UtcNow.Year;
+            mdbResult = await _mdbList.GetRatingsAsync(imdbId, tmdbId, ct,
+                newRelease ? TimeSpan.FromHours(12) : null).ConfigureAwait(false);
         }
         catch (Exception ex)
         {
@@ -94,6 +101,20 @@ public sealed class RatingsEnrichmentService
                 rtCritics = rt.ToString("0", System.Globalization.CultureInfo.InvariantCulture) + "%";
             if (mdbResult.RottenTomatoesAudience is { } rta)
                 rtAudience = rta.ToString("0", System.Globalization.CultureInfo.InvariantCulture) + "%";
+        }
+
+        // IMDb's own daily ratings file beats MDBList's copy whenever it's at least as recent — votes
+        // only ever go up, so more votes means a later reading. (Carrie, 2026: MDBList cached 6.5 from
+        // 311 day-one votes; the daily file had 7.8 from 2,926, matching IMDb.)
+        if (_imdbDataset.GetTitleRating(imdbId) is { } fromImdb)
+        {
+            var mdbVotes = mdbResult?.ImdbVotes ?? 0;
+            if (string.IsNullOrWhiteSpace(imdbRating) || fromImdb.Votes >= mdbVotes)
+            {
+                imdbRating = fromImdb.Rating.ToString("0.0", System.Globalization.CultureInfo.InvariantCulture);
+                imdbVotes = fromImdb.Votes.ToString(System.Globalization.CultureInfo.InvariantCulture);
+                sourceMask |= RatingsSourceMask.ImdbDataset;
+            }
         }
 
         if (string.IsNullOrWhiteSpace(imdbRating) && !string.IsNullOrEmpty(imdbId))

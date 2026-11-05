@@ -928,6 +928,11 @@ impl WindowsPlayerHost {
     }
 
     pub fn send(&self, cmd: PlayerCommand) -> Result<(), String> {
+        // A-B loop needs two property writes; the UI only offers it for the embedded libmpv player,
+        // so the external-mpv IPC path just ignores it.
+        if matches!(cmd, PlayerCommand::SetAbLoop { .. }) {
+            return Ok(());
+        }
         // Record last action for exit diagnostics.
         if let Ok(g) = self.state.lock() {
             if let Some(s) = g.as_ref() {
@@ -1781,7 +1786,20 @@ fn cmd_to_mpv_ipc(cmd: &PlayerCommand) -> Value {
         PlayerCommand::SetSubPosition(v) => json!({"command":["set_property","sub-pos", *v]}),
         PlayerCommand::SetSubFont(v) => json!({"command":["set_property","sub-font", v]}),
         PlayerCommand::SubAddSelect(path) => json!({"command":["sub-add", path, "select"]}),
+        PlayerCommand::SubAdd(path) => json!({"command":["sub-add", path, "auto"]}),
+        // External mpv reports its track list over IPC on its own; nothing to resend.
+        PlayerCommand::RefreshTracks => json!({"command":["ignore"]}),
+        PlayerCommand::SetVolumeGain(db) => json!({"command":["set_property","volume-gain", *db]}),
+        PlayerCommand::SetSecondarySid(v) => {
+            if *v < 0 {
+                json!({"command":["set_property","secondary-sid", "no"]})
+            } else {
+                json!({"command":["set_property","secondary-sid", *v]})
+            }
+        }
         PlayerCommand::SetSpeed(v) => json!({"command":["set_property","speed", *v]}),
+        // Unreachable: `send` returns early for SetAbLoop (A-B loop is embedded-player only).
+        PlayerCommand::SetAbLoop { .. } => json!({"command":["ignore"]}),
         PlayerCommand::Stop => json!({"command":["quit"]}),
     }
 }
@@ -2399,6 +2417,13 @@ fn read_ipc_loop(
                                         .or_else(|| data.as_f64().map(|v| v as i64))
                                         .unwrap_or(st.sid)
                                 }
+                                // `false` when off ("no").
+                                "secondary-sid" => {
+                                    st.secondary_sid = data
+                                        .as_i64()
+                                        .or_else(|| data.as_f64().map(|v| v as i64))
+                                        .unwrap_or(-1)
+                                }
                                 "aid" => {
                                     st.aid = data
                                         .as_i64()
@@ -2435,6 +2460,10 @@ fn read_ipc_loop(
                                                 selected: t
                                                     .get("selected")
                                                     .and_then(|v| v.as_bool()),
+                                                external_filename: t
+                                                    .get("external-filename")
+                                                    .and_then(|v| v.as_str())
+                                                    .map(|s| s.to_string()),
                                             })
                                             .collect::<Vec<_>>();
                                         emit_tracks(&app, tracks);
@@ -3203,6 +3232,7 @@ fn spawn_mpv_embedded(
             json!({"command":["observe_property", 10, "sub-delay"]}),
             json!({"command":["observe_property", 14, "user-data/pitflix-shortcut"]}),
             json!({"command":["observe_property", 15, "path"]}),
+            json!({"command":["observe_property", 16, "secondary-sid"]}),
         ]
     } else {
         vec![
@@ -3221,6 +3251,7 @@ fn spawn_mpv_embedded(
             json!({"command":["observe_property", 10, "sub-delay"]}),
             json!({"command":["observe_property", 14, "user-data/pitflix-shortcut"]}),
             json!({"command":["observe_property", 15, "path"]}),
+            json!({"command":["observe_property", 16, "secondary-sid"]}),
         ]
     };
     for m in observe_msgs {

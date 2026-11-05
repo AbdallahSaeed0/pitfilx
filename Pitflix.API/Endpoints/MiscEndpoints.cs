@@ -32,18 +32,22 @@ public static class MiscEndpoints
         });
 
         app.MapPost("/api/images/{id:int}/select", async (int id, ImageSelectBody body, LibraryRepository repo,
-            ITmdbClientFactory tmdbClientFactory, IHttpClientFactory httpFactory, CancellationToken ct) =>
+            ITmdbClientFactory tmdbClientFactory, IHttpClientFactory httpFactory, IMemoryCache memoryCache, CancellationToken ct) =>
         {
             var tmdb = tmdbClientFactory.Create();
             if (tmdb == null)
                 return Results.BadRequest(new { success = false });
 
             var mt = body.MediaType ?? "Movie";
+            // A fresh file name per pick: image URLs are cached for a day (Cache-Control) and resized
+            // thumbnails are keyed by path, so overwriting one fixed name kept showing the old art
+            // until the cache expired. Older picks are left on disk — history rows may still point at them.
+            var pickStamp = DateTime.UtcNow.ToString("yyyyMMddHHmmssfff", System.Globalization.CultureInfo.InvariantCulture);
             if (!string.IsNullOrWhiteSpace(body.PosterUrl))
             {
                 var local = await ImageServeHelpers
                     .DownloadRemoteImageAsync(httpFactory.CreateClient(), body.PosterUrl.Trim(),
-                        $"poster_tvdb_{body.TmdbId}{ImageServeHelpers.ExtensionForUrl(body.PosterUrl)}", ct)
+                        $"poster_tvdb_{body.TmdbId}_{pickStamp}{ImageServeHelpers.ExtensionForUrl(body.PosterUrl)}", ct)
                     .ConfigureAwait(false);
                 if (local is null)
                     return Results.BadRequest(new { success = false, error = "Failed to download poster." });
@@ -51,7 +55,7 @@ public static class MiscEndpoints
             }
             else if (!string.IsNullOrWhiteSpace(body.PosterPath))
             {
-                var local = await tmdb.DownloadImageAsync(body.PosterPath, $"poster_pick_{body.TmdbId}.jpg", ct)
+                var local = await tmdb.DownloadImageAsync(body.PosterPath, $"poster_pick_{body.TmdbId}_{pickStamp}.jpg", ct)
                     .ConfigureAwait(false);
                 await repo.UpdatePosterAsync(id, mt, local, ct).ConfigureAwait(false);
             }
@@ -60,7 +64,7 @@ public static class MiscEndpoints
             {
                 var local = await ImageServeHelpers
                     .DownloadRemoteImageAsync(httpFactory.CreateClient(), body.BackdropUrl.Trim(),
-                        $"backdrop_tvdb_{body.TmdbId}{ImageServeHelpers.ExtensionForUrl(body.BackdropUrl)}", ct)
+                        $"backdrop_tvdb_{body.TmdbId}_{pickStamp}{ImageServeHelpers.ExtensionForUrl(body.BackdropUrl)}", ct)
                     .ConfigureAwait(false);
                 if (local is null)
                     return Results.BadRequest(new { success = false, error = "Failed to download backdrop." });
@@ -69,7 +73,7 @@ public static class MiscEndpoints
             else if (!string.IsNullOrWhiteSpace(body.BackdropPath))
             {
                 var local = await tmdb
-                    .DownloadImageAsync(body.BackdropPath, $"backdrop_pick_{body.TmdbId}.jpg", ct, null, "w1280")
+                    .DownloadImageAsync(body.BackdropPath, $"backdrop_pick_{body.TmdbId}_{pickStamp}.jpg", ct, null, "w1280")
                     .ConfigureAwait(false);
                 await repo.UpdateBackdropAsync(id, mt, local, ct).ConfigureAwait(false);
             }
@@ -78,13 +82,14 @@ public static class MiscEndpoints
             {
                 var local = await ImageServeHelpers
                     .DownloadRemoteImageAsync(httpFactory.CreateClient(), body.LogoUrl.Trim(),
-                        $"logo_pick_{body.TmdbId}{ImageServeHelpers.ExtensionForUrl(body.LogoUrl)}", ct)
+                        $"logo_pick_{body.TmdbId}_{pickStamp}{ImageServeHelpers.ExtensionForUrl(body.LogoUrl)}", ct)
                     .ConfigureAwait(false);
                 if (local is null)
                     return Results.BadRequest(new { success = false, error = "Failed to download logo." });
                 await repo.SaveSettingAsync($"ClearLogoOverride:{mt}:{id}", local, ct).ConfigureAwait(false);
             }
 
+            HomeEndpoints.InvalidateHomeCaches(memoryCache); // Home rows embed the old artwork URL
             return Results.Json(new { success = true });
         });
 

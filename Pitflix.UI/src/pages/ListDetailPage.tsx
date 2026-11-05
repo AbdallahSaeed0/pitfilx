@@ -1,10 +1,11 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { PosterGridSkeleton } from "../components/ui/Skeleton";
 import { Trash2 } from "lucide-react";
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { getListById, getListItems, removeListItem } from "../api/lists";
 import { getWatchedTmdbIds } from "../api/history";
+import { getPosters } from "../api/images";
 import { PosterCard } from "../components/ui/PosterCard";
 import { LibraryPosterGrid } from "../components/ui/LibraryPosterGrid";
 import { LibraryContextMenuLayer } from "../features/library/LibraryContextMenuLayer";
@@ -12,9 +13,37 @@ import { lookupImdbRating, useImdbRatingsMap } from "../hooks/useImdbRatingsMap"
 import { mediaTypeOf, useLibraryPosterCards } from "../features/library/useLibraryPosterCards";
 import { useMediaContextMenu } from "../features/library/useMediaContextMenu";
 import { formatRating } from "../utils/format";
+import { toPosterSrc } from "../utils/posterSrc";
 import type { MediaCard } from "../types/media";
 import { decodeListTitle, isWatchLaterListName } from "../utils/listMarks";
 import type { StreamingDetailsLocationState } from "./StreamingDetailsPage";
+
+/** A stored `posterRemoteUrl` is a snapshot taken when the item was added to the list — if that
+ * lookup failed at the time (e.g. the title's TMDB match hadn't resolved yet), it's empty forever
+ * unless something re-fetches it. Live-fetch a poster from TMDB whenever the saved one is missing,
+ * same self-healing pattern `AwardNomineeCard` already uses. */
+function useSelfHealingPosterSrc(rawUrl: string | null | undefined, tmdbId: number, mediaType: "Movie" | "Series") {
+  const needsFetch = !rawUrl && tmdbId > 0;
+  const label = mediaType;
+
+  const q = useQuery({
+    queryKey: ["list-item-poster-fallback", tmdbId, label],
+    queryFn: async () => {
+      const rows = await getPosters(tmdbId, label);
+      const r0 = (rows as { filePath?: string; file_path?: string }[])[0];
+      const fp = r0?.filePath ?? r0?.file_path;
+      if (!fp) return null;
+      return toPosterSrc(`https://image.tmdb.org/t/p/w342${fp.startsWith("/") ? fp : `/${fp}`}`);
+    },
+    enabled: needsFetch,
+    staleTime: 7 * 86_400_000,
+  });
+
+  return useMemo(() => {
+    if (rawUrl) return rawUrl;
+    return q.data ?? null;
+  }, [rawUrl, q.data]);
+}
 
 function formatListTitle(name: string) {
   return decodeListTitle(name).title.trim();
@@ -23,6 +52,82 @@ function formatListTitle(name: string) {
 function listItemMediaType(item: MediaCard): "Movie" | "Series" {
   const raw = item.tmdbMediaType ?? (item.mediaFilePath || item.filePath ? "Movie" : "Series");
   return raw === "Series" ? "Series" : "Movie";
+}
+
+function StreamOnlyListItemCard({
+  item,
+  mediaType,
+  rating,
+  ratingIsImdb,
+  isRemoving,
+  onOpen,
+  onContextMenu,
+  onRemove,
+}: {
+  item: MediaCard;
+  mediaType: "Movie" | "Series";
+  rating: number;
+  ratingIsImdb: boolean;
+  isRemoving: boolean;
+  onOpen: () => void;
+  onContextMenu: (e: React.MouseEvent) => void;
+  onRemove: () => void;
+}) {
+  const posterSrc = useSelfHealingPosterSrc(item.posterRemoteUrl, item.tmdbId, mediaType);
+
+  return (
+    <div className="group relative min-w-0">
+      <button
+        type="button"
+        onClick={onOpen}
+        onContextMenu={onContextMenu}
+        className="w-full cursor-pointer rounded-xl text-left transition-[transform,filter] duration-200 hover:-translate-y-1"
+      >
+        <div className="relative overflow-hidden rounded-xl bg-pitflix-card ring-2 ring-transparent ring-offset-2 ring-offset-pitflix-bg transition-[transform,box-shadow,ring-color] duration-200 group-hover:scale-[1.04] group-hover:shadow-2xl group-hover:shadow-black/55 group-hover:ring-pitflix-primary/60">
+          {rating > 0 ? (
+            <span
+              className={`pointer-events-none absolute left-2 top-2 z-10 rounded-md px-1.5 py-0.5 text-[10px] font-semibold shadow-md ${
+                ratingIsImdb ? "bg-[#F5C518]/90 font-bold text-black" : "bg-black/75 text-white"
+              }`}
+            >
+              {ratingIsImdb ? `IMDb ${formatRating(rating)}` : `★ ${formatRating(rating)}`}
+            </span>
+          ) : null}
+          {posterSrc ? (
+            <img
+              src={posterSrc}
+              alt={item.title}
+              className="aspect-[2/3] w-full bg-gradient-to-b from-pitflix-card to-pitflix-surface object-cover"
+              onError={(e) => { (e.currentTarget as HTMLImageElement).style.display = "none"; }}
+            />
+          ) : (
+            <div className="flex aspect-[2/3] w-full items-center justify-center bg-gradient-to-b from-pitflix-card to-pitflix-surface px-2 text-center text-xs text-pitflix-muted">
+              {item.title}
+            </div>
+          )}
+        </div>
+        <p className="mt-2 truncate text-sm font-medium text-white">{item.title}</p>
+        <p className="truncate text-xs text-pitflix-subtle">
+          {item.year ?? ""}
+          {item.isArabic ? " · AR" : " · EN"}
+        </p>
+      </button>
+
+      <button
+        type="button"
+        disabled={isRemoving}
+        onClick={onRemove}
+        title="Remove from list"
+        className="absolute right-1 top-1 z-10 flex h-7 w-7 items-center justify-center rounded-full bg-black/60 text-white opacity-0 transition-opacity hover:bg-red-600/80 group-hover:opacity-100 disabled:cursor-not-allowed"
+      >
+        {isRemoving ? (
+          <span className="h-3 w-3 animate-spin rounded-full border border-white/40 border-t-white" />
+        ) : (
+          <Trash2 className="h-3.5 w-3.5" />
+        )}
+      </button>
+    </div>
+  );
 }
 
 type WatchLaterTab = "movies" | "series";
@@ -140,58 +245,24 @@ export function ListDetailPage() {
       const rating = imdb != null && imdb > 0 ? imdb : (item.voteAverage ?? 0);
       const ratingIsImdb = imdb != null && imdb > 0;
       return (
-        <div key={`stream-${mediaType}-${item.tmdbId}`} className="group relative min-w-0">
-          <button
-            type="button"
-            onClick={() => navigate("/stream-details", { state })}
-            onContextMenu={handleContextMenu({
-              kind: "streaming",
-              tmdbId: item.tmdbId,
-              mediaType,
-              title: item.title,
-              posterUrl: item.posterRemoteUrl ?? null,
-              imdbId: item.imdbId ?? null,
-            })}
-            className="w-full cursor-pointer rounded-xl text-left transition-[transform,filter] duration-200 hover:-translate-y-1"
-          >
-            <div className="relative overflow-hidden rounded-xl bg-pitflix-card ring-2 ring-transparent ring-offset-2 ring-offset-pitflix-bg transition-[transform,box-shadow,ring-color] duration-200 group-hover:scale-[1.04] group-hover:shadow-2xl group-hover:shadow-black/55 group-hover:ring-pitflix-primary/60">
-              {rating > 0 ? (
-                <span
-                  className={`pointer-events-none absolute left-2 top-2 z-10 rounded-md px-1.5 py-0.5 text-[10px] font-semibold shadow-md ${
-                    ratingIsImdb ? "bg-[#F5C518]/90 font-bold text-black" : "bg-black/75 text-white"
-                  }`}
-                >
-                  {ratingIsImdb ? `IMDb ${formatRating(rating)}` : `★ ${formatRating(rating)}`}
-                </span>
-              ) : null}
-              <img
-                src={item.posterRemoteUrl ?? ""}
-                alt={item.title}
-                className="aspect-[2/3] w-full bg-gradient-to-b from-pitflix-card to-pitflix-surface object-cover"
-                onError={(e) => { (e.currentTarget as HTMLImageElement).style.display = "none"; }}
-              />
-            </div>
-            <p className="mt-2 truncate text-sm font-medium text-white">{item.title}</p>
-            <p className="truncate text-xs text-pitflix-subtle">
-              {item.year ?? ""}
-              {item.isArabic ? " · AR" : " · EN"}
-            </p>
-          </button>
-
-          <button
-            type="button"
-            disabled={isRemoving}
-            onClick={() => handleRemove(item.tmdbId, mediaType)}
-            title="Remove from list"
-            className="absolute right-1 top-1 z-10 flex h-7 w-7 items-center justify-center rounded-full bg-black/60 text-white opacity-0 transition-opacity hover:bg-red-600/80 group-hover:opacity-100 disabled:cursor-not-allowed"
-          >
-            {isRemoving ? (
-              <span className="h-3 w-3 animate-spin rounded-full border border-white/40 border-t-white" />
-            ) : (
-              <Trash2 className="h-3.5 w-3.5" />
-            )}
-          </button>
-        </div>
+        <StreamOnlyListItemCard
+          key={`stream-${mediaType}-${item.tmdbId}`}
+          item={item}
+          mediaType={mediaType}
+          rating={rating}
+          ratingIsImdb={ratingIsImdb}
+          isRemoving={isRemoving}
+          onOpen={() => navigate("/stream-details", { state })}
+          onContextMenu={handleContextMenu({
+            kind: "streaming",
+            tmdbId: item.tmdbId,
+            mediaType,
+            title: item.title,
+            posterUrl: item.posterRemoteUrl ?? null,
+            imdbId: item.imdbId ?? null,
+          })}
+          onRemove={() => handleRemove(item.tmdbId, mediaType)}
+        />
       );
     }
 

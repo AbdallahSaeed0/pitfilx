@@ -33,6 +33,21 @@ See `PitflixAndroid/lib/services/my_device_loudness_boost.dart` for the Dart sid
 this channel, using `VideoPlayerController.playerId` (a public getter — confirmed to be the
 exact same id `video_player_android`'s `create()` returns and keys its own maps by).
 
+Also in `VideoPlayerPlugin.java` — embedded subtitle tracks:
+
+- A second hand-written channel, `pitflix.dev/video_player_text_tracks`, so My Device can use
+  subtitles stored inside MKV/MP4 files. ExoPlayer already extracts and decodes them; the plugin
+  just never exposed text tracks, and it only renders the video surface.
+- `getTextTracks(playerId)` lists `C.TRACK_TYPE_TEXT` tracks (language/label/mime/selected);
+  `selectTextTrack(playerId, groupIndex, trackIndex)` applies a `TrackSelectionOverride` and
+  re-enables the text type; `disableTextTracks(playerId)` turns text off; `attach(playerId)`
+  starts forwarding cues.
+- Cues go back to Dart as `onCues` calls from a per-player `Player.Listener`: text cues as
+  strings, image cues (PGS/VobSub) as PNG bytes plus their position as fractions of the frame.
+  Listeners are dropped with the player in `dispose`/`disposeAllPlayers`.
+
+See `PitflixAndroid/lib/services/my_device_embedded_subtitles.dart` for the Dart side.
+
 Also `android/src/main/java/io/flutter/plugins/videoplayer/VideoPlayer.java`:
 
 - The constructor now calls `exoPlayer.setWakeMode(C.WAKE_MODE_LOCAL)` right after

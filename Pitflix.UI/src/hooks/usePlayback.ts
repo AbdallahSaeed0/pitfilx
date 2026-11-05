@@ -90,6 +90,9 @@ export function usePlayback() {
       currentHistoryId = null;
       perfLog("play:start");
 
+      // No launch card: the "grows out of what you clicked" title/thumbnail card was removed at the
+      // user's request — it read as extra wait before the video, so the player opens directly.
+
       // getHistory/addHistory/getSettings don't depend on each other's results — fire them
       // concurrently instead of one after another to shave latency off every play() call.
       const historyPromise = getHistory(200, { includeSuppressed: true, lite: true }) as Promise<
@@ -105,20 +108,35 @@ export function usePlayback() {
       }) as Promise<{ id: number }>;
       const settingsPromise = getSettings();
 
-      const preferred = Number.isFinite(preferredResumeSeconds ?? NaN) ? Math.max(0, preferredResumeSeconds ?? 0) : 0;
+      // A caller passing 0 explicitly (Start Over) must be distinguished from not passing
+      // anything at all (no preference) — both are falsy under `<= 0`, which used to make
+      // Start Over fall through to the history lookup below and re-resume from where the
+      // user left off instead of actually starting over.
+      const hasPreferred = preferredResumeSeconds !== undefined && Number.isFinite(preferredResumeSeconds);
+      const preferred = hasPreferred ? Math.max(0, preferredResumeSeconds as number) : 0;
 
       // When the caller already knows where to resume (the "Resume from X:XX" modal, or an
       // explicit Start Over), skip waiting on history/resume-hint lookups entirely — they'd
       // only be used to derive a value we're about to override anyway.
       let resume = preferred;
-      if (preferred <= 0) {
+      if (!hasPreferred) {
         const resumeHintsPromise =
           isTauri()
-            ? playbackResumeHintsForKey(
-                context.libraryEpisodeId != null && context.libraryEpisodeId > 0
-                  ? `ep:${context.libraryEpisodeId}`
-                  : `file:${normalizePath(filePath)}`,
-              ).catch(() => null)
+            ? Promise.race([
+                playbackResumeHintsForKey(
+                  context.libraryEpisodeId != null && context.libraryEpisodeId > 0
+                    ? `ep:${context.libraryEpisodeId}`
+                    : `file:${normalizePath(filePath)}`,
+                )
+                  .then((h) => {
+                    perfLog("resumeHints:done");
+                    return h;
+                  })
+                  .catch(() => null),
+                // Never let the local checkpoint lookup hold a Play hostage — the server-side
+                // history resume (below) is normally the same position anyway.
+                new Promise<null>((r) => setTimeout(() => r(null), 250)),
+              ])
             : Promise.resolve(null);
 
         const [historyRows, hints] = await Promise.all([historyPromise, resumeHintsPromise]);
@@ -174,6 +192,7 @@ export function usePlayback() {
         };
       };
 
+
       if (useBuiltin && usePlayerPage) {
         const scrollCapture = captureScrollForReturn();
         const launchState: PlaybackLaunchState = {
@@ -206,11 +225,18 @@ export function usePlayback() {
         if (playerMode === "remote") {
           navigate("/player-remote", { state: launchState });
         } else {
+          // mpv is opened by the player page. Starting it here, before the page mounted ("early
+          // open", 2026-10-10) coincided with mpv cores shutting themselves down right after
+          // initialize — 9 that day vs none on days without it — so it was removed.
           navigate("/player", { state: launchState });
         }
-        void qc.invalidateQueries({ queryKey: ["home-history"] });
-        void qc.invalidateQueries({ queryKey: ["home-featured-fallback"] });
-        void qc.invalidateQueries({ predicate: (q) => q.queryKey[0] === "home-section" });
+        // The page left behind stays mounted under the player — refreshing its lists right now
+        // would re-render it while the player is starting. Give the player a head start.
+        window.setTimeout(() => {
+          void qc.invalidateQueries({ queryKey: ["home-history"] });
+          void qc.invalidateQueries({ queryKey: ["home-featured-fallback"] });
+          void qc.invalidateQueries({ predicate: (q) => q.queryKey[0] === "home-section" });
+        }, 2500);
         void qc.invalidateQueries({ queryKey: ["history"] });
         return;
       }

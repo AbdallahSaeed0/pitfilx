@@ -19,6 +19,9 @@ public static class MediaCardPosterEnricher
     /// </summary>
     private static readonly TimeSpan ForegroundBudget = TimeSpan.FromMilliseconds(900);
 
+    private static bool HasLocalPoster(MediaCardDto c) =>
+        !string.IsNullOrEmpty(c.PosterLocalPath) || !string.IsNullOrEmpty(c.SelectedPosterPath);
+
     private static bool NeedsTitleFallback(string? title)
     {
         if (string.IsNullOrWhiteSpace(title))
@@ -49,8 +52,10 @@ public static class MediaCardPosterEnricher
         if (tmdb == null || mappedCards.Count == 0)
             return;
 
+        // A card that already has a poster on disk doesn't need a remote one — only junk titles do.
         var targets = mappedCards
-            .Where(c => c.TmdbId > 0 && (string.IsNullOrEmpty(c.PosterRemoteUrl) || NeedsTitleFallback(c.Title)))
+            .Where(c => c.TmdbId > 0 &&
+                        ((string.IsNullOrEmpty(c.PosterRemoteUrl) && !HasLocalPoster(c)) || NeedsTitleFallback(c.Title)))
             .ToList();
         if (targets.Count == 0)
             return;

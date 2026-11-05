@@ -1,6 +1,7 @@
 import { useEffect } from "react";
 import { SkipForward, X } from "lucide-react";
 import type { SkipSegment } from "../../api/skip";
+import { LiquidGlass } from "../ui/liquidGlass/LiquidGlass";
 
 export type ActiveSkipSegment = {
   kind: "intro" | "outro";
@@ -41,12 +42,15 @@ export function SkipSegmentOverlay({ active, onSkip, onDismiss }: Props) {
 
   return (
     <div className="pointer-events-none absolute inset-0 z-40 flex items-end justify-end p-6 pb-36">
-      <div
-        className={`pointer-events-auto flex items-center gap-1 rounded-xl border backdrop-blur-md transition-opacity ${
-          lowConfidence
-            ? "border-white/10 bg-pitflix-card/80 opacity-80"
-            : "border-white/15 bg-pitflix-card/95"
+      <LiquidGlass
+        radius={12}
+        bezel={12}
+        strength={14}
+        className={`pointer-events-auto relative flex items-center gap-1 rounded-xl border transition-opacity ${
+          lowConfidence ? "border-white/10 opacity-80" : "border-white/15"
         }`}
+        glassClassName="bg-[rgba(14,12,28,0.62)]"
+        fallbackClassName={`backdrop-blur-md ${lowConfidence ? "bg-pitflix-card/80" : "bg-pitflix-card/95"}`}
       >
         <button
           type="button"
@@ -70,7 +74,7 @@ export function SkipSegmentOverlay({ active, onSkip, onDismiss }: Props) {
         >
           <X className="h-4 w-4" />
         </button>
-      </div>
+      </LiquidGlass>
     </div>
   );
 }

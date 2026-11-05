@@ -11,6 +11,8 @@ import {
 import { getListTmdbIds, getLists } from "../api/lists";
 import { getStats } from "../api/stats";
 import { useSeriesList } from "../hooks/useSeries";
+import { usePrefetchOtherLanguageTab } from "../hooks/usePrefetchOtherLanguageTab";
+import { getAllSeries } from "../api/series";
 import { useDebounce } from "../hooks/useDebounce";
 import { useScrollRestoration } from "../hooks/useScrollRestoration";
 import { LibraryContextMenuLayer } from "../features/library/LibraryContextMenuLayer";
@@ -135,6 +137,14 @@ export function SeriesPage() {
   });
 
   useScrollRestoration(searchParams.toString(), !isPending);
+  // First switch to the other English/Arabic tab was slow (its posters get resized on first use).
+  usePrefetchOtherLanguageTab(
+    "series",
+    { page, pageSize, lang, search: searchQ || undefined, genre: genre || undefined, sort, watch },
+    !isPending,
+    getAllSeries,
+  );
+
 
   const total = data?.total ?? 0;
   const pageItems = (data?.items ?? []) as MediaCard[];

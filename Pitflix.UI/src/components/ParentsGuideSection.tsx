@@ -30,6 +30,46 @@ const SEVERITY_TEXT: Record<string, string> = {
   Unknown: "text-pitflix-muted",
 };
 
+/** Worst-first ranking so the card's accent reflects the most severe category, not just whichever
+ * tab happens to be selected — that's what a scanning eye actually needs to notice. */
+const SEVERITY_RANK: Record<string, number> = { Severe: 3, Moderate: 2, Mild: 1, None: 0, Unknown: 0 };
+
+/** Card-level accent per worst severity — border/glow/badge, distinct enough to catch the eye while
+ * scrolling past (the old version was a barely-there muted-gray row that blended into everything
+ * around it). */
+const SEVERITY_CARD: Record<string, { border: string; glow: string; iconBg: string; badge: string }> = {
+  None: {
+    border: "border-emerald-500/40",
+    glow: "shadow-[0_0_24px_-8px_rgba(16,185,129,0.35)]",
+    iconBg: "bg-emerald-500/15 text-emerald-400",
+    badge: "bg-emerald-500 text-white",
+  },
+  Mild: {
+    border: "border-yellow-500/40",
+    glow: "shadow-[0_0_24px_-8px_rgba(234,179,8,0.35)]",
+    iconBg: "bg-yellow-500/15 text-yellow-400",
+    badge: "bg-yellow-500 text-black",
+  },
+  Moderate: {
+    border: "border-orange-500/40",
+    glow: "shadow-[0_0_24px_-8px_rgba(249,115,22,0.4)]",
+    iconBg: "bg-orange-500/15 text-orange-400",
+    badge: "bg-orange-500 text-white",
+  },
+  Severe: {
+    border: "border-red-500/50",
+    glow: "shadow-[0_0_28px_-6px_rgba(239,68,68,0.45)]",
+    iconBg: "bg-red-500/15 text-red-400",
+    badge: "bg-red-500 text-white",
+  },
+  Unknown: {
+    border: "border-pitflix-primary/40",
+    glow: "shadow-[0_0_24px_-8px_rgba(139,92,246,0.35)]",
+    iconBg: "bg-pitflix-primary/15 text-pitflix-primary",
+    badge: "bg-pitflix-primary text-white",
+  },
+};
+
 export function ParentsGuideSection({ imdbId }: { imdbId: string | null | undefined }) {
   const [tab, setTab] = useState<string | null>(null);
   const [expanded, setExpanded] = useState(false);
@@ -60,32 +100,66 @@ export function ParentsGuideSection({ imdbId }: { imdbId: string | null | undefi
   const overallRating = q.data?.overallRating;
   const active = categories.find((c) => c.name === tab) ?? categories[0];
 
-  return (
-    <div className="-mx-6 border-t border-white/5 px-12 py-5">
-      <button
-        type="button"
-        onClick={() => setExpanded((v) => !v)}
-        className="flex w-full items-center gap-2 text-left"
-      >
-        <ShieldAlert className="h-4 w-4 text-pitflix-primary" />
-        <p className="text-[11px] font-semibold uppercase tracking-[0.12em] text-white/35">Parents Guide</p>
-        {overallRating ? (
-          <span className="text-[11px] text-pitflix-subtle">{overallRating}</span>
-        ) : null}
-        <ChevronDown
-          className={cn("ml-auto h-4 w-4 text-white/35 transition-transform", expanded ? "rotate-180" : "")}
-        />
-      </button>
+  // The card's accent reflects the single worst category present, not whichever tab is currently
+  // selected — someone skimming past should see at a glance whether anything here is severe.
+  const worstSeverity = categories.reduce<string>((worst, c) => {
+    const rank = SEVERITY_RANK[c.severity] ?? 0;
+    return rank > (SEVERITY_RANK[worst] ?? 0) ? c.severity : worst;
+  }, categories[0]?.severity ?? "Unknown");
+  const cardStyle = SEVERITY_CARD[worstSeverity] ?? SEVERITY_CARD.Unknown!;
 
-      {expanded ? (
-        q.isLoading ? (
-          <div className="mt-3 flex items-center gap-2 text-xs text-pitflix-subtle">
+  return (
+    <div className="my-6">
+      <div
+        className={cn(
+          "overflow-hidden rounded-2xl border-2 bg-pitflix-surface/60 transition-shadow",
+          cardStyle.border,
+          cardStyle.glow,
+        )}
+      >
+        <button
+          type="button"
+          onClick={() => setExpanded((v) => !v)}
+          className="flex w-full items-center gap-3 px-5 py-4 text-left"
+        >
+          <span className={cn("flex h-9 w-9 shrink-0 items-center justify-center rounded-full", cardStyle.iconBg)}>
+            <ShieldAlert className="h-5 w-5" />
+          </span>
+          <div className="min-w-0">
+            <p className="text-sm font-bold text-white">Parents Guide</p>
+            {overallRating ? (
+              <p className="text-xs text-pitflix-subtle">{overallRating}</p>
+            ) : null}
+          </div>
+          {!q.isLoading && worstSeverity !== "None" ? (
+            <span
+              className={cn(
+                "ml-auto shrink-0 rounded-full px-3 py-1 text-[11px] font-bold uppercase tracking-wide",
+                cardStyle.badge,
+              )}
+            >
+              {worstSeverity}
+            </span>
+          ) : null}
+          <ChevronDown
+            className={cn(
+              "h-5 w-5 shrink-0 text-white/50 transition-transform",
+              worstSeverity === "None" ? "ml-auto" : "",
+              expanded ? "rotate-180" : "",
+            )}
+          />
+        </button>
+
+        {expanded ? (
+        <div className="border-t border-white/[0.06] px-5 pb-5 pt-4">
+        {q.isLoading ? (
+          <div className="flex items-center gap-2 text-xs text-pitflix-subtle">
             <Spinner className="h-4 w-4" />
             Checking IMDb…
           </div>
         ) : active ? (
           <>
-            <div className="mb-3 mt-3 flex flex-wrap gap-1.5">
+            <div className="mb-3 flex flex-wrap gap-1.5">
               {categories.map((c) => {
                 const isActive = c.name === active.name;
                 return (
@@ -130,8 +204,10 @@ export function ParentsGuideSection({ imdbId }: { imdbId: string | null | undefi
               )}
             </div>
           </>
-        ) : null
-      ) : null}
+        ) : null}
+        </div>
+        ) : null}
+      </div>
     </div>
   );
 }

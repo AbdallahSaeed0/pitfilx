@@ -83,8 +83,10 @@ public static class LibraryDetailEndpoints
         var needPoster = tmdb != null && string.IsNullOrEmpty(movie.PosterLocalPath) &&
             string.IsNullOrEmpty(movie.SelectedPosterPath);
         var needKeywords = movie.TmdbId > 0 && tmdb != null && string.IsNullOrEmpty(movie.KeywordsJson);
-        var needCollection = movie.TmdbId > 0 && tmdb != null;
         var needContentRating = movie.ContentRating == null && movie.TmdbId > 0 && tmdb != null;
+        // Companies + collection come from one TMDB call — CompaniesJson being empty is also the
+        // "haven't fetched either yet" sentinel (see the field's doc comment on Movie).
+        var needExtras = movie.TmdbId > 0 && tmdb != null && string.IsNullOrEmpty(movie.CompaniesJson);
 
         async Task<TmdbDetails?> FetchMovieCrewAsync() =>
             needCrew ? await tmdb!.GetDetailsAsync(movie.TmdbId, "Movie", ct).ConfigureAwait(false) : null;
@@ -95,18 +97,22 @@ public static class LibraryDetailEndpoints
         var keywordsFetchTask = needKeywords
             ? tmdb!.TryGetKeywordsWithNamesAsync(movie.TmdbId, "Movie", ct)
             : Task.FromResult<IReadOnlyList<(int Id, string Name)>>(Array.Empty<(int, string)>());
-        var collectionFetchTask = needCollection
-            ? tmdb!.TryGetMovieCollectionInfoAsync(movie.TmdbId, ct)
-            : Task.FromResult<(int CollectionId, string CollectionName)?>(null);
         var contentRatingFetchTask = needContentRating
             ? tmdb!.TryGetMovieCertificationAsync(movie.TmdbId, "US", ct)
             : Task.FromResult<string?>(null);
-        var companiesFetchTask = movie.TmdbId > 0 && tmdb != null
-            ? tmdb.TryGetCompaniesAsync(movie.TmdbId, true, ct)
-            : Task.FromResult<IReadOnlyList<TmdbCompanyInfo>>(Array.Empty<TmdbCompanyInfo>());
+        var extrasFetchTask = needExtras
+            ? tmdb!.TryGetCompaniesAndCollectionAsync(movie.TmdbId, true, ct)
+            : Task.FromResult(new TmdbCompaniesAndCollection(Array.Empty<TmdbCompanyInfo>(), null, null));
+        // "You may like this" (see below) only touches `db` briefly at its start (cache read) and end
+        // (cache write) — nothing else in this batch touches `db`, so running it concurrently here
+        // instead of after this whole block (as it used to) is safe and folds its TMDB-heavy cache-miss
+        // path (RecommendationEngine.BuildAsync) into the same cold-start window as everything else.
+        var recommendationsFetchTask = movie.TmdbId > 0 && tmdb != null
+            ? DetailRecommendationCacheService.GetOrBuildAsync(db, tmdb, repo, movie.TmdbId, "Movie", movie.Title, ct)
+            : Task.FromResult(new List<object>());
 
-        await Task.WhenAll(crewFetchTask, posterFetchTask, keywordsFetchTask, collectionFetchTask,
-            contentRatingFetchTask, companiesFetchTask).ConfigureAwait(false);
+        await Task.WhenAll(crewFetchTask, posterFetchTask, keywordsFetchTask,
+            contentRatingFetchTask, extrasFetchTask, recommendationsFetchTask).ConfigureAwait(false);
 
         if (needCrew)
             crew = crewFetchTask.Result!.Crew;
@@ -149,18 +155,42 @@ public static class LibraryDetailEndpoints
             catch { /* ignore malformed cache */ }
         }
 
-        var tmdbSimilar = new List<object>();
-        if (movie.TmdbId > 0 && tmdb != null)
+        var tmdbSimilar = recommendationsFetchTask.Result;
+
+        List<TmdbCompanyInfo> companiesRaw;
+        int? collectionId = movie.CollectionId;
+        string? collectionName = movie.CollectionName;
+
+        if (needExtras)
         {
-            tmdbSimilar = await DetailRecommendationCacheService
-                .GetOrBuildAsync(db, tmdb, repo, movie.TmdbId, "Movie", movie.Title, ct)
+            var extras = extrasFetchTask.Result;
+            companiesRaw = extras.Companies.ToList();
+            collectionId = extras.CollectionId;
+            collectionName = extras.CollectionName;
+
+            var companiesJsonToSave = JsonSerializer.Serialize(companiesRaw);
+            await db.Database.ExecuteSqlRawAsync(
+                "UPDATE Movies SET CompaniesJson = {0}, CollectionId = {1}, CollectionName = {2} WHERE Id = {3}",
+                companiesJsonToSave, collectionId, collectionName, movie.Id)
                 .ConfigureAwait(false);
         }
+        else
+        {
+            companiesRaw = new List<TmdbCompanyInfo>();
+            if (!string.IsNullOrEmpty(movie.CompaniesJson))
+            {
+                try
+                {
+                    var parsed = JsonSerializer.Deserialize<List<TmdbCompanyInfo>>(movie.CompaniesJson!);
+                    if (parsed != null) companiesRaw = parsed;
+                }
+                catch { /* ignore malformed cache */ }
+            }
+        }
 
-        object? collection = null;
-        var colInfo = collectionFetchTask.Result;
-        if (needCollection && colInfo.HasValue)
-            collection = new { id = colInfo.Value.CollectionId, name = colInfo.Value.CollectionName };
+        object? collection = collectionId.HasValue
+            ? new { id = collectionId.Value, name = collectionName }
+            : null;
 
         var contentRating = movie.ContentRating;
         if (needContentRating)
@@ -178,7 +208,7 @@ public static class LibraryDetailEndpoints
             ? ImageUrls.ToImageUrl(logoOverride)
             : tvdbPayload.ClearLogoUrl;
 
-        var companies = companiesFetchTask.Result
+        var companies = companiesRaw
             .Select(c => new
             {
                 id = c.Id,
@@ -188,9 +218,30 @@ public static class LibraryDetailEndpoints
             })
             .ToList();
 
+        // Partly watched → progress bar + "Continue" on the page. Runs after the parallel TMDB batch
+        // above: it touches the shared DbContext, which isn't safe to use concurrently.
+        object? progress = null;
+        if (!string.Equals(movie.WatchStatus, WatchStatuses.Completed, StringComparison.OrdinalIgnoreCase))
+        {
+            var resume = await repo.GetMovieResumeProgressAsync(movie.TmdbId, movie.FilePath, ct).ConfigureAwait(false);
+            if (resume is { } r)
+            {
+                var totalSeconds = r.DurationSeconds > 0 ? r.DurationSeconds : (movie.Runtime ?? 0) * 60;
+                progress = new
+                {
+                    resumeSeconds = r.ResumeSeconds,
+                    durationSeconds = totalSeconds,
+                    progressPercent = totalSeconds > 0
+                        ? Math.Clamp((int)Math.Round(r.ResumeSeconds * 100.0 / totalSeconds), 1, 99)
+                        : (int?)null,
+                };
+            }
+        }
+
         return Results.Json(new
         {
             movie = movieOut,
+            progress,
             cast = cast.Select(ImageUrls.MapCastMember).ToList(),
             crew = crew.Select(ImageUrls.MapCrewMember).ToList(),
             episodes = (object?)null,
@@ -268,12 +319,30 @@ public static class LibraryDetailEndpoints
         var artworkSyncTask = needArtworkSync
             ? SafeSyncEpisodesArtworkAsync(repo, show.Id, show.TmdbId, tmdb!, ct)
             : Task.CompletedTask;
-        var companiesFetchTask = show.TmdbId > 0 && tmdb != null
-            ? tmdb.TryGetCompaniesAsync(show.TmdbId, false, ct)
-            : Task.FromResult<IReadOnlyList<TmdbCompanyInfo>>(Array.Empty<TmdbCompanyInfo>());
+        var needExtras = show.TmdbId > 0 && tmdb != null && string.IsNullOrEmpty(show.CompaniesJson);
+        var extrasFetchTask = needExtras
+            ? tmdb!.TryGetCompaniesAndCollectionAsync(show.TmdbId, false, ct)
+            : Task.FromResult(new TmdbCompaniesAndCollection(Array.Empty<TmdbCompanyInfo>(), null, null));
+
+        // "You may like this" also touches `db` (cache read/write, plus a library lookup inside
+        // RecommendationEngine.BuildAsync on a cache miss) — the same DbContext artworkSyncTask
+        // uses, so it can't just join the WhenAll below directly or the two could hit `db`
+        // concurrently. Chaining it after artworkSyncTask keeps `db` access sequential while still
+        // letting the whole chain run alongside the pure-TMDB lookups instead of only starting once
+        // everything above has finished, like it used to.
+        async Task<List<object>> FetchRecommendationsAfterArtworkSyncAsync()
+        {
+            await artworkSyncTask.ConfigureAwait(false);
+            if (show.TmdbId <= 0 || tmdb == null)
+                return new List<object>();
+            return await DetailRecommendationCacheService
+                .GetOrBuildAsync(db, tmdb, repo, show.TmdbId, "Series", show.Title, ct)
+                .ConfigureAwait(false);
+        }
+        var recommendationsFetchTask = FetchRecommendationsAfterArtworkSyncAsync();
 
         await Task.WhenAll(crewFetchTask, posterFetchTask, keywordsFetchTask, contentRatingFetchTask,
-            artworkSyncTask, companiesFetchTask).ConfigureAwait(false);
+            artworkSyncTask, extrasFetchTask, recommendationsFetchTask).ConfigureAwait(false);
 
         if (needCrew)
         {
@@ -328,6 +397,12 @@ public static class LibraryDetailEndpoints
         var localSeasonNums = new HashSet<int>(episodesGrouped.Select(g => g.season));
         var seasonRows = new List<(int SeasonNumber, object Row)>();
 
+        // Kicked off before the local-header batch below (not awaited yet) so it runs concurrently
+        // with it instead of after — neither depends on the other's result, both only touch tmdb.
+        var seasonTotalTask = (tmdb != null && show.TmdbId > 0)
+            ? tmdb.TryGetTvNumberOfSeasonsAsync(show.TmdbId, ct)
+            : Task.FromResult<int?>(null);
+
         if (tmdb != null && episodesGrouped.Count > 0)
         {
             var localHeaders = await Task.WhenAll(episodesGrouped.Select(async g =>
@@ -361,7 +436,7 @@ public static class LibraryDetailEndpoints
 
         if (tmdb != null && show.TmdbId > 0)
         {
-            var tmdbSeasonTotal = await tmdb.TryGetTvNumberOfSeasonsAsync(show.TmdbId, ct).ConfigureAwait(false);
+            var tmdbSeasonTotal = await seasonTotalTask.ConfigureAwait(false);
             if (tmdbSeasonTotal is > 0)
             {
                 var missingSeasons = Enumerable.Range(1, tmdbSeasonTotal.Value)
@@ -437,13 +512,7 @@ public static class LibraryDetailEndpoints
             catch { /* ignore malformed cache */ }
         }
 
-        var tmdbSimilar = new List<object>();
-        if (show.TmdbId > 0 && tmdb != null)
-        {
-            tmdbSimilar = await DetailRecommendationCacheService
-                .GetOrBuildAsync(db, tmdb, repo, show.TmdbId, "Series", show.Title, ct)
-                .ConfigureAwait(false);
-        }
+        var tmdbSimilar = recommendationsFetchTask.Result;
 
         var contentRating = show.ContentRating;
         if (needContentRating)
@@ -461,7 +530,30 @@ public static class LibraryDetailEndpoints
             ? ImageUrls.ToImageUrl(logoOverride)
             : tvdbPayload.ClearLogoUrl;
 
-        var companies = companiesFetchTask.Result
+        List<TmdbCompanyInfo> companiesRaw;
+        if (needExtras)
+        {
+            companiesRaw = extrasFetchTask.Result.Companies.ToList();
+            var companiesJsonToSave = JsonSerializer.Serialize(companiesRaw);
+            await db.Database.ExecuteSqlRawAsync(
+                "UPDATE Shows SET CompaniesJson = {0} WHERE Id = {1}", companiesJsonToSave, show.Id)
+                .ConfigureAwait(false);
+        }
+        else
+        {
+            companiesRaw = new List<TmdbCompanyInfo>();
+            if (!string.IsNullOrEmpty(show.CompaniesJson))
+            {
+                try
+                {
+                    var parsed = JsonSerializer.Deserialize<List<TmdbCompanyInfo>>(show.CompaniesJson!);
+                    if (parsed != null) companiesRaw = parsed;
+                }
+                catch { /* ignore malformed cache */ }
+            }
+        }
+
+        var companies = companiesRaw
             .Select(c => new
             {
                 id = c.Id,

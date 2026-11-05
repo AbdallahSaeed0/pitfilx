@@ -26,6 +26,8 @@ pub mod quality_enhancement;
 pub mod taskbar_thumb_buttons;
 #[cfg(windows)]
 pub mod thumbs;
+#[cfg(windows)]
+pub mod cursor_refresh;
 
 use std::sync::Mutex;
 

@@ -26,6 +26,7 @@ import { LibrarySectionsPanel } from "../features/home/librarySections/LibrarySe
 import { HomeSectionRenderer } from "../features/home/HomeSectionRenderer";
 import { HomeSectionSlot } from "../features/home/HomeSectionSlot";
 import { QuickActionsStrip } from "../features/home/QuickActionsStrip";
+import { CinemasHomeRow } from "../features/cinemas/CinemasHomeRow";
 import { NotificationsBell } from "../components/layout/NotificationsBell";
 import { LazyMount } from "../components/ui/LazyMount";
 import { SectionEditorModal } from "../features/home/SectionEditorModal";
@@ -480,6 +481,8 @@ export function HomePage() {
       )}
 
       <QuickActionsStrip />
+
+      <CinemasHomeRow />
 
       <GenreCategorySection />
 

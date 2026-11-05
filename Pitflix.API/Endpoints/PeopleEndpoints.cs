@@ -93,12 +93,8 @@ public static class PeopleEndpoints
 
             try
             {
-                using var handler = new HttpClientHandler
-                {
-                    AutomaticDecompression = System.Net.DecompressionMethods.GZip | System.Net.DecompressionMethods.Deflate
-                };
-                using var http = new HttpClient(handler);
-                http.DefaultRequestHeaders.UserAgent.ParseAdd("Pitflix/1.0");
+                // Shared TMDB client: saved to disk, so a person page opened before still works offline.
+                var http = TmdbClientFactory.SharedHttp;
                 var url = $"https://api.themoviedb.org/3/person/{tmdbId}/combined_credits?api_key={Uri.EscapeDataString(apiKey!)}&language=en-US";
                 var json = await http.GetStringAsync(new Uri(url), ct).ConfigureAwait(false);
                 using var doc = JsonDocument.Parse(json);
@@ -170,7 +166,10 @@ public static class PeopleEndpoints
             catch (Exception ex)
             {
                 app.Logger.LogWarning(ex, "Stream credits lookup failed for person TMDB {TmdbId}", tmdbId);
-                return Results.Json(new { credits = Array.Empty<object>(), error = ex.Message }, jsonSerializerOptions);
+                // 503, not 200: an empty 200 looked like "this person has no credits", so the page cached
+                // and persisted it (no retry) and the filmography stayed blank until the cache expired.
+                return Results.Json(new { cast = Array.Empty<object>(), crew = Array.Empty<object>(), error = ex.Message },
+                    jsonSerializerOptions, statusCode: StatusCodes.Status503ServiceUnavailable);
             }
         });
     }

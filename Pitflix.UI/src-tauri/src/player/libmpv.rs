@@ -78,6 +78,8 @@ pub const MPV_EVENT_SHUTDOWN: c_int = 11;
 // Minimal event ids for Phase 1.
 pub const MPV_EVENT_NONE: c_int = 0;
 pub const MPV_EVENT_PROPERTY_CHANGE: c_int = 22;
+/// A seek (or file start) finished and playback resumed at the new position.
+pub const MPV_EVENT_PLAYBACK_RESTART: c_int = 21;
 /// Only observed when audio passthrough is enabled (see `quality_enhancement.rs`) — used to
 /// detect the `audio-spdif` log line confirming passthrough actually engaged.
 pub const MPV_EVENT_LOG_MESSAGE: c_int = 2;
@@ -244,6 +246,32 @@ impl LibMpv {
     }
 }
 
+/// libmpv-2.dll loaded once per process and kept resident. Each session used to load its own copy
+/// and drop it on close, so the last close of a session FreeLibrary'd the DLL and the next open
+/// loaded it fresh — libmpv (and the ffmpeg/d3d11 code bundled inside it) doesn't support being
+/// unloaded and reloaded in-process, and the player debug log showed the result: roughly 1 in 20
+/// opens produced a session whose core shut itself down ~20ms after mpv_initialize, before any
+/// playback, leaving every subsequent command failing with "sending on a closed channel".
+/// A Mutex<Option<..>> rather than OnceLock so a failed load (e.g. DLL missing) can retry next open.
+static SHARED_LIBMPV: std::sync::Mutex<Option<Arc<LibMpv>>> = std::sync::Mutex::new(None);
+
+/// Load (or reuse) the resident libmpv without creating any mpv core — used by the startup pre-warm.
+pub fn preload_shared_libmpv(path: &Path) -> Result<(), String> {
+    shared_libmpv(path).map(|_| ())
+}
+
+fn shared_libmpv(path: &Path) -> Result<Arc<LibMpv>, String> {
+    let mut slot = SHARED_LIBMPV
+        .lock()
+        .map_err(|_| "libmpv loader poisoned".to_string())?;
+    if let Some(api) = slot.as_ref() {
+        return Ok(api.clone());
+    }
+    let api = Arc::new(LibMpv::load_at(path)?);
+    *slot = Some(api.clone());
+    Ok(api)
+}
+
 impl MpvClient {
     /// Create handle + options (`vo=libmpv`), **without** `mpv_initialize` (render context must be created first).
     pub fn create_for_render(path: &Path) -> Result<Self, String> {
@@ -271,7 +299,7 @@ impl MpvClient {
     /// Create handle with **no** vo/render forcing — caller sets `wid`, `vo=gpu`,
     /// `gpu-api=d3d11`, etc. before `initialize()`. Matches Harbor's Windows path.
     pub fn create_minimal(path: &Path) -> Result<Self, String> {
-        let api = Arc::new(LibMpv::load_at(path)?);
+        let api = shared_libmpv(path)?;
         let handle = unsafe { (api.mpv_create)() };
         if handle.is_null() {
             return Err("mpv_create returned null".to_string());

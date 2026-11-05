@@ -19,6 +19,7 @@ import { toPosterSrc } from "../utils/posterSrc";
 import {
   discoverTvSchedule,
   discoverTvSearch,
+  getComingSoon,
   getNextEpisodesAirScoped,
   getNextEpisodesFollowed,
   getNextEpisodesPins,
@@ -26,6 +27,7 @@ import {
   putNextEpisodesPins,
   type FollowedExternalShow,
 } from "../api/homeDiscover";
+import { ReleaseCalendarSection } from "../features/nextEpisodes/ReleaseCalendarSection";
 import { getAllSeries } from "../api/series";
 import type { MediaCard } from "../types/media";
 import { useDebounce } from "../hooks/useDebounce";
@@ -66,6 +68,12 @@ export function NextEpisodesPage() {
     queryKey: ["home-next-episodes", "all"],
     queryFn: () => getNextEpisodesAirScoped({ view: "all", limit: 200 }),
     staleTime: 60_000,
+  });
+
+  const comingSoonQ = useQuery({
+    queryKey: ["home-coming-soon"],
+    queryFn: getComingSoon,
+    staleTime: 10 * 60_000,
   });
 
   const searchQ = useQuery({
@@ -190,6 +198,12 @@ export function NextEpisodesPage() {
           </div>
         </div>
       </header>
+
+      <ReleaseCalendarSection
+        comingSoon={comingSoonQ.data}
+        scheduleRows={rows}
+        isLoading={comingSoonQ.isLoading || scheduleQ.isLoading}
+      />
 
       <div className="grid gap-6 lg:grid-cols-2">
       <section className={`space-y-4 ${sectionCardAccent}`}>

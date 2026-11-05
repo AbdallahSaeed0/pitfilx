@@ -200,6 +200,28 @@ public sealed class ScanPipeline
         var total = ordered.Count;
         var index = 0;
 
+        // Library rows whose file went missing (moved/renamed). Built on first need — most scans only
+        // see files that are already in the library — and shrunk as files are found again.
+        List<MissingLibraryFile>? missingFiles = null;
+        async Task<List<MissingLibraryFile>> MissingFilesAsync()
+        {
+            if (missingFiles != null)
+                return missingFiles;
+            try
+            {
+                missingFiles = await _repo.SnapshotMissingLibraryFilesAsync(cancellationToken).ConfigureAwait(false);
+            }
+            catch (OperationCanceledException)
+            {
+                throw;
+            }
+            catch
+            {
+                missingFiles = new List<MissingLibraryFile>();
+            }
+            return missingFiles;
+        }
+
         foreach (var entry in ordered)
         {
             cancellationToken.ThrowIfCancellationRequested();
@@ -249,6 +271,25 @@ public sealed class ScanPipeline
                 result.SkippedAlreadyMatched++;
                 ReportScan("Skipped (already matched)");
                 continue;
+            }
+
+            // A library file that was moved/renamed: re-point its existing entry rather than matching it
+            // again from the file name (which loses a manual match and strands the old entry).
+            var missing = await MissingFilesAsync().ConfigureAwait(false);
+            var moved = MovedFileMatcher.FindMatch(filePath, TryGetFileSize(filePath), missing);
+            if (moved != null)
+            {
+                var (relinked, _) = moved.IsEpisode
+                    ? await _repo.RelocateEpisodeFileAsync(moved.Id, filePath, cancellationToken).ConfigureAwait(false)
+                    : await _repo.RelocateMovieFileAsync(moved.Id, filePath, cancellationToken).ConfigureAwait(false);
+                if (relinked)
+                {
+                    missing.Remove(moved);
+                    result.Relinked++;
+                    result.Matched++;
+                    ReportScan("Relinked (file moved)");
+                    continue;
+                }
             }
 
             var parsed = NameParser.Parse(filePath);
@@ -373,6 +414,22 @@ public sealed class ScanPipeline
                     !string.Equals(MediaPathNormalizer.PreferredPhysicalPath(existingMovie.FilePath),
                         MediaPathNormalizer.PreferredPhysicalPath(filePath), StringComparison.OrdinalIgnoreCase))
                 {
+                    // Not a second copy if the library's copy is gone — it was moved and renamed past
+                    // recognition. Follow it instead of leaving the movie pointing at nothing.
+                    if (MovedFileMatcher.IsMissingOnReachableVolume(existingMovie.FilePath))
+                    {
+                        var (relinked, _) = await _repo.RelocateMovieFileAsync(existingMovie.Id, filePath, cancellationToken)
+                            .ConfigureAwait(false);
+                        if (relinked)
+                        {
+                            missing.RemoveAll(m => !m.IsEpisode && m.Id == existingMovie.Id);
+                            result.Relinked++;
+                            result.Matched++;
+                            ReportScan("Relinked (file moved)");
+                            continue;
+                        }
+                    }
+
                     await _repo.SaveScanLogAsync(new ScanLog
                     {
                         FilePath = filePath,
@@ -609,6 +666,125 @@ public sealed class ScanPipeline
     }
 
     /// <summary>
+    /// Points a series at the folder it was moved to, keeping its watch state. Each episode is found in
+    /// the new folder by its old relative path first, then by the season/episode parsed from file names.
+    /// </summary>
+    public async Task<(bool Ok, int Relinked, int Missing, string? Error)> RelocateShowFolderAsync(int libraryShowId,
+        string newFolder, CancellationToken cancellationToken = default)
+    {
+        if (string.IsNullOrWhiteSpace(newFolder))
+            return (false, 0, 0, "No folder chosen.");
+        newFolder = newFolder.Trim().TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+        if (!Directory.Exists(newFolder))
+            return (false, 0, 0, "That folder doesn't exist.");
+
+        var show = await _repo.GetShowByIdAsync(libraryShowId, cancellationToken).ConfigureAwait(false);
+        if (show == null)
+            return (false, 0, 0, "Series not found.");
+
+        var files = _scanner.ScanDirectory(newFolder, recursive: true);
+        if (files.Count == 0)
+            return (false, 0, 0, "No video files found in that folder.");
+
+        var bySeasonEpisode = new Dictionary<(int, int), string>();
+        foreach (var f in files)
+        {
+            var p = NameParser.Parse(f);
+            if (p.Season is { } s && p.Episode is { } e)
+                bySeasonEpisode.TryAdd((s, e), f);
+        }
+
+        var oldFolder = show.FolderPath?.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+        var episodes = await _repo.GetEpisodesForShowAsync(libraryShowId, cancellationToken).ConfigureAwait(false);
+        var map = new Dictionary<int, string>();
+        var missing = 0;
+        foreach (var ep in episodes)
+        {
+            string? found = null;
+            if (!string.IsNullOrWhiteSpace(oldFolder) && !string.IsNullOrWhiteSpace(ep.FilePath) &&
+                ep.FilePath.StartsWith(oldFolder + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase))
+            {
+                var candidate = Path.Combine(newFolder, ep.FilePath[(oldFolder.Length + 1)..]);
+                if (File.Exists(candidate))
+                    found = candidate;
+            }
+
+            if (found == null && bySeasonEpisode.TryGetValue((ep.Season, ep.EpisodeNumber), out var byNumber))
+                found = byNumber;
+
+            if (found != null)
+                map[ep.Id] = found;
+            else if (string.IsNullOrWhiteSpace(ep.FilePath) || !File.Exists(ep.FilePath))
+                missing++;
+        }
+
+        if (map.Count == 0 && episodes.Count > 0)
+            return (false, 0, missing, "None of this series' episodes were found in that folder.");
+
+        var (ok, err) = await _repo.RelocateShowFolderAsync(libraryShowId, newFolder, map, cancellationToken)
+            .ConfigureAwait(false);
+        return ok ? (true, map.Count, missing, null) : (false, 0, missing, err);
+    }
+
+    /// <summary>
+    /// Re-links a file that was matched as a movie to an episode of a series already in the library,
+    /// then removes the movie row (watch state and history carry over to the episode).
+    /// </summary>
+    public async Task<(bool Ok, int? EpisodeId, string? Error)> LinkMovieFileToEpisodeAsync(int libraryMovieId,
+        int libraryShowId, int season, int episode, CancellationToken cancellationToken = default)
+    {
+        if (season < 0 || episode < 1)
+            return (false, null, "Enter a valid season and episode number.");
+
+        var path = await _repo.GetMovieFilePathByLibraryIdAsync(libraryMovieId, cancellationToken)
+            .ConfigureAwait(false);
+        if (string.IsNullOrWhiteSpace(path))
+            return (false, null, "Movie not found or file path is empty.");
+
+        var show = await _repo.GetShowByIdAsync(libraryShowId, cancellationToken).ConfigureAwait(false);
+        if (show == null)
+            return (false, null, "Series not found.");
+
+        var existing = (await _repo.GetEpisodesForShowAsync(libraryShowId, cancellationToken).ConfigureAwait(false))
+            .FirstOrDefault(e => e.Season == season && e.EpisodeNumber == episode);
+        if (existing != null && !string.IsNullOrWhiteSpace(existing.FilePath) && File.Exists(existing.FilePath) &&
+            !string.Equals(existing.FilePath, path, StringComparison.OrdinalIgnoreCase))
+            return (false, null, $"S{season:D2}E{episode:D2} of {show.Title} already has a file: {Path.GetFileName(existing.FilePath)}");
+
+        var parsed = NameParser.Parse(path);
+        var target = new ParseResult
+        {
+            CleanName = parsed.CleanName,
+            Season = season,
+            Episode = episode,
+            Year = parsed.Year,
+            IsArabic = parsed.IsArabic,
+            MediaType = "Series",
+            Confidence = parsed.Confidence
+        };
+        var row = await BuildSeriesEpisodeRowAsync(show, target, path, cancellationToken).ConfigureAwait(false);
+        await _repo.SaveEpisodeAsync(row, cancellationToken).ConfigureAwait(false);
+
+        var ep = await _repo.TryGetEpisodeByFilePathAsync(path, cancellationToken).ConfigureAwait(false);
+        if (ep == null)
+            return (false, null, "The episode row was not found after linking.");
+
+        await _repo.FinishMovieToEpisodeRelinkAsync(libraryMovieId, ep.Id, cancellationToken).ConfigureAwait(false);
+        await _repo.SaveScanLogAsync(new ScanLog
+        {
+            FilePath = path,
+            CleanName = parsed.CleanName,
+            Status = "Matched",
+            MatchedTitle = show.Title,
+            TmdbId = show.TmdbId,
+            Confidence = parsed.Confidence.ToString(),
+            SuggestionsJson = null,
+            ScannedAt = DateTime.UtcNow
+        }, cancellationToken).ConfigureAwait(false);
+        return (true, ep.Id, null);
+    }
+
+    /// <summary>
     /// Other unmatched rows that look like series episodes: same parent folder as <paramref name="matchedFilePath"/>,
     /// or scan-log clean name within Levenshtein distance &lt; 3 of <paramref name="matchedCleanName"/>.
     /// </summary>
@@ -795,6 +971,19 @@ public sealed class ScanPipeline
         }, cancellationToken).ConfigureAwait(false);
 
         return libraryId;
+    }
+
+    private static long? TryGetFileSize(string path)
+    {
+        try
+        {
+            var info = new FileInfo(path);
+            return info.Exists ? info.Length : null;
+        }
+        catch
+        {
+            return null;
+        }
     }
 
     private static int? ParseYear(string? releaseDate)
